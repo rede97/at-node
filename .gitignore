@@ -1,0 +1,29 @@
+# Build output
+obj/*.o
+obj/*.d
+obj/*.elf
+obj/*.hex
+obj/*.lst
+obj/*.map
+obj/*.siz
+obj/*.expand
+
+# IDE settings
+.mrs/
+.settings/
+.cproject
+.project
+.metadata/
+
+# Editor / OS
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Build artifacts (at root)
+*.elf
+*.hex
+*.lst
+*.map
