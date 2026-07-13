@@ -39,34 +39,34 @@ endif
 
 # Add inputs and outputs from these tool invocations to the build variables 
 SECONDARY_FLASH += \
-HID_Keyboard.hex \
+at-node.hex \
 
 SECONDARY_LIST += \
-HID_Keyboard.lst \
+at-node.lst \
 
 SECONDARY_SIZE += \
-HID_Keyboard.siz \
+at-node.siz \
 
 
 # All Target
 all: 
 	$(MAKE) --no-print-directory main-build 
 
-main-build: HID_Keyboard.elf secondary-outputs
+main-build: at-node.elf secondary-outputs
 
 # Tool invocations
-HID_Keyboard.elf: $(OBJS) $(USER_OBJS_ESCAPE)
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\Ld\Link.ld" -nostartfiles -Xlinker --gc-sections -Xlinker --print-gc-sections -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software" -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\LIB" -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"HID_Keyboard.map" --specs=nano.specs --specs=nosys.specs -o "HID_Keyboard.elf" $(OBJS) $(LIBS) -lprintf
-HID_Keyboard.hex: HID_Keyboard.elf
-	@	riscv-none-embed-objcopy -O ihex "HID_Keyboard.elf" "HID_Keyboard.hex"
-HID_Keyboard.lst: HID_Keyboard.elf
-	@	riscv-none-embed-objdump --source --all-headers --demangle --line-numbers --wide "HID_Keyboard.elf" > "HID_Keyboard.lst"
-HID_Keyboard.siz: HID_Keyboard.elf
-	riscv-none-embed-size --format=berkeley -x --totals "HID_Keyboard.elf"
+at-node.elf: $(OBJS) $(USER_OBJS_ESCAPE)
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "e:\Projects\at_node\software\Ld\Link.ld" -nostartfiles -Xlinker --gc-sections -L"e:\Projects\at_node\software" -L"e:\Projects\at_node\software\LIB" -L"e:\Projects\at_node\software\StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"at-node.map" --specs=nano.specs --specs=nosys.specs -o "at-node.elf" $(OBJS) $(LIBS) -lprintf
+at-node.hex: at-node.elf
+	@	riscv-none-embed-objcopy -O ihex "at-node.elf" "at-node.hex"
+at-node.lst: at-node.elf
+	@	riscv-none-embed-objdump --source --all-headers --demangle --line-numbers --wide "at-node.elf" > "at-node.lst"
+at-node.siz: at-node.elf
+	riscv-none-embed-size --format=berkeley -x --totals "at-node.elf"
 
 # Other Targets
 clean:
-	-$(RM) $(DIR_OBJS) $(SECONDARY_FLASH)$(SECONDARY_LIST)$(SECONDARY_SIZE) HID_Keyboard.elf
+	-$(RM) $(DIR_OBJS) $(SECONDARY_FLASH)$(SECONDARY_LIST)$(SECONDARY_SIZE) at-node.elf
 	-$(RM) $(DIR_EXPANDS) $(CALLGRAPH_DOT)
 	-$(RM) $(DIR_DEPS)
 secondary-outputs: $(SECONDARY_FLASH) $(SECONDARY_LIST) $(SECONDARY_SIZE)

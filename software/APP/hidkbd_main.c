@@ -1,9 +1,9 @@
 /********************************** (C) COPYRIGHT *******************************
  * File Name          : main.c
- * Author             : WCH
+ * Author             : WCH / at-node
  * Version            : V1.0
  * Date               : 2020/08/06
- * Description        : 蓝牙键盘应用主函数及任务系统初始化
+ * Description        : 蓝牙键盘 + USB 复合设备（CDC + HID）主函数及任务初始化
  *********************************************************************************
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
  * Attention: This software (modified or not) and binary are used for 
@@ -16,6 +16,7 @@
 #include "HAL.h"
 #include "hiddev.h"
 #include "hidkbd.h"
+#include "usb_dev.h"
 
 /*********************************************************************
  * GLOBAL TYPEDEFS
@@ -68,6 +69,8 @@ int main(void)
     PRINT("%s\n", VER_LIB);
     CH58X_BLEInit();
     HAL_Init();
+    USB_Composite_Init();
+    PFIC_EnableIRQ(USB_IRQn);
     GAPRole_PeripheralInit();
     HidDev_Init();
     HidEmu_Init();
