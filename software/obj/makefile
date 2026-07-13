@@ -56,13 +56,13 @@ main-build: HID_Keyboard.elf secondary-outputs
 
 # Tool invocations
 HID_Keyboard.elf: $(OBJS) $(USER_OBJS_ESCAPE)
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "../Ld/Link.ld" -nostartfiles -Xlinker --gc-sections -L".." -L"../LIB" -L"../StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"HID_Keyboard.map" --specs=nano.specs --specs=nosys.specs -o "HID_Keyboard.elf" $(OBJS) $(LIBS)
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\Ld\Link.ld" -nostartfiles -Xlinker --gc-sections -Xlinker --print-gc-sections -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software" -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\LIB" -L"e:\Projects\CH582-EVT\EXAM\BLE\HID_Keyboard\software\StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"HID_Keyboard.map" --specs=nano.specs --specs=nosys.specs -o "HID_Keyboard.elf" $(OBJS) $(LIBS) -lprintf
 HID_Keyboard.hex: HID_Keyboard.elf
 	@	riscv-none-embed-objcopy -O ihex "HID_Keyboard.elf" "HID_Keyboard.hex"
 HID_Keyboard.lst: HID_Keyboard.elf
 	@	riscv-none-embed-objdump --source --all-headers --demangle --line-numbers --wide "HID_Keyboard.elf" > "HID_Keyboard.lst"
 HID_Keyboard.siz: HID_Keyboard.elf
-	riscv-none-embed-size --format=berkeley "HID_Keyboard.elf"
+	riscv-none-embed-size --format=berkeley -x --totals "HID_Keyboard.elf"
 
 # Other Targets
 clean:

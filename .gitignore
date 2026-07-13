@@ -1,14 +1,14 @@
 # === Firmware (software/) ===
 
 # Build output
-software/obj/*.o
-software/obj/*.d
-software/obj/*.elf
-software/obj/*.hex
-software/obj/*.lst
-software/obj/*.map
-software/obj/*.siz
-software/obj/*.expand
+software/obj/**/*.o
+software/obj/**/*.d
+software/obj/**/*.elf
+software/obj/**/*.hex
+software/obj/**/*.lst
+software/obj/**/*.map
+software/obj/**/*.siz
+software/obj/**/*.expand
 
 # Build artifacts (at software root)
 software/*.elf

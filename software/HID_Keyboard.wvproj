@@ -1,46 +1,26 @@
 {
 	"version": "1.0",
+	"hasAllParsed": true,
 	"isNormalMRSProject": true,
 	"basic": {
 		"chipInfo": {
 			"vendor": "WCH",
 			"toolchain": "RISC-V",
-			"series": "CH32L103",
+			"series": "CH58X",
 			"rtos": "NoneOS",
-			"mcu": "CH32L103C8T6",
+			"mcu": "CH582F",
 			"description": "",
+			"tempratureScope": "",
 			"artifactType": "executable",
 			"link": "WCH-Link",
 			"peripheral_version": "1.0",
 			"calibrateSupport": false,
-			"calibrateCommand": ""
+			"calibrateCommand": "",
+			"UIConfigSupport": false,
+			"UIConfigCommand": "",
+			"externalFlashSupport": false
 		},
-		"linkedFolders": [
-			{
-				"name": "HAL",
-				"location": "HAL"
-			},
-			{
-				"name": "LIB",
-				"location": "LIB"
-			},
-			{
-				"name": "Ld",
-				"location": "Ld"
-			},
-			{
-				"name": "RVMSIS",
-				"location": "RVMSIS"
-			},
-			{
-				"name": "Startup",
-				"location": "Startup"
-			},
-			{
-				"name": "StdPeriphDriver",
-				"location": "StdPeriphDriver"
-			}
-		],
+		"linkedFolders": [],
 		"removedResources": [
 			{
 				"parentLogicPath": "",
@@ -102,6 +82,7 @@
 					"code_generation_without_hardware_floating": false,
 					"use_pipelines": false,
 					"show_caret_indicating_the_column": false,
+					"calling_convention_variant": false,
 					"other_optimization_flags": ""
 				},
 				"warnings": {
@@ -241,7 +222,7 @@
 						"do_not_use_default_libraries": false,
 						"no_startup_or_default_libs": false,
 						"remove_unused_sections": true,
-						"print_removed_sections": false,
+						"print_removed_sections": true,
 						"omit_all_symbol_information": false
 					},
 					"libraries": {
@@ -270,7 +251,7 @@
 						"do_not_use_syscalls": true,
 						"verbose": false,
 						"use_wch_printffloat": false,
-						"use_wch_printf": false,
+						"use_wch_printf": true,
 						"use_iqmath": false,
 						"other_linker_flags": ""
 					}
@@ -284,7 +265,7 @@
 						"do_not_use_default_libraries": false,
 						"no_startup_or_default_libs": false,
 						"remove_unused_sections": true,
-						"print_removed_sections": false,
+						"print_removed_sections": true,
 						"omit_all_symbol_information": false
 					},
 					"libraries": {
@@ -313,13 +294,14 @@
 						"do_not_use_syscalls": true,
 						"verbose": false,
 						"use_wch_printffloat": false,
-						"use_wch_printf": false,
+						"use_wch_printf": true,
 						"use_iqmath": false,
 						"other_linker_flags": ""
 					}
 				},
 				"archiver": {
-					"archiver_flags": "-r"
+					"archiver_flags": "-r",
+					"libOutputPrefix": "lib"
 				},
 				"createFlash": {
 					"enabled": true,
@@ -327,6 +309,7 @@
 					"copy_only_section_text": false,
 					"copy_only_section_data": false,
 					"copy_only_sections": [],
+					"create_algorithm_file": false,
 					"other_flags": ""
 				},
 				"createList": {
@@ -346,8 +329,8 @@
 				"printSize": {
 					"enabled": true,
 					"size_format": "berkeley",
-					"hex": false,
-					"show_totals": false,
+					"hex": true,
+					"show_totals": true,
 					"other_flags": ""
 				},
 				"configVariables": [],
@@ -360,6 +343,7 @@
 					"extra_compressed_extension": false,
 					"bit_extension": false,
 					"multiplication_subset_of_the_M_extension": false,
+					"vector_cryptography_extensions": "",
 					"integer_ABI": "ilp32",
 					"floating_point_ABI": "none",
 					"tuning": "default",
@@ -375,11 +359,11 @@
 		]
 	},
 	"flashConfig": {
-		"mcutype": "",
-		"address": "",
+		"mcutype": "CH58x",
+		"address": "0x00000000",
 		"target_path": "",
 		"clkSpeed": "High",
-		"debug_interface_mode": "1-wire serial",
+		"debug_interface_mode": "",
 		"erase": false,
 		"program": false,
 		"verify": false,
@@ -388,6 +372,8 @@
 		"disablepowerout": false,
 		"clearcodeflash": false,
 		"disablecodeprotect": false,
+		"flashType": "",
+		"asmFile_path": "",
 		"exepath": "",
 		"exearguments": ""
 	},

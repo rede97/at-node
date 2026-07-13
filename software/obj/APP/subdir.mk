@@ -28,5 +28,5 @@ DIR_EXPANDS += \
 
 # Each subdirectory must supply rules for building sources it contributes
 APP/%.o: ../APP/%.c
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -DDEBUG=1 -I"../Startup" -I"../APP/include" -I"../Profile/include" -I"../StdPeriphDriver/inc" -I"../HAL/include" -I"../Ld" -I"../LIB" -I"../RVMSIS" -std=gnu99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -c -o "$@" "$<"
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -DDEBUG=1 -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/Startup" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/APP/include" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/Profile/include" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/StdPeriphDriver/inc" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/HAL/include" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/Ld" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/LIB" -I"e:/Projects/CH582-EVT/EXAM/BLE/HID_Keyboard/software/RVMSIS" -std=gnu99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -c -o "$@" "$<"
 
