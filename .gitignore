@@ -15,6 +15,9 @@ obj/*.expand
 .project
 .metadata/
 
+# Reasonix
+.reasonix/
+
 # Editor / OS
 *.swp
 *.swo
