@@ -1,32 +1,55 @@
-# Build output
-obj/*.o
-obj/*.d
-obj/*.elf
-obj/*.hex
-obj/*.lst
-obj/*.map
-obj/*.siz
-obj/*.expand
+# === Firmware (software/) ===
 
-# IDE settings
-.mrs/
-.settings/
-.cproject
-.project
-.metadata/
+# Build output
+software/obj/*.o
+software/obj/*.d
+software/obj/*.elf
+software/obj/*.hex
+software/obj/*.lst
+software/obj/*.map
+software/obj/*.siz
+software/obj/*.expand
+
+# Build artifacts (at software root)
+software/*.elf
+software/*.hex
+software/*.lst
+software/*.map
+software/*.siz
+
+# MounRiver IDE settings
+software/.mrs/
+software/.settings/
+software/.cproject
+software/.project
+software/.metadata/
 
 # Reasonix
 .reasonix/
 
-# Editor / OS
+# === Hardware / PCB (future) ===
+# KiCad
+hardware/*.kicad_pcb-bak
+hardware/*.sch-bak
+hardware/*.kicad_prl
+hardware/fp-info-cache
+hardware/_autosave-*
+
+# Altium
+hardware/__Previews/
+hardware/History/
+hardware/Project Logs for *
+hardware/*.SchDocPreview
+hardware/*.PcbDocPreview
+
+# Generic
+hardware/*.bak
+hardware/*.BackupOf.*
+
+# === OS ===
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
-
-# Build artifacts (at root)
-*.elf
-*.hex
-*.lst
-*.map
+desktop.ini
