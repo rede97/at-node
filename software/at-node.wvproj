@@ -28,7 +28,7 @@
 				"name": "*.wvproj"
 			}
 		],
-		"projectName": "HID_Keyboard",
+		"projectName": "at-node",
 		"architecture": "RISC-V",
 		"projectType": "c"
 	},
@@ -441,8 +441,8 @@
 			"showDebugOutputTimestamps": true
 		},
 		"reserve": {
-			"PROGRAM_NAME": "obj/HID_Keyboard.elf",
-			"PROJECT_ATTR": "HID_Keyboard",
+			"PROGRAM_NAME": "obj/at-node.elf",
+			"PROJECT_ATTR": "at-node",
 			"PROJECT_BUILD_CONFIG_AUTO_ATTR": true,
 			"PROJECT_BUILD_CONFIG_ID_ATTR": "",
 			"ATTR_BUILD_BEFORE_LAUNCH_ATTR": 2,
