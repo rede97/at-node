@@ -27,6 +27,10 @@ software/.metadata/
 # Reasonix
 .reasonix/
 
+# === EVT (reference code — not compiled) ===
+EVT/
+software/obj/EVT/
+
 # === Hardware / PCB (future) ===
 # KiCad
 hardware/*.kicad_pcb-bak
