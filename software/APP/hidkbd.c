@@ -21,6 +21,7 @@
 #include "hidkbdservice.h"
 #include "hiddev.h"
 #include "hidkbd.h"
+#include "usb_dev.h"
 
 /*********************************************************************
  * MACROS
@@ -362,6 +363,9 @@ static void hidEmuSendKbdReport(uint8_t keycode)
 
     HidDev_Report(HID_RPT_ID_KEY_IN, HID_REPORT_TYPE_INPUT,
                   HID_KEYBOARD_IN_RPT_LEN, buf);
+
+    /* Also send via USB HID */
+    USB_HID_SendReport(buf, HID_KEYBOARD_IN_RPT_LEN);
 }
 
 /*********************************************************************

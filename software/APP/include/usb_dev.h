@@ -16,6 +16,7 @@ extern "C" {
 
 extern void USB_Device_Setup(void);
 extern void USB_DevTransProcess(void);
+extern void USB_HID_SendReport(uint8_t *buf, uint8_t len);
 
 #ifdef __cplusplus
 }

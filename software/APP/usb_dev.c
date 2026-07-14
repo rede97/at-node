@@ -392,7 +392,19 @@ void USB_Device_Setup(void)
 }
 
 /*********************************************************************
- * USB 中断
+ * USB keyboard report via EP1 IN
+ */
+void USB_HID_SendReport(uint8_t *buf, uint8_t len)
+{
+    uint8_t i;
+    for (i = 0; i < len && i < 8; i++) {
+        pEP1_IN_DataBuf[i] = buf[i];
+    }
+    DevEP1_IN_Deal(len);
+}
+
+/*********************************************************************
+ * USB IRQ handler
  */
 __attribute__((interrupt("WCH-Interrupt-fast")))
 __attribute__((section(".highcode")))
