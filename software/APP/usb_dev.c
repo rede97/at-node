@@ -86,7 +86,7 @@ static const uint8_t HIDDescr[] = {
  */
 static const uint8_t MyDevDescr[] = {
     0x12,0x01,0x00,0x02,0xEF,0x02,0x01,EP0_SIZE,
-    0x86,0x1A,0x40,0x80,0x00,0x00,0x01,0x02,0x00,0x01
+    0x86,0x1A,0x07,0x21,0x00,0x00,0x01,0x02,0x00,0x01
 };
 
 /*********************************************************************
@@ -286,7 +286,7 @@ void USB_DevTransProcess(void)
                             case USB_DESCR_TYP_CONFIG:
                                 pDescr = MyCfgDescr; len = MyCfgDescr[2]; break;
                             case USB_DESCR_TYP_HID:
-                                pDescr = (uint8_t *)(&MyCfgDescr[64]); len = 9; break;
+                                pDescr = (uint8_t *)(&MyCfgDescr[84]); len = 9; break;
                             case USB_DESCR_TYP_REPORT:
                                 pDescr = HIDDescr; len = sizeof(HIDDescr); break;
                             case USB_DESCR_TYP_STRING:

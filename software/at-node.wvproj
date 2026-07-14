@@ -222,7 +222,7 @@
 						"do_not_use_default_libraries": false,
 						"no_startup_or_default_libs": false,
 						"remove_unused_sections": true,
-						"print_removed_sections": true,
+						"print_removed_sections": false,
 						"omit_all_symbol_information": false
 					},
 					"libraries": {
@@ -265,7 +265,7 @@
 						"do_not_use_default_libraries": false,
 						"no_startup_or_default_libs": false,
 						"remove_unused_sections": true,
-						"print_removed_sections": true,
+						"print_removed_sections": false,
 						"omit_all_symbol_information": false
 					},
 					"libraries": {
@@ -363,7 +363,7 @@
 		"address": "0x00000000",
 		"target_path": "",
 		"clkSpeed": "High",
-		"debug_interface_mode": "",
+		"debug_interface_mode": "1-wire serial",
 		"erase": false,
 		"program": false,
 		"verify": false,

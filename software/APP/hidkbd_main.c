@@ -12,6 +12,23 @@
 #include "hidkbd.h"
 #include "usb_dev.h"
 
+/* ===== AT command handlers ===== */
+static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
+static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 BLE: %s", VER_LIB); return 0; }
+static int at_cmd_HELP(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("AT / AT+VER / AT+HELP / AT+ECHO"); return 0; }
+static int at_cmd_ECHO(int argc, char *argv[])  {
+    if (argc < 2) { AT_Response("usage: AT+ECHO=text"); return -1; }
+    AT_Response("%s", argv[1]);
+    return 0;
+}
+
+static const at_cmd_t cmd_table[] = {
+    { "AT",       "handshake -> OK",     at_cmd_AT },
+    { "AT+VER",   "firmware version",    at_cmd_VER },
+    { "AT+HELP",  "command list",        at_cmd_HELP },
+    { "AT+ECHO",  "echo <text>",         at_cmd_ECHO },
+};
+
 __attribute__((aligned(4))) uint32_t MEM_BUF[BLE_MEMHEAP_SIZE / 4];
 
 #if(defined(BLE_MAC)) && (BLE_MAC == TRUE)
@@ -43,6 +60,7 @@ int main(void)
 #ifdef DEBUG
     GPIOA_SetBits(bTXD1);
     GPIOA_ModeCfg(bTXD1, GPIO_ModeOut_PP_5mA);
+    GPIOA_ModeCfg(bRXD1, GPIO_ModeIN_PU);  // PA8 = UART1 RX for AT commands
     UART1_DefInit();
 #endif
     PRINT("%s\n", VER_LIB);
@@ -50,6 +68,9 @@ int main(void)
     /* BLE 初始化（与 BleInputStick 顺序一致：BLE 先，USB 后） */
     CH58X_BLEInit();
     HAL_Init();
+
+    /* AT command parser — UART1 serial input */
+    AT_Init((at_cmd_t *)cmd_table, sizeof(cmd_table)/sizeof(cmd_table[0]));
 
     /* Always enable key scanning — works with USB even without BLE */
     HalKeyConfig(key_press);

@@ -23,6 +23,7 @@ extern "C" {
 #include "SLEEP.h"
 #include "LED.h"
 #include "KEY.h"
+#include "AT.h"
 
 /* hal task Event */
 #define LED_BLINK_EVENT       0x0001
