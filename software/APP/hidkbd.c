@@ -521,7 +521,7 @@ static uint8_t hidEmuRptCB(uint8_t id, uint8_t type, uint16_t uuid,
     // notifications enabled
     else if(oper == HID_DEV_OPER_ENABLE)
     {
-        HalKeyConfig(key_press);
+        // Key scanning already activated in main() — works with USB even without BLE
         // tmos_start_task(hidEmuTaskId, START_REPORT_EVT, 500);
     }
     return status;

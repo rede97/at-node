@@ -50,6 +50,10 @@ int main(void)
     /* BLE 初始化（与 BleInputStick 顺序一致：BLE 先，USB 后） */
     CH58X_BLEInit();
     HAL_Init();
+
+    /* Always enable key scanning — works with USB even without BLE */
+    HalKeyConfig(key_press);
+
     GAPRole_PeripheralInit();
     HidDev_Init();
     HidEmu_Init();
