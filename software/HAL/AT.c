@@ -158,13 +158,5 @@ void AT_Poll(void)
                 at_line[at_line_len++] = (char)cdc_buf[i];
         }
     }
-
-    /* --- 4. CDC heartbeat (1 Hz) --- */
-    static int tick = 0;
-    tick++;
-    if (tick >= 100) {
-        tick = 0;
-        USB_CDC_Write((const uint8_t *)"Hello World\r\n", 14);
-    }
 }
 /******************************** endfile @ AT.c ******************************/
