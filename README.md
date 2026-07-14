@@ -25,7 +25,7 @@
 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| **BLE HID Keyboard** | ✅ **Implemented** | Bluetooth keyboard via HID over GATT. Device name: "Martillo-T00" |
+| **BLE HID Keyboard** | ✅ **Implemented** | Bluetooth keyboard via HID over GATT. Device name: "AT-Node" |
 | **Wired (USB) Keyboard** | 🚧 *Planned* | USB HID device mode for wired operation |
 | **AT Command Interface** | 🚧 *Planned* | Text-based command/response protocol over serial |
 | **UART Serial Port** | ✅ **Implemented** | Hardware UART1 for debug output (TX), expandable to RX/TX |
@@ -129,7 +129,7 @@ software/
 
 | 功能 | 状态 | 说明 |
 |------|------|------|
-| **BLE 蓝牙键盘** | ✅ **已实现** | 通过 BLE HID over GATT 模拟键盘，设备名 "Martillo-T00" |
+| **BLE 蓝牙键盘** | ✅ **已实现** | 通过 BLE HID over GATT 模拟键盘，设备名 "AT-Node" |
 | **有线 USB 键盘** | 🚧 *计划中* | USB HID 设备模式，即插即用 |
 | **AT 命令接口** | 🚧 *计划中* | 基于串口的文本命令/响应协议 |
 | **UART 串口** | ✅ **已实现** | 硬件 UART1 调试输出（TX），可扩展为收发 |

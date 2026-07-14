@@ -8,7 +8,7 @@ RISC-V BLE HID keyboard firmware for the WCH CH582F microcontroller. Self-contai
 - **Stack**: BLE 4.2/5.0 via pre-compiled `libCH58xBLE.a`
 - **Scheduler**: TMOS (cooperative, single-loop)
 - **Entry point**: `software/APP/hidkbd_main.c` → `main()`
-- **Device name**: "Martillo-T00" (set in `hidkbd.c`)
+- **Device name**: "AT-Node" (set in `hidkbd.c`)
 - **Repo**: https://github.com/rede97/at-node
 
 ## Commands
