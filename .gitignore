@@ -17,13 +17,6 @@ software/*.lst
 software/*.map
 software/*.siz
 
-# MounRiver IDE settings
-software/.mrs/
-software/.settings/
-software/.cproject
-software/.project
-software/.metadata/
-
 # Reasonix
 .reasonix/
 

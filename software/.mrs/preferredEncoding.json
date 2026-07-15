@@ -1,0 +1,12 @@
+{
+	"details": [
+		{
+			"file": "APP/hidkbd.c",
+			"encoding": "utf8"
+		},
+		{
+			"file": "APP/hidkbd_main.c",
+			"encoding": "utf8"
+		}
+	]
+}
