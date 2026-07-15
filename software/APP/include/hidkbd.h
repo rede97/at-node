@@ -34,6 +34,12 @@ extern "C" {
  * MACROS
  */
 
+#ifdef DEBUG
+#undef PRINT
+#define PRINT(fmt, ...) printf(fmt "\r", ##__VA_ARGS__)
+#endif
+
+
 /*********************************************************************
  * FUNCTIONS
  */
@@ -47,7 +53,7 @@ extern "C" {
  */
 extern void HidEmu_Init(void);
 extern uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events);
-extern void key_press(uint8_t key);
+extern uint8_t kb_ble_connected(void);
 
 /*********************************************************************
 *********************************************************************/

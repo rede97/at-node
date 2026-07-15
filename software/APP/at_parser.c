@@ -10,10 +10,12 @@
  *   CDC input is echoed (line-buffered) before AT processing.
  ********************************************************************************/
 
-#include "AT.h"
+#include "CONFIG.h"
+#include "at_parser.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <strings.h>
 
 /* --- ring buffer (UART1) --- */
 #define AT_RX_BUF_SIZE  512
@@ -26,8 +28,8 @@ static char  at_line[AT_LINE_MAX];
 static int   at_line_len = 0;
 
 /* --- command table --- */
-static at_cmd_t *cmd_table = NULL;
-static int       cmd_count = 0;
+static at_cmd_t *atCmdTable = NULL;
+static int       atCmdCount = 0;
 
 /* --- channel tracking --- */
 static int       at_channel = AT_CH_UART;
@@ -37,17 +39,26 @@ static char *at_argv[8];
 static char  at_token_buf[AT_LINE_MAX];
 
 /* --- TMOS --- */
+#define AT_EVENT  0x0001
 static tmosTaskID at_task_id = INVALID_TASK_ID;
 
-/*********************************************************************
- * @fn      AT_Init
- */
+static tmosEvents AT_ProcessEvent(tmosTaskID tid, tmosEvents evt)
+{
+    (void)tid;
+    if (evt & AT_EVENT) {
+        AT_Poll();
+        tmos_start_task(at_task_id, AT_EVENT, MS1_TO_SYSTEM_TIME(10));
+        return evt ^ AT_EVENT;
+    }
+    return 0;
+}
+
 void AT_Init(at_cmd_t *table, int count)
 {
-    cmd_table = table;
-    cmd_count = count;
-    at_task_id = TMOS_ProcessEventRegister(HAL_ProcessEvent);
-    tmos_start_task(at_task_id, HAL_AT_EVENT, MS1_TO_SYSTEM_TIME(10));
+    atCmdTable = table;
+    atCmdCount = count;
+    at_task_id = TMOS_ProcessEventRegister(AT_ProcessEvent);
+    tmos_start_task(at_task_id, AT_EVENT, MS1_TO_SYSTEM_TIME(10));
 }
 
 static void at_write_uart(uint8_t ch)
@@ -102,9 +113,9 @@ static void at_process_line(void)
     }
 
     int found = 0;
-    for (int i = 0; i < cmd_count; i++) {
-        if (strcasecmp(at_argv[0], cmd_table[i].name) == 0) {
-            int ret = cmd_table[i].handler(argc, at_argv);
+    for (int i = 0; i < atCmdCount; i++) {
+        if (strcasecmp(at_argv[0], atCmdTable[i].name) == 0) {
+            int ret = atCmdTable[i].handler(argc, at_argv);
             AT_Response(ret == 0 ? "OK" : "ERROR");
             found = 1;
             break;

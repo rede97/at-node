@@ -318,6 +318,44 @@ Flash 分区布局（以备份升级方案为例）：
 | F10.10 | 支持从 HEX 文件解析固件并自动发送到设备 | P2 |
 | F10.11 | 命令行工具，方便集成到 CI/CD 或 AI Agent 自动化流程 | P3 |
 
+#### 3.10.6 自定义 CDC Bootloader（备选方案）
+
+基于 USB CDC 的自举 Bootloader，替代官方 USB IAP。纯 Python 上位机，无需专有工具。
+
+**Flash 布局**：
+
+```
+0x0000 ┌─────────────────┐
+       │  Bootloader     │  4KB — CDC + Flash 写逻辑
+       │  (RAM 运行)      │
+0x1000 ├─────────────────┤
+       │  APP            │  444KB
+0x6FFF └─────────────────┘
+```
+
+**升级流程**：
+
+```
+AT+IAP → 写 DataFlash 0x55 → 软复位
+→ Bootloader 检测 0x55 → CDC 枚举 "Bootloader ready"
+→ Python 通过 CDC 发 .hex 数据包 (64B + CRC)
+→ Bootloader 缓冲到 RAM, 写入 0x1000-0x6FFF
+→ [最后] 缓冲新 Bootloader 到 RAM
+→ 擦扇区 0 → 写新 Bootloader → 复位
+```
+
+**关键特性**：
+
+| 编号 | 需求 | 优先级 |
+|------|------|--------|
+| F10.12 | Bootloader 自身可通过相同方式升级（最后一步写回扇区 0） | P2 |
+| F10.13 | 上位机用 Python 脚本, 无专用工具依赖 | P2 |
+| F10.14 | 下载过程支持 CRC 校验, 失败时重试 | P3 |
+
+**风险**：擦写扇区 0 期间断电 → 砖（ROM ISP 可恢复）。Agent 场景接 USB Hub 供电时可忽略。
+
+> ⚠️ 官方 USB IAP 方案（EVT）已验证可行但太慢且丑陋。此自定义方案暂不实现，作为后续备选。
+
 ### 3.11 红外发射（🚧 计划中）
 
 #### 3.11.1 硬件方案

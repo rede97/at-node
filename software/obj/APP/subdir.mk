@@ -5,18 +5,27 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../APP/hidkbd.c \
-../APP/hidkbd_main.c \
+../APP/at_cmds.c \
+../APP/at_parser.c \
+../APP/hidkbd_ble.c \
+../APP/hidkbd_usb.c \
+../APP/main.c \
 ../APP/usb_dev.c 
 
 C_DEPS += \
-./APP/hidkbd.d \
-./APP/hidkbd_main.d \
+./APP/at_cmds.d \
+./APP/at_parser.d \
+./APP/hidkbd_ble.d \
+./APP/hidkbd_usb.d \
+./APP/main.d \
 ./APP/usb_dev.d 
 
 OBJS += \
-./APP/hidkbd.o \
-./APP/hidkbd_main.o \
+./APP/at_cmds.o \
+./APP/at_parser.o \
+./APP/hidkbd_ble.o \
+./APP/hidkbd_usb.o \
+./APP/main.o \
 ./APP/usb_dev.o 
 
 DIR_OBJS += \

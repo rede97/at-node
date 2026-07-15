@@ -22,16 +22,13 @@
 #include "hiddev.h"
 #include "hidkbd.h"
 #include "usb_dev.h"
+#include "hidkbd_common.h"
 
 /*********************************************************************
  * MACROS
  */
-// HID keyboard input report length
-#define HID_KEYBOARD_IN_RPT_LEN              8
 
-// HID LED output report length
 #define HID_LED_OUT_RPT_LEN                  1
-
 /*********************************************************************
  * CONSTANTS
  */
@@ -153,14 +150,24 @@ static hidDevCfg_t hidEmuCfg = {
     HID_FEATURE_FLAGS         // HID feature flags
 };
 
-static uint16_t hidEmuConnHandle = GAP_CONNHANDLE_INIT;
+uint16_t hidEmuConnHandle = GAP_CONNHANDLE_INIT;
+
+uint8_t kb_ble_connected(void)  { return (hidEmuConnHandle != GAP_CONNHANDLE_INIT) ? 1 : 0; }
+
+void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
+{
+    uint8_t buf[8];
+    buf[0] = mods;
+    buf[1] = 0;
+    for (int j = 0; j < 6; j++) buf[2+j] = (j < count) ? keys[j] : 0;
+    HidDev_Report(HID_RPT_ID_KEY_IN, HID_REPORT_TYPE_INPUT, 8, buf);
+}
 
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
 
 static void    hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg);
-static void    hidEmuSendKbdReport(uint8_t keycode);
 static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData);
 static uint8_t hidEmuRptCB(uint8_t id, uint8_t type, uint16_t uuid,
                            uint8_t oper, uint16_t *pLen, uint8_t *pData);
@@ -258,7 +265,6 @@ void HidEmu_Init()
  */
 uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
 {
-    static uint8_t send_char = 4;
 
     if(events & SYS_EVENT_MSG)
     {
@@ -303,16 +309,6 @@ uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
         return (events ^ START_PHY_UPDATE_EVT);
     }
 
-    if(events & START_REPORT_EVT)
-    {
-        hidEmuSendKbdReport(send_char);
-        send_char++;
-        if(send_char >= 29)
-            send_char = 4;
-        hidEmuSendKbdReport(0x00);
-        tmos_start_task(hidEmuTaskId, START_REPORT_EVT, 2000);
-        return (events ^ START_REPORT_EVT);
-    }
     return 0;
 }
 
@@ -332,35 +328,6 @@ static void hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg)
         default:
             break;
     }
-}
-
-/*********************************************************************
- * @fn      hidEmuSendKbdReport
- *
- * @brief   Build and send a HID keyboard report.
- *
- * @param   keycode - HID keycode.
- *
- * @return  none
- */
-static void hidEmuSendKbdReport(uint8_t keycode)
-{
-    uint8_t buf[HID_KEYBOARD_IN_RPT_LEN];
-
-    buf[0] = 0;       // Modifier keys
-    buf[1] = 0;       // Reserved
-    buf[2] = keycode; // Keycode 1
-    buf[3] = 0;       // Keycode 2
-    buf[4] = 0;       // Keycode 3
-    buf[5] = 0;       // Keycode 4
-    buf[6] = 0;       // Keycode 5
-    buf[7] = 0;       // Keycode 6
-
-    HidDev_Report(HID_RPT_ID_KEY_IN, HID_REPORT_TYPE_INPUT,
-                  HID_KEYBOARD_IN_RPT_LEN, buf);
-
-    /* Also send via USB HID */
-    USB_HID_SendReport(buf, HID_KEYBOARD_IN_RPT_LEN);
 }
 
 /*********************************************************************
@@ -465,18 +432,6 @@ static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData)
     }
 }
 
-void key_press(uint8_t key)
-{
-    if (key & HAL_KEY_SW_1)
-    {
-        hidEmuSendKbdReport(0x3A); // send F1
-        HalLedSet(HAL_LED_1, HAL_LED_MODE_ON);
-    } else {
-        hidEmuSendKbdReport(0);
-        HalLedSet(HAL_LED_1, HAL_LED_MODE_OFF);
-    }
-}
-
 /*********************************************************************
  * @fn      hidEmuRptCB
  *
@@ -541,6 +496,3 @@ static void hidEmuEvtCB(uint8_t evt)
     // process enter/exit suspend or enter/exit boot mode
     return;
 }
-
-/*********************************************************************
-*********************************************************************/

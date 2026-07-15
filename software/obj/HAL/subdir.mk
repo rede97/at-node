@@ -5,7 +5,6 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../HAL/AT.c \
 ../HAL/KEY.c \
 ../HAL/LED.c \
 ../HAL/MCU.c \
@@ -13,7 +12,6 @@ C_SRCS += \
 ../HAL/SLEEP.c 
 
 C_DEPS += \
-./HAL/AT.d \
 ./HAL/KEY.d \
 ./HAL/LED.d \
 ./HAL/MCU.d \
@@ -21,7 +19,6 @@ C_DEPS += \
 ./HAL/SLEEP.d 
 
 OBJS += \
-./HAL/AT.o \
 ./HAL/KEY.o \
 ./HAL/LED.o \
 ./HAL/MCU.o \

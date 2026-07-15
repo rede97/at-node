@@ -213,12 +213,6 @@ tmosEvents HAL_ProcessEvent(tmosTaskID task_id, tmosEvents events)
         tmos_start_task(halTaskID, HAL_TEST_EVENT, MS1_TO_SYSTEM_TIME(1000));
         return events ^ HAL_TEST_EVENT;
     }
-    if(events & HAL_AT_EVENT)
-    {
-        AT_Poll();
-        tmos_start_task(halTaskID, HAL_AT_EVENT, MS1_TO_SYSTEM_TIME(10));
-        return events ^ HAL_AT_EVENT;
-    }
     return 0;
 }
 
