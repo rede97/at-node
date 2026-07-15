@@ -11,6 +11,21 @@ Quick reference for future refactoring and debugging.
 | **at-node-nrf** | nRF52840 | Zephyr RTOS | 📋 Planned | All BLE/USB via Kconfig, no register hacking |
 | **at-node-esp** | ESP32-S3 | ESP-IDF / Zephyr | 📋 Planned | WiFi + TLS + MQTT, remote agent control |
 
+### Technology Experiment: Rust Core Logic
+
+Plan to implement portable business logic in Rust (`no_std`, `extern "C"` FFI) as an optional alternative to C.
+
+| Module | Language | Reason |
+|--------|----------|--------|
+| AT parser, command dispatch | **Rust** | `match` enum, compile-time exhaustiveness |
+| IR protocol encoding (NEC/SIRC) | **Rust** | unit-testable without hardware |
+| I²C sensor decoders | **Rust** | `Option`/`Result`, no null pointer bugs |
+| USB ISR, GPIO, TIM, BLE stack | **C** | register access, WCH SDK, pre-compiled libs |
+
+**Build**: `cargo build --target riscv32imac-unknown-none-elf` → `libat_rust.a` → link with C firmware. All Rust logic tested on host (`cargo test`) before deploying to CH582F.
+
+**Rationale**: Rust's type system catches state machine bugs at compile time. `#[test]` enables full coverage without hardware in the loop. Compilation to RISC-V is natively supported by `rustc`.
+
 ### Why CH582F is the primary target
 
 Despite the painful SDK, CH582F wins on cost and accessibility:
