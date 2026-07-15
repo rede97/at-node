@@ -50,3 +50,4 @@ hardware/*.BackupOf.*
 .DS_Store
 Thumbs.db
 desktop.ini
+software/.mrs/
