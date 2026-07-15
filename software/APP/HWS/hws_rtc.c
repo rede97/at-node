@@ -1,5 +1,5 @@
 /********************************** (C) COPYRIGHT *******************************
- * File Name          : RTC.c
+ * File Name          : hws_rtc.c
  * Author             : WCH
  * Version            : V1.2
  * Date               : 2022/01/18
@@ -12,7 +12,7 @@
 
 /******************************************************************************/
 /* 头文件包含 */
-#include "HWS.h"
+#include "hws.h"
 
 /*********************************************************************
  * CONSTANTS
@@ -27,7 +27,7 @@
 volatile uint32_t RTCTigFlag;
 
 /*******************************************************************************
- * @fn      RTC_SetTignTime
+ * @fn      hws_rtc_set_trigger
  *
  * @brief   配置RTC触发时间
  *
@@ -35,7 +35,7 @@ volatile uint32_t RTCTigFlag;
  *
  * @return  None.
  */
-void RTC_SetTignTime(uint32_t time)
+void hws_rtc_set_trigger(uint32_t time)
 {
     sys_safe_access_enable();
     R32_RTC_TRIG = time;
@@ -61,7 +61,7 @@ void RTC_IRQHandler(void)
 }
 
 /*******************************************************************************
- * @fn      HAL_Time0Init
+ * @fn      hws_rtc_init
  *
  * @brief   系统定时器初始化
  *
@@ -69,7 +69,7 @@ void RTC_IRQHandler(void)
  *
  * @return  None.
  */
-void HAL_TimeInit(void)
+void hws_rtc_init(void)
 {
 #if(CLK_OSC32K)
     sys_safe_access_enable();
@@ -79,7 +79,7 @@ void HAL_TimeInit(void)
     R8_CK32K_CONFIG |= RB_CLK_INT32K_PON;
     sys_safe_access_disable();
     LSECFG_Current(LSE_RCur_100);
-    Lib_Calibration_LSI();
+    hws_ble_calibrate_lsi();
 #else
     sys_safe_access_enable();
     R8_CK32K_CONFIG |= RB_CLK_OSC32K_XT | RB_CLK_INT32K_PON | RB_CLK_XT32K_PON;

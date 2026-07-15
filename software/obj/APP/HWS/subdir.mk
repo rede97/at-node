@@ -5,25 +5,25 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../APP/HWS/KEY.c \
-../APP/HWS/LED.c \
-../APP/HWS/MCU.c \
-../APP/HWS/RTC.c \
-../APP/HWS/SLEEP.c 
+../APP/HWS/hws_core.c \
+../APP/HWS/hws_key.c \
+../APP/HWS/hws_led.c \
+../APP/HWS/hws_rtc.c \
+../APP/HWS/hws_sleep.c 
 
 C_DEPS += \
-./APP/HWS/KEY.d \
-./APP/HWS/LED.d \
-./APP/HWS/MCU.d \
-./APP/HWS/RTC.d \
-./APP/HWS/SLEEP.d 
+./APP/HWS/hws_core.d \
+./APP/HWS/hws_key.d \
+./APP/HWS/hws_led.d \
+./APP/HWS/hws_rtc.d \
+./APP/HWS/hws_sleep.d 
 
 OBJS += \
-./APP/HWS/KEY.o \
-./APP/HWS/LED.o \
-./APP/HWS/MCU.o \
-./APP/HWS/RTC.o \
-./APP/HWS/SLEEP.o 
+./APP/HWS/hws_core.o \
+./APP/HWS/hws_key.o \
+./APP/HWS/hws_led.o \
+./APP/HWS/hws_rtc.o \
+./APP/HWS/hws_sleep.o 
 
 DIR_OBJS += \
 ./APP/HWS/*.o \

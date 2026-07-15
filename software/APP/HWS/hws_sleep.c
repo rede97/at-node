@@ -1,5 +1,5 @@
 /********************************** (C) COPYRIGHT *******************************
- * File Name          : SLEEP.c
+ * File Name          : hws_sleep.c
  * Author             : WCH
  * Version            : V1.2
  * Date               : 2022/01/18
@@ -12,10 +12,10 @@
 
 /******************************************************************************/
 /* 头文件包含 */
-#include "HWS.h"
+#include "hws.h"
 
 /*******************************************************************************
- * @fn          CH58X_LowPower
+ * @fn          hws_sleep_enter
  *
  * @brief       启动睡眠
  *
@@ -23,9 +23,9 @@
  *
  * @return      state.
  */
-uint32_t CH58X_LowPower(uint32_t time)
+uint32_t hws_sleep_enter(uint32_t time)
 {
-#if(defined(HAL_SLEEP)) && (HAL_SLEEP == TRUE)
+#if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE)
     uint32_t time_sleep, time_curr;
     unsigned long irq_status;
     
@@ -45,7 +45,7 @@ uint32_t CH58X_LowPower(uint32_t time)
         return 2;
     }
 
-    RTC_SetTignTime(time);
+    hws_rtc_set_trigger(time);
     SYS_RecoverIrq(irq_status);
   #if(DEBUG == Debug_UART1) // 使用其他串口输出打印信息需要修改这行代码
     while((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0)
@@ -64,7 +64,7 @@ uint32_t CH58X_LowPower(uint32_t time)
             {
                 time -= 0xA8C00000;
             }
-            RTC_SetTignTime(time);
+            hws_rtc_set_trigger(time);
             LowPower_Idle();
         }
         HSECFG_Current(HSE_RCur_100); // 降为额定电流(低功耗函数中提升了HSE偏置电流)
@@ -78,7 +78,7 @@ uint32_t CH58X_LowPower(uint32_t time)
 }
 
 /*******************************************************************************
- * @fn      HAL_SleepInit
+ * @fn      hws_sleep_init
  *
  * @brief   配置睡眠唤醒的方式   - RTC唤醒，触发模式
  *
@@ -86,9 +86,9 @@ uint32_t CH58X_LowPower(uint32_t time)
  *
  * @return  None.
  */
-void HAL_SleepInit(void)
+void hws_sleep_init(void)
 {
-#if(defined(HAL_SLEEP)) && (HAL_SLEEP == TRUE)
+#if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE)
     sys_safe_access_enable();
     R8_SLP_WAKE_CTRL |= RB_SLP_RTC_WAKE; // RTC唤醒
     sys_safe_access_disable();              //

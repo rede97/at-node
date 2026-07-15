@@ -5,7 +5,7 @@
  ********************************************************************************/
 
 #include "config.h"
-#include "HWS.h"
+#include "hws.h"
 #include "hidkbd_common.h"
 #include "usb_dev.h"
 #include "at_parser.h"

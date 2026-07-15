@@ -9,21 +9,21 @@ C_SRCS += \
 ../APP/BLE/ble_dev_info.c \
 ../APP/BLE/ble_hid_dev.c \
 ../APP/BLE/ble_hid_kbd.c \
-../APP/BLE/ble_scan_param.c 
+../APP/BLE/ble_stack.c 
 
 C_DEPS += \
 ./APP/BLE/ble_batt.d \
 ./APP/BLE/ble_dev_info.d \
 ./APP/BLE/ble_hid_dev.d \
 ./APP/BLE/ble_hid_kbd.d \
-./APP/BLE/ble_scan_param.d 
+./APP/BLE/ble_stack.d 
 
 OBJS += \
 ./APP/BLE/ble_batt.o \
 ./APP/BLE/ble_dev_info.o \
 ./APP/BLE/ble_hid_dev.o \
 ./APP/BLE/ble_hid_kbd.o \
-./APP/BLE/ble_scan_param.o 
+./APP/BLE/ble_stack.o 
 
 DIR_OBJS += \
 ./APP/BLE/*.o \

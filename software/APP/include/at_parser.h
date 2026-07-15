@@ -31,6 +31,7 @@ typedef struct {
 } at_cmd_t;
 
 void AT_Init(at_cmd_t *table, int count);
+void at_init(void);
 void AT_Response(const char *fmt, ...);
 void AT_Poll(void);
 

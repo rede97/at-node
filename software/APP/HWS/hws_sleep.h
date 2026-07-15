@@ -1,5 +1,5 @@
 /********************************** (C) COPYRIGHT *******************************
- * File Name          : SLEEP.h
+ * File Name          : hws_sleep.h
  * Author             : WCH
  * Version            : V1.0
  * Date               : 2018/11/12
@@ -11,8 +11,8 @@
  *******************************************************************************/
 
 /******************************************************************************/
-#ifndef __SLEEP_H
-#define __SLEEP_H
+#ifndef __HWS_SLEEP_H
+#define __HWS_SLEEP_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,7 +29,7 @@ extern "C" {
 /**
  * @brief   配置睡眠唤醒的方式   - RTC唤醒，触发模式
  */
-extern void HAL_SleepInit(void);
+void hws_sleep_init(void);
 
 /**
  * @brief   启动睡眠
@@ -38,7 +38,7 @@ extern void HAL_SleepInit(void);
  *
  * @return  state.
  */
-extern uint32_t CH58X_LowPower(uint32_t time);
+uint32_t hws_sleep_enter(uint32_t time);
 
 /*********************************************************************
 *********************************************************************/

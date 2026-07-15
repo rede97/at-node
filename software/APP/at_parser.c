@@ -61,6 +61,27 @@ void AT_Init(at_cmd_t *table, int count)
     tmos_start_task(at_task_id, AT_EVENT, MS1_TO_SYSTEM_TIME(10));
 }
 
+/*******************************************************************************
+ * @fn      at_init
+ *
+ * @brief   Initialize AT command parser with the built-in command table.
+ *
+ *   Init stage: 3 — called after hws_init(), before ble_peripheral_init().
+ *   Depends on: hws_init() — TMOS scheduler must be running.
+ *               UART1 — must be initialized (done by hws_platform_init if DEBUG).
+ *   Side effects:
+ *     - Registers AT TMOS task polling at 10 ms (UART1 + CDC dual channel).
+ *     - AT commands become available immediately after this call.
+ *     - cmd_table and cmd_table_count are defined in at_cmds.c.
+ *
+ *   This wrapper exists to keep main() clean: the command table and count
+ *   are compilation-unit internals that callers shouldn't need to know.
+ */
+void at_init(void)
+{
+    AT_Init((at_cmd_t *)cmd_table, cmd_table_count);
+}
+
 static void at_write_uart(uint8_t ch)
 {
     while (!(R8_UART1_LSR & RB_LSR_TX_FIFO_EMP));

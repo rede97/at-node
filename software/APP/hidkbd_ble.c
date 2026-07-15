@@ -14,8 +14,6 @@
  * INCLUDES
  */
 #include "config.h"
-#include "LED.h"
-#include "KEY.h"
 #include "ble_dev_info.h"
 #include "ble_batt.h"
 #include "ble_hid_kbd.h"
@@ -202,7 +200,7 @@ static ble_hid_dev_cb_t ble_hid_emu_cbs = {
  *
  * @return  none
  */
-void ble_hid_emu_init()
+void ble_hid_emu_init(void)
 {
     ble_hid_emu_task_id = TMOS_ProcessEventRegister(ble_hid_emu_process_event);
 

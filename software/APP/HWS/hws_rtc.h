@@ -1,5 +1,5 @@
 /********************************** (C) COPYRIGHT *******************************
- * File Name          : RTC.h
+ * File Name          : hws_rtc.h
  * Author             : WCH
  * Version            : V1.0
  * Date               : 2016/04/12
@@ -11,8 +11,8 @@
  *******************************************************************************/
 
 /******************************************************************************/
-#ifndef __RTC_H
-#define __RTC_H
+#ifndef __HWS_RTC_H
+#define __HWS_RTC_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -47,14 +47,14 @@ extern volatile uint32_t RTCTigFlag;
 /**
  * @brief   Initialize time Service.
  */
-void HAL_TimeInit(void);
+void hws_rtc_init(void);
 
 /**
  * @brief   配置RTC触发时间
  *
  * @param   time    - 触发时间.
  */
-extern void RTC_SetTignTime(uint32_t time);
+void hws_rtc_set_trigger(uint32_t time);
 
 #ifdef __cplusplus
 }

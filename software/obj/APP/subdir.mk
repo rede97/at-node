@@ -7,6 +7,7 @@
 C_SRCS += \
 ../APP/at_cmds.c \
 ../APP/at_parser.c \
+../APP/ble_init.c \
 ../APP/hidkbd_ble.c \
 ../APP/hidkbd_usb.c \
 ../APP/main.c \
@@ -15,6 +16,7 @@ C_SRCS += \
 C_DEPS += \
 ./APP/at_cmds.d \
 ./APP/at_parser.d \
+./APP/ble_init.d \
 ./APP/hidkbd_ble.d \
 ./APP/hidkbd_usb.d \
 ./APP/main.d \
@@ -23,6 +25,7 @@ C_DEPS += \
 OBJS += \
 ./APP/at_cmds.o \
 ./APP/at_parser.o \
+./APP/ble_init.o \
 ./APP/hidkbd_ble.o \
 ./APP/hidkbd_usb.o \
 ./APP/main.o \

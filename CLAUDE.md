@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 CH582F firmware — BLE HID keyboard + USB CDC+HID composite. AT-command driven AI agent peripheral. Self-contained WCH SDK.
 
+**Template mission:** Low-cost CH58x MCU ($0.50 BOM) with development experience matching premium ecosystems. See `software/DESIGN.md` for design philosophy.
+
 - **MCU**: CH582F (RISC-V rv32imac, 60 MHz, 448K Flash / 32K RAM)
 - **BLE**: 4.2/5.0 via pre-compiled `libCH58xBLE.a`, TMOS cooperative scheduler
 - **USB**: CDC ACM (PID=0x8040) + HID Keyboard composite (IAD)
@@ -35,8 +37,8 @@ uv run python tools/test_at.py
 | Layer | Path | Role |
 |-------|------|------|
 | APP | `software/APP/` | main, AT parser + cmds, BLE/USB keyboard, USB CDC+HID, `config.h` |
-| APP/HWS | `software/APP/HWS/` | Hardware services — KEY, LED, RTC, SLEEP, MCU init |
-| APP/BLE | `software/APP/BLE/` | BLE GATT services — HID Dev, HID Keyboard, Battery, Device Info |
+| APP/HWS | `software/APP/HWS/` | Hardware services — core (init/task/temp), LED, KEY, RTC, SLEEP |
+| APP/BLE | `software/APP/BLE/` | BLE stack init + GATT services — HID Dev, HID Keyboard, Battery, Device Info |
 | BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
 | RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
@@ -88,26 +90,34 @@ Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
 | EP2 | HID Keyboard | Interrupt IN/OUT | 8B | Keys + LED |
 | EP3 | CDC Comm | Interrupt IN | 8B | Serial state notify |
 
-### Init sequence
+### Init sequence (7 linear stages)
 
 ```
-CH58X_BLEInit → HAL_Init → AT_Init → HalKeyConfig → GAPRole_PeripheralInit
-→ ble_hid_dev_init → ble_hid_emu_init → USB_Device_Setup → PFIC_EnableIRQ(USB_IRQn)
-→ Main_Circulation() [while(1) TMOS_SystemProcess()]
+1. hws_platform_init()    — power, clock, GPIO, debug UART
+2. ble_stack_init()       — BLE protocol stack (+ initializes TMOS scheduler)
+3. hws_init(key_press)    — RTC, sleep, LED, KEY + callback, HWS TMOS task
+4. at_init()              — AT command parser (UART1 + CDC, 10ms TMOS poll)
+5. ble_peripheral_init()  — GAP role + HID Device + HID Emu + advertising
+6. usb_init()             — USB composite (CDC+HID) OR sleep mode
+7. main_loop()            — TMOS_SystemProcess() forever
 ```
+
+Stage 2 MUST come before stage 3: BLE_LibInit() initializes TMOS,
+and hws_init() calls TMOS_ProcessEventRegister() which requires TMOS.
+USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
 
 ### TMOS task registry
 
 | Task | Registered in | File |
 |------|--------------|------|
-| HAL task | `HAL_Init()` | `APP/HWS/MCU.c` |
-| HID Dev task | `ble_hid_dev_init()` | `APP/BLE/hiddev.c` |
+| HWS task | `hws_init()` | `APP/HWS/hws_core.c` |
+| AT task | `at_init()` → `AT_Init()` | `APP/at_parser.c` |
+| HID Dev task | `ble_hid_dev_init()` | `APP/BLE/ble_hid_dev.c` |
 | HID Emu task | `ble_hid_emu_init()` | `APP/hidkbd_ble.c` |
-| AT task | `AT_Init()` | `APP/at_parser.c` |
 
 ## Critical constraints
 
-- **USB + sleep mutually exclusive**: `HAL_SLEEP=TRUE` → USB disabled at compile time (`#if` in main.c). USB clock stops in sleep → enumeration lost (code 43).
+- **USB + sleep mutually exclusive**: `HWS_SLEEP=TRUE` → USB disabled at compile time (`#if` in main.c). USB clock stops in sleep → enumeration lost (code 43).
 - **`usb_dev.c` is WCH EVT copy**: `USB_DevTransProcess` is based on official `HID_CompliantDev/src/Main.c`. Don't rewrite it.
 - **Key scanning in `main()`**, not BLE callback — works on USB without BLE paired.
 - **GPIO_Pin_All init does NOT interfere with USB D+/D-** (PB10/11) on CH582F — confirmed.
@@ -115,6 +125,8 @@ CH58X_BLEInit → HAL_Init → AT_Init → HalKeyConfig → GAPRole_PeripheralIn
 - **C only**, gnu99. Toolchain: `riscv-none-embed-gcc` (MounRiver Studio).
 - **BLE SNV**: Flash at `0x77E00` (last 512B of Data Flash), 1 bonded device, new pairing overwrites.
 - **`MEM_BUF[BLE_MEMHEAP_SIZE/4]`**: BLE heap at top of RAM, ≥6KB.
-- **BLE init callbacks** in `MCU.c` `CH58X_BLEInit()` — `sleepCB` only registered when `HAL_SLEEP == TRUE`.
+- **BLE init** in `APP/BLE/ble_stack.c` `ble_stack_init()` — `sleepCB` only registered when `HWS_SLEEP == TRUE`.
+- **HWS naming**: files `hws_<subsys>.c/h`, functions `hws_<subsys>_<action>()`, macros `HWS_<SUBSYS>_<NAME>`, include guard `__HWS_<SUBSYS>_H`.
+- **AI-native design**: project designed for AI-assisted development — every module has file header context, ASCII architecture diagrams, self-documenting naming. Read `software/DESIGN.md` §1.4 for the full AI-readability philosophy. CLAUDE.md + DESIGN.md together give any AI agent enough context to start contributing without human explanation.
 - **EVT/ directory**: WCH CH583 SDK reference code (gitignored, not compiled).
-- **References**: `DESIGN.md` (memory layout, BLE bonding, USB constraints), `README.md` (features, pinout, roadmap), `REQUIREMENTS.md` (full specs, Chinese).
+- **References**: [DESIGN.md](software/DESIGN.md) (design philosophy, architecture, coding standards), [REFACTOR_PLAN.md](software/REFACTOR_PLAN.md) (current rename progress), [README.md](software/README.md) (features, pinout), [REQUIREMENTS.md](software/REQUIREMENTS.md) (full specs, Chinese).
