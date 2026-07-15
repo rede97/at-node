@@ -1,3 +1,4 @@
+<!-- DESIGN PHILOSOPHY: at-node is an AI agent peripheral — the hands and feet of LLMs. -->
 # at-node Design Notes
 
 Quick reference for future refactoring and debugging.

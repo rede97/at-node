@@ -1,3 +1,4 @@
+<!-- DESIGN PHILOSOPHY: This device is an AI agent peripheral. All AT commands are designed for agent-to-hardware interaction, not human UI. -->
 # at-node 需求文档
 
 > 版本：v0.1 · 最后更新：2026-07-13  
@@ -9,7 +10,7 @@
 
 ### 1.1 项目背景
 
-at-node 是一个基于 WCH CH582F（RISC-V BLE 5.0 MCU）的 IoT 固件项目。它通过 AT 命令桥接键盘输入、传感器读取和 I/O 控制，可无缝嵌入 AI Agent 管线，实现对电脑的基本远程操作——唤醒、输入文本、按快捷键，或读取环境数据。
+at-node 是一个 **AI Agent 物理外设**（基于 WCH CH582F RISC-V BLE MCU）。所有功能通过 AT 命令暴露给 Agent —— 键盘输入、红外发射、传感器采集、GPIO 控制 —— 没有 GUI，没有触屏，只有文本协议。设计理念: LLM 的手和脚。
 
 项目定位为**低成本、低功耗的物理层 AI Agent 控制节点**，通过有线（USB）和无线（BLE）两种方式模拟键盘，通过串口/虚拟串口接收 AI Agent 的指令。
 

@@ -1,6 +1,9 @@
 # at-node
 
-**AT-command driven IoT keyboard & sensor node**
+**AT-command driven agent I/O module — the hands & feet of AI**
+
+> Designed for **AI Agents**, not humans. No GUI, no app — just AT commands over serial.
+> Connect an LLM to the physical world: type keystrokes, send IR, read sensors.
 
 [🇬🇧 English](#english) · [🇨🇳 中文](#chinese)
 
@@ -112,7 +115,7 @@ software/
 
 ## <a name="chinese"></a>🇨🇳 中文
 
-**at-node** 是基于 [WCH CH582F](https://www.wch.cn/products/CH582.html)（RISC-V BLE 5.0 MCU）的 IoT 固件，通过 AT 命令模拟键盘输入、读取传感器、控制 I/O。它可以无缝嵌入 AI Agent 之中，实现对电脑的基本远程操作——唤醒、打字、按快捷键，或读取环境数据。
+**at-node** 是 **AI Agent 的物理 I/O 外设**——LLM 的手和脚。通过 USB 连接，Python Agent 发送 AT 命令即可: 输入键盘、发射红外、读取传感器、控制 GPIO。它不是给人类用的 App，而是给 Agent 用的硬件接口。
 
 > ⚠️ **安全警告**
 >
