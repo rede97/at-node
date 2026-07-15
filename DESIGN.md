@@ -12,6 +12,18 @@ Quick reference for future refactoring and debugging.
 | **at-node-esp** | ESP32-S3 | ESP-IDF / Zephyr | 📋 Planned | WiFi + TLS + MQTT, remote agent control |
 | **at-node-pico** | RP2040 | Pico SDK | 💡 Future | USB-only wired agent, ultra-low-cost |
 
+### Why CH582F is the primary target
+
+Despite the painful SDK, CH582F wins on cost and accessibility:
+
+- **Chip cost**: ~$0.50 (vs nRF52840 ~$2.50, ESP32-S3 ~$3)
+- **Family compatibility**: Code is portable to CH592 (lower power, ~$0.30) and CH572 (USB-only) with minimal changes
+- **PCB simplicity**: QFN48, single 3.3V rail, few passives — 2-layer board is trivial
+- **Replication cost**: Bare-minimum BOM under $3 including IR LED + transistor
+- **Yield**: One reflow pass, no fine-pitch BGA, hand-solderable in small batches
+
+**Verdict**: Develop on CH582F (cheap enough to fry), port to CH592 for production volume. Keep nRF/ESP as premium variants for users who need Zephyr/WiFi.
+
 ### Platform Design Philosophy
 
 All variants share the same AT command interface. Agent code (Python) works identically regardless of transport:
