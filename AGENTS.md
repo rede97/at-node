@@ -30,8 +30,8 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 | Layer | Path | Role |
 |-------|------|------|
 | APP | `software/APP/` | main, BLE keyboard (`hidkbd.c`), USB CDC+HID (`usb_dev.c`) |
-| HAL | `software/HAL/` | KEY, LED, RTC, SLEEP, MCU init. `config.h` is master config |
-| Profile | `software/Profile/` | BLE GATT — HID Dev, HID Keyboard, Battery, Device Info |
+| APP/HWS | `software/APP/HWS/` | Hardware services — KEY, LED, RTC, SLEEP, MCU init |
+| APP/BLE | `software/APP/BLE/` | BLE GATT services — HID Dev, HID Keyboard, Battery, Device Info |
 | BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
 | RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |

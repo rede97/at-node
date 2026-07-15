@@ -5,8 +5,8 @@
  * Description        : BLE HID + USB HID keyboard firmware
  ********************************************************************************/
 
-#include "CONFIG.h"
-#include "HAL.h"
+#include "config.h"
+#include "HWS.h"
 #include "hiddev.h"
 #include "hidkbd.h"
 #include "usb_dev.h"

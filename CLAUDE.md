@@ -34,9 +34,9 @@ uv run python tools/test_at.py
 
 | Layer | Path | Role |
 |-------|------|------|
-| APP | `software/APP/` | main, AT parser + cmds, BLE keyboard, USB keyboard, USB CDC+HID descriptors |
-| HAL | `software/HAL/` | KEY, LED, RTC, SLEEP, MCU init. `config.h` is master config |
-| Profile | `software/Profile/` | BLE GATT — HID Dev, HID Keyboard, Battery, Device Info |
+| APP | `software/APP/` | main, AT parser + cmds, BLE/USB keyboard, USB CDC+HID, `config.h` |
+| APP/HWS | `software/APP/HWS/` | Hardware services — KEY, LED, RTC, SLEEP, MCU init |
+| APP/BLE | `software/APP/BLE/` | BLE GATT services — HID Dev, HID Keyboard, Battery, Device Info |
 | BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
 | RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
@@ -56,7 +56,7 @@ Old monolith `hidkbd.c` + `AT.c` was split into:
 | `APP/at_cmds.c` | Command table + keyboard routing state machine (`kb_flush()` dispatches to BLE/USB) |
 | `APP/main.c` | Entry point — inline `key_press()` (test code), init sequence, TMOS main loop |
 
-Deleted: `APP/hidkbd.c`, `APP/hidkbd_main.c`, `HAL/AT.c`, `HAL/include/AT.h`
+Deleted: `APP/hidkbd.c`, `APP/hidkbd_main.c`, `HAL/` directory (moved to `APP/HWS/`)
 
 ### Keyboard routing layer (`hidkbd_common.h` + `at_cmds.c`)
 
@@ -64,7 +64,7 @@ Deleted: `APP/hidkbd.c`, `APP/hidkbd_main.c`, `HAL/AT.c`, `HAL/include/AT.h`
 AT command → at_cmds handler (at_cmd_KEY etc.)
   → kb_*() function (at_cmds.c)
     → kb_flush() checks kb_mode
-      → kb_ble_send_report() [hidkbd_ble.c] → HidDev_Report() [Profile/hiddev.c]
+      → kb_ble_send_report() [hidkbd_ble.c] → HidDev_Report() [BLE/hiddev.c]
       → kb_usb_send_report() [hidkbd_usb.c] → USB_HID_SendReport() [usb_dev.c]
 ```
 
@@ -100,8 +100,8 @@ CH58X_BLEInit → HAL_Init → AT_Init → HalKeyConfig → GAPRole_PeripheralIn
 
 | Task | Registered in | File |
 |------|--------------|------|
-| HAL task | `HAL_Init()` | `HAL/MCU.c` |
-| HID Dev task | `HidDev_Init()` | `Profile/hiddev.c` |
+| HAL task | `HAL_Init()` | `APP/HWS/MCU.c` |
+| HID Dev task | `HidDev_Init()` | `APP/BLE/hiddev.c` |
 | HID Emu task | `HidEmu_Init()` | `APP/hidkbd_ble.c` |
 | AT task | `AT_Init()` | `APP/at_parser.c` |
 

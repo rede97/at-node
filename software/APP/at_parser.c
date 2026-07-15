@@ -10,7 +10,7 @@
  *   CDC input is echoed (line-buffered) before AT processing.
  ********************************************************************************/
 
-#include "CONFIG.h"
+#include "config.h"
 #include "at_parser.h"
 #include <string.h>
 #include <stdio.h>

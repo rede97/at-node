@@ -5,40 +5,37 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../APP/at_cmds.c \
-../APP/at_parser.c \
-../APP/hidkbd_ble.c \
-../APP/hidkbd_usb.c \
-../APP/main.c \
-../APP/usb_dev.c 
+../APP/BLE/battservice.c \
+../APP/BLE/devinfoservice.c \
+../APP/BLE/hiddev.c \
+../APP/BLE/hidkbdservice.c \
+../APP/BLE/scanparamservice.c 
 
 C_DEPS += \
-./APP/at_cmds.d \
-./APP/at_parser.d \
-./APP/hidkbd_ble.d \
-./APP/hidkbd_usb.d \
-./APP/main.d \
-./APP/usb_dev.d 
+./APP/BLE/battservice.d \
+./APP/BLE/devinfoservice.d \
+./APP/BLE/hiddev.d \
+./APP/BLE/hidkbdservice.d \
+./APP/BLE/scanparamservice.d 
 
 OBJS += \
-./APP/at_cmds.o \
-./APP/at_parser.o \
-./APP/hidkbd_ble.o \
-./APP/hidkbd_usb.o \
-./APP/main.o \
-./APP/usb_dev.o 
+./APP/BLE/battservice.o \
+./APP/BLE/devinfoservice.o \
+./APP/BLE/hiddev.o \
+./APP/BLE/hidkbdservice.o \
+./APP/BLE/scanparamservice.o 
 
 DIR_OBJS += \
-./APP/*.o \
+./APP/BLE/*.o \
 
 DIR_DEPS += \
-./APP/*.d \
+./APP/BLE/*.d \
 
 DIR_EXPANDS += \
-./APP/*.234r.expand \
+./APP/BLE/*.234r.expand \
 
 
 # Each subdirectory must supply rules for building sources it contributes
-APP/%.o: ../APP/%.c
+APP/BLE/%.o: ../APP/BLE/%.c
 	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -DDEBUG=1 -I"e:/Projects/at_node/software/Startup" -I"e:/Projects/at_node/software/APP/include" -I"e:/Projects/at_node/software/StdPeriphDriver/inc" -I"e:/Projects/at_node/software/Ld" -I"e:/Projects/at_node/software/LIB" -I"e:/Projects/at_node/software/RVMSIS" -I"e:/Projects/at_node/software/APP/BLE" -I"e:/Projects/at_node/software/APP/HWS" -std=gnu99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -c -o "$@" "$<"
 

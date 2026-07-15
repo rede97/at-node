@@ -149,10 +149,11 @@
 							"${project}/APP/include",
 							"${project}/Profile/include",
 							"${project}/StdPeriphDriver/inc",
-							"${project}/HAL/include",
 							"${project}/Ld",
 							"${project}/LIB",
-							"${project}/RVMSIS"
+							"${project}/RVMSIS",
+							"${project}/APP/BLE",
+							"${project}/APP/HWS"
 						],
 						"include_system_paths": [],
 						"include_files": []
@@ -363,7 +364,7 @@
 		"address": "0x00000000",
 		"target_path": "obj/at-node.hex",
 		"clkSpeed": "High",
-		"debug_interface_mode": "",
+		"debug_interface_mode": "1-wire serial",
 		"erase": false,
 		"program": true,
 		"verify": false,

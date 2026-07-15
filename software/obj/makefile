@@ -11,8 +11,8 @@ RM := rm -rf
 -include StdPeriphDriver/subdir.mk
 -include Startup/subdir.mk
 -include RVMSIS/subdir.mk
--include Profile/subdir.mk
--include HAL/subdir.mk
+-include APP/HWS/subdir.mk
+-include APP/BLE/subdir.mk
 -include APP/subdir.mk
 -include subdir.mk
 -include objects.mk

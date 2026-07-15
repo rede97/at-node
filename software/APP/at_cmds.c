@@ -4,8 +4,8 @@
  * Description        : AT command handlers and command table
  ********************************************************************************/
 
-#include "CONFIG.h"
-#include "HAL.h"
+#include "config.h"
+#include "HWS.h"
 #include "hidkbd_common.h"
 #include "usb_dev.h"
 #include "at_parser.h"

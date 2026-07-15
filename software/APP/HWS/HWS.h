@@ -11,14 +11,14 @@
  *******************************************************************************/
 
 /******************************************************************************/
-#ifndef __HAL_H
-#define __HAL_H
+#ifndef __HWS_H
+#define __HWS_H
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include "CONFIG.h"
+#include "config.h"
 #include "RTC.h"
 #include "SLEEP.h"
 #include "LED.h"

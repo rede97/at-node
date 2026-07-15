@@ -13,7 +13,7 @@
 /*********************************************************************
  * INCLUDES
  */
-#include "CONFIG.h"
+#include "config.h"
 #include "LED.h"
 #include "KEY.h"
 #include "devinfoservice.h"

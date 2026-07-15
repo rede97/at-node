@@ -3,7 +3,7 @@
  * Author             : at-node
  * Version            : V1.0
  * Description        : AT command parser — UART1 + CDC dual channel,
- *                      independent TMOS task, not coupled to HAL
+ *                      independent TMOS task
  ********************************************************************************/
 
 #ifndef AT_PARSER_H
