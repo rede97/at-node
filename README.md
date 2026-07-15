@@ -219,4 +219,14 @@ software/
 
 ### License
 
-MIT — see [LICENSE](LICENSE) (if applicable). Built with the [WCH CH583 SDK](https://www.wch.cn/).
+MIT. Built with the [WCH CH583 SDK](https://www.wch.cn/).
+
+### Roadmap
+
+| Variant | Platform | Status |
+|---------|----------|--------|
+| `at-node` | CH582F BLE | ✅ Active |
+| `at-node-nrf` | nRF52840 + Zephyr | 📋 Planned |
+| `at-node-esp` | ESP32-S3 + WiFi/TLS | 📋 Planned |
+
+All variants share the same AT command protocol — Agent code works across platforms.
