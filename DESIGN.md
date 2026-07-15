@@ -10,7 +10,6 @@ Quick reference for future refactoring and debugging.
 | **at-node** | CH582F | Bare-metal + WCH SDK | ✅ Active | BLE HID + USB CDC + AT Parser |
 | **at-node-nrf** | nRF52840 | Zephyr RTOS | 📋 Planned | All BLE/USB via Kconfig, no register hacking |
 | **at-node-esp** | ESP32-S3 | ESP-IDF / Zephyr | 📋 Planned | WiFi + TLS + MQTT, remote agent control |
-| **at-node-pico** | RP2040 | Pico SDK | 💡 Future | USB-only wired agent, ultra-low-cost |
 
 ### Why CH582F is the primary target
 
@@ -32,7 +31,6 @@ All variants share the same AT command interface. Agent code (Python) works iden
 CH582F:  AT commands via USB CDC / BLE NUS
 nRF52:   AT commands via USB CDC / BLE NUS (Zephyr config)
 ESP32:   AT commands via USB CDC / TCP+TLS / MQTT
-RP2040:  AT commands via USB CDC only
 ```
 
 The transport layer is abstracted; the AT parser and command handlers are the common core.
