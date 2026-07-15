@@ -1,38 +1,42 @@
 #!/usr/bin/env python3
-"""AT command tester — sends commands over CDC serial, reads responses."""
-import serial, sys, time
+"""AT command tester — auto-detects device, runs tests. Exit 0=pass, 1=fail."""
+import serial, serial.tools.list_ports, sys, time
 
-PORT = sys.argv[1] if len(sys.argv) > 1 else "COM14"
+def find_port():
+    for p in serial.tools.list_ports.comports():
+        if p.vid == 0x1A86:
+            return p.device
+    return None
 
-ser = serial.Serial(PORT, 115200, timeout=1)
-ser.dtr = True
-print(f"Connected to {PORT}")
-
-tests = [
-    b"AT\r\n",
-    b"AT+VER\r\n",
-    b"AT+ECHO=hello\r\n",
-    b"AT+HELP\r\n",
-]
-
-for cmd in tests:
-    cmd_str = cmd.decode().strip()
+def test(ser, cmd, expect=None):
     ser.write(cmd)
-    time.sleep(0.2)
-    # read all available response
-    ser.timeout = 0.1
-    lines = []
-    while True:
-        try:
-            b = ser.read(1)
-            if not b: break
-            if b == b'\n':
-                line = b"".join(lines).decode(errors="replace").strip()
-                if line: print(f"  <<< {line}")
-                lines = []
-            else:
-                lines.append(b)
-        except: break
-    print()
+    parts = []
+    for _ in range(4):  # read in 4 passes to capture multi-packet response
+        time.sleep(0.2)
+        b = ser.read(256)
+        if b:
+            parts.append(b.decode(errors="replace"))
+        else:
+            break
+    text = "".join(parts)
+    ok = "OK" in text
+    match = expect is None or expect in text
+    s = "PASS" if (ok and match) else "FAIL"
+    print(f"  [{s}] {cmd.decode().strip()!r} -> {text.strip()[:80]}")
+    return ok and match
+
+port = sys.argv[1] if len(sys.argv) > 1 else find_port()
+if not port:
+    print("FAIL: no device"); sys.exit(1)
+print(f"Device: {port}")
+ser = serial.Serial(port, 115200, timeout=0.3)
+ser.dtr = True
+
+all_ok = True
+all_ok &= test(ser, b"AT\r\n")
+all_ok &= test(ser, b"AT+VER\r\n", "AT-Node")
+all_ok &= test(ser, b"AT+ECHO=hello\r\n", "hello")
+all_ok &= test(ser, b"AT+HELP\r\n", "AT+VER")
 ser.close()
-print("Done.")
+print("\nALL PASS" if all_ok else "\nSOME FAILED")
+sys.exit(0 if all_ok else 1)

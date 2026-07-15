@@ -392,10 +392,15 @@ void USB_DevTransProcess(void)
  */
 static void cdc_send_packet(const uint8_t *data, uint16_t len)
 {
-    if (len > EP1_SIZE) len = EP1_SIZE;
-    memcpy(pEP1_IN_DataBuf, data, len);
-    R8_UEP1_T_LEN = (uint8_t)len;
-    R8_UEP1_CTRL = (R8_UEP1_CTRL & ~MASK_UEP_T_RES) | UEP_T_RES_ACK;
+    while (len > 0) {
+        uint16_t chunk = len > EP1_SIZE ? EP1_SIZE : len;
+        while ((R8_UEP1_CTRL & MASK_UEP_T_RES) == UEP_T_RES_ACK);
+        memcpy(pEP1_IN_DataBuf, data, chunk);
+        R8_UEP1_T_LEN = (uint8_t)chunk;
+        R8_UEP1_CTRL = (R8_UEP1_CTRL & ~MASK_UEP_T_RES) | UEP_T_RES_ACK;
+        data += chunk;
+        len -= chunk;
+    }
 }
 
 /*********************************************************************

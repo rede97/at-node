@@ -102,3 +102,58 @@ cfg.writeFlashCB  = Lib_Write_Flash;
 - Original WCH SDK was GB2312; converted via `tools/batch_utf8.py`
 - Verify: `uv run python tools/batch_utf8.py software`
 - CI check: `uv run python tools/check_encoding.py`
+
+## 12. IR Transmitter Design (planned)
+
+Single-pin IR LED driver — Timer interrupt gates PWM output.
+
+```
+PWM4 → 38kHz carrier (50% duty, continuous)
+        └─ RB_PWM_OUT_EN gate bit (register, no external hardware)
+TMR1 → 562 µs ISR → IR state machine (NEC lead-in / data / stop)
+        └─ < 5 µs per ISR, does not impact BLE/TMOS/USB
+```
+
+**Output pin**: PAx (PWM4 channel) → resistor → IR LED → GND (direct)
+
+**For higher range** (recommended power circuit):
+
+```
+PAx (PWM4) → 1kΩ → 2N2222 Base
+5V rail → IR LED → 100Ω → 2N2222 Collector → GND
+2N2222 Emitter → GND
+```
+
+The transistor decouples GPIO current from LED drive. Running LED from 5V (not 3.3V GPIO) allows 50-100mA LED current.
+
+**AT command**: `AT+IR=NEC,0x12345678` → TMOS queues → TMR1 state machine → done → `OK`
+
+**Debug**: UART1 (PA9) prints state transitions, no extra pins needed.
+
+### IR AT Commands (planned)
+
+Three protocol modes, no raw timing arrays needed:
+
+| Command | Format | Example |
+|---------|--------|---------|
+| `AT+IR=NEC,<hex>` | NEC 32-bit code, 38kHz carrier | `AT+IR=NEC,0x807F00FF` |
+| `AT+IR=SIRC,<hex>,<bits>` | Sony SIRC, 12/15/20 bits | `AT+IR=SIRC,0xA90,12` |
+| `AT+IR=RAW,<t1>,<t2>,...` | Raw timing in µs (fallback) | `AT+IR=RAW,9000,4500,560,...` |
+
+**AT_LINE_MAX must be raised from 256 to 1024** for RAW mode (AC codes are ~400-600 characters).
+
+### AI Agent Integration
+
+```
+AI Agent (Python) knows protocol encoding
+  └─ AT+IR=NEC,0x12345678\n → CDC serial → at-node
+     └─ TMR1 ISR → PWM4 gate → IR LED
+     └─ AT_Response("OK")
+```
+
+Agent handles code database; firmware only replays. No IR codes stored on device.
+
+### Notes
+
+- NMOS gate drive is unnecessary for IR — NPN 2N2222 is simpler and fast enough
+- 38kHz PWM never stops; OUT_EN bit gates the output (no glitch)

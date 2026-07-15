@@ -15,7 +15,11 @@
 /* ===== AT command handlers ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
 static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 BLE: %s", VER_LIB); return 0; }
-static int at_cmd_HELP(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("AT / AT+VER / AT+HELP / AT+ECHO"); return 0; }
+static int at_cmd_HELP(int argc, char *argv[])  {
+    (void)argc; (void)argv;
+    AT_Response("AT-Node Commands:\r\n  AT       - handshake\r\n  AT+VER   - version\r\n  AT+HELP  - this help\r\n  AT+ECHO  - echo <text>");
+    return 0;
+}
 static int at_cmd_ECHO(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+ECHO=text"); return -1; }
     AT_Response("%s", argv[1]);
