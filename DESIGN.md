@@ -158,3 +158,19 @@ Agent handles code database; firmware only replays. No IR codes stored on device
 
 - NMOS gate drive is unnecessary for IR — NPN 2N2222 is simpler and fast enough
 - 38kHz PWM never stops; OUT_EN bit gates the output (no glitch)
+
+## 13. BLE UART Service (NUS) (planned)
+
+Nordic UART Service for wireless AT command channel. Classic bluetooth SPP not available on CH582F.
+
+```
+UUID: 6E400001-B5A3-F393-E0A9-E50E24DCCA9E
+  RX Char (Write)    — Agent commands (Write, WriteNoResp)
+  TX Char (Notify)   — Device responses (Notify)
+```
+
+Features:
+- Shared AT parser with USB CDC
+- Response only to originating channel
+- Works with nRF UART app / Web Bluetooth API on host
+- WiFi-independent, low-power wireless agent communication
