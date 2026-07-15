@@ -128,7 +128,7 @@ static uint8_t advertData[] = {
     LO_UINT16(GAP_APPEARE_HID_KEYBOARD),
     HI_UINT16(GAP_APPEARE_HID_KEYBOARD),
 
-    0x07,                           // length of this data (7)
+    0x08,                           // length: AD type(1) + name(7) = 8
     GAP_ADTYPE_LOCAL_NAME_COMPLETE, // AD Type = Complete local name
     'A',
     'T',
