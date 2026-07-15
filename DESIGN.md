@@ -20,6 +20,7 @@ Despite the painful SDK, CH582F wins on cost and accessibility:
 - **PCB simplicity**: QFN48, single 3.3V rail, few passives — 2-layer board is trivial
 - **Replication cost**: Bare-minimum BOM under $3 including IR LED + transistor
 - **Yield**: One reflow pass, no fine-pitch BGA, hand-solderable in small batches
+- **vs RP2040**: Pico costs the same or more, has no BLE, no IR decoder, fewer GPIOs — worse value
 
 **Verdict**: Develop on CH582F (cheap enough to fry), port to CH592 for production volume. Keep nRF/ESP as premium variants for users who need Zephyr/WiFi.
 
