@@ -10,8 +10,8 @@
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
-#ifndef BATTSERVICE_H
-#define BATTSERVICE_H
+#ifndef BLE_BATT_H
+#define BLE_BATT_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,33 +26,33 @@ extern "C" {
  */
 
 // Battery Service Get/Set Parameters
-#define BATT_PARAM_LEVEL                   0
-#define BATT_PARAM_CRITICAL_LEVEL          1
-#define BATT_PARAM_SERVICE_HANDLE          2
-#define BATT_PARAM_BATT_LEVEL_IN_REPORT    3
+#define BLE_BATT_PARAM_LEVEL                   0
+#define BLE_BATT_PARAM_CRITICAL_LEVEL          1
+#define BLE_BATT_PARAM_SERVICE_HANDLE          2
+#define BLE_BLE_BATT_PARAM_LEVEL_IN_REPORT    3
 
 // Callback events
-#define BATT_LEVEL_NOTI_ENABLED            1
-#define BATT_LEVEL_NOTI_DISABLED           2
+#define BLE_BATT_LEVEL_NOTI_ENABLED            1
+#define BLE_BATT_LEVEL_NOTI_DISABLED           2
 
 // HID Report IDs for the service
-#define HID_RPT_ID_BATT_LEVEL_IN           4  // Battery Level input report ID
+#define BLE_HID_RPT_ID_BATT_LEVEL_IN           4  // Battery Level input report ID
 
 /*********************************************************************
  * TYPEDEFS
  */
 
 // Battery Service callback function
-typedef void (*battServiceCB_t)(uint8_t event);
+typedef void (*ble_batt_service_cb_t)(uint8_t event);
 
 // Battery measure HW setup function
-typedef void (*battServiceSetupCB_t)(void);
+typedef void (*ble_batt_service_setup_cb_t)(void);
 
 // Battery measure percentage calculation function
-typedef uint8_t (*battServiceCalcCB_t)(uint16_t adcVal);
+typedef uint8_t (*ble_batt_service_calc_cb_t)(uint16_t adcVal);
 
 // Battery measure HW teardown function
-typedef void (*battServiceTeardownCB_t)(void);
+typedef void (*ble_batt_service_teardown_cb_t)(void);
 
 /*********************************************************************
  * MACROS
@@ -67,17 +67,17 @@ typedef void (*battServiceTeardownCB_t)(void);
  */
 
 /*********************************************************************
- * @fn      Batt_AddService
+ * @fn      ble_batt_add_service
  *
  * @brief   Initializes the Battery service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-extern bStatus_t Batt_AddService(void);
+extern bStatus_t ble_batt_add_service(void);
 
 /*********************************************************************
- * @fn      Batt_Register
+ * @fn      ble_batt_register
  *
  * @brief   Register a callback function with the Battery Service.
  *
@@ -85,10 +85,10 @@ extern bStatus_t Batt_AddService(void);
  *
  * @return  None.
  */
-extern void Batt_Register(battServiceCB_t pfnServiceCB);
+extern void ble_batt_register(ble_batt_service_cb_t pfnServiceCB);
 
 /*********************************************************************
- * @fn      Batt_SetParameter
+ * @fn      ble_batt_set_param
  *
  * @brief   Set a Battery Service parameter.
  *
@@ -101,10 +101,10 @@ extern void Batt_Register(battServiceCB_t pfnServiceCB);
  *
  * @return  bStatus_t
  */
-extern bStatus_t Batt_SetParameter(uint8_t param, uint8_t len, void *value);
+extern bStatus_t ble_batt_set_param(uint8_t param, uint8_t len, void *value);
 
 /*********************************************************************
- * @fn      Batt_GetParameter
+ * @fn      ble_batt_get_param
  *
  * @brief   Get a Battery parameter.
  *
@@ -116,10 +116,10 @@ extern bStatus_t Batt_SetParameter(uint8_t param, uint8_t len, void *value);
  *
  * @return  bStatus_t
  */
-extern bStatus_t Batt_GetParameter(uint8_t param, void *value);
+extern bStatus_t ble_batt_get_param(uint8_t param, void *value);
 
 /*********************************************************************
- * @fn          Batt_MeasLevel
+ * @fn          ble_batt_meas_level
  *
  * @brief       Measure the battery level and update the battery
  *              level value in the service characteristics.  If
@@ -130,10 +130,10 @@ extern bStatus_t Batt_GetParameter(uint8_t param, void *value);
  *
  * @return      Success or Failure
  */
-extern bStatus_t Batt_MeasLevel(void);
+extern bStatus_t ble_batt_meas_level(void);
 
 /*********************************************************************
- * @fn      Batt_Setup
+ * @fn      ble_batt_setup
  *
  * @brief   Set up which ADC source is to be used. Defaults to VDD/3.
  *
@@ -146,12 +146,12 @@ extern bStatus_t Batt_MeasLevel(void);
  *
  * @return  none.
  */
-extern void Batt_Setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
-                       battServiceSetupCB_t sCB, battServiceTeardownCB_t tCB,
-                       battServiceCalcCB_t cCB);
+extern void ble_batt_setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
+                       ble_batt_service_setup_cb_t sCB, ble_batt_service_teardown_cb_t tCB,
+                       ble_batt_service_calc_cb_t cCB);
 
 /*********************************************************************
- * @fn          Batt_HandleConnStatusCB
+ * @fn          ble_batt_handle_conn_status_cb
  *
  * @brief       Battery Service link status change handler function.
  *
@@ -160,7 +160,7 @@ extern void Batt_Setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
  *
  * @return      none
  */
-void Batt_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType);
+void ble_batt_handle_conn_status_cb(uint16_t connHandle, uint8_t changeType);
 
 /*********************************************************************
 *********************************************************************/
@@ -169,4 +169,4 @@ void Batt_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType);
 }
 #endif
 
-#endif /* BATTSERVICE_H */
+#endif /* BLE_BATT_H */

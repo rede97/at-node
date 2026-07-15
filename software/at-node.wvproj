@@ -62,7 +62,7 @@
 					"${project}/StdPeriphDriver/CH57x_uart0.c",
 					"${project}/StdPeriphDriver/CH57x_uart2.c",
 					"${project}/StdPeriphDriver/CH57x_uart3.c",
-					"${project}/Profile/scanparamservice.c"
+					"${project}/APP/BLE/ble_scan_param.c"
 				],
 				"optimization": {
 					"level": "size",

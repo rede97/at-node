@@ -10,8 +10,8 @@
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
-#ifndef DEVINFOSERVICE_H
-#define DEVINFOSERVICE_H
+#ifndef BLE_DEV_INFO_H
+#define BLE_DEV_INFO_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,27 +26,27 @@ extern "C" {
  */
 
 // Device Information Service Parameters
-#define DEVINFO_SYSTEM_ID              0
-#define DEVINFO_MODEL_NUMBER           1
-#define DEVINFO_SERIAL_NUMBER          2
-#define DEVINFO_FIRMWARE_REV           3
-#define DEVINFO_HARDWARE_REV           4
-#define DEVINFO_SOFTWARE_REV           5
-#define DEVINFO_MANUFACTURER_NAME      6
-#define DEVINFO_11073_CERT_DATA        7
-#define DEVINFO_PNP_ID                 8
+#define BLE_DEV_INFO_SYSTEM_ID              0
+#define BLE_DEV_INFO_MODEL_NUMBER           1
+#define BLE_DEV_INFO_SERIAL_NUMBER          2
+#define BLE_DEV_INFO_FIRMWARE_REV           3
+#define BLE_DEV_INFO_HARDWARE_REV           4
+#define BLE_DEV_INFO_SOFTWARE_REV           5
+#define BLE_DEV_INFO_MANUFACTURER_NAME      6
+#define BLE_DEV_INFO_11073_CERT_DATA        7
+#define BLE_DEV_INFO_PNP_ID                 8
 
 // IEEE 11073 authoritative body values
-#define DEVINFO_11073_BODY_EMPTY       0
-#define DEVINFO_11073_BODY_IEEE        1
-#define DEVINFO_11073_BODY_CONTINUA    2
-#define DEVINFO_11073_BODY_EXP         254
+#define BLE_DEV_INFO_11073_BODY_EMPTY       0
+#define BLE_DEV_INFO_11073_BODY_IEEE        1
+#define BLE_DEV_INFO_11073_BODY_CONTINUA    2
+#define BLE_DEV_INFO_11073_BODY_EXP         254
 
 // System ID length
-#define DEVINFO_SYSTEM_ID_LEN          8
+#define BLE_DEV_INFO_SYSTEM_ID_LEN          8
 
 // PnP ID length
-#define DEVINFO_PNP_ID_LEN             7
+#define BLE_DEV_INFO_PNP_ID_LEN             7
 
 /*********************************************************************
  * TYPEDEFS
@@ -65,15 +65,15 @@ extern "C" {
  */
 
 /*
- * DevInfo_AddService- Initializes the Device Information service by registering
+ * ble_dev_info_add_service- Initializes the Device Information service by registering
  *          GATT attributes with the GATT server.
  *
  */
 
-extern bStatus_t DevInfo_AddService(void);
+extern bStatus_t ble_dev_info_add_service(void);
 
 /*********************************************************************
- * @fn      DevInfo_SetParameter
+ * @fn      ble_dev_info_set_param
  *
  * @brief   Set a Device Information parameter.
  *
@@ -86,10 +86,10 @@ extern bStatus_t DevInfo_AddService(void);
  *
  * @return  bStatus_t
  */
-bStatus_t DevInfo_SetParameter(uint8_t param, uint8_t len, void *value);
+bStatus_t ble_dev_info_set_param(uint8_t param, uint8_t len, void *value);
 
 /*
- * DevInfo_GetParameter - Get a Device Information parameter.
+ * ble_dev_info_get_param - Get a Device Information parameter.
  *
  *    param - Profile parameter ID
  *    value - pointer to data to write.  This is dependent on
@@ -97,7 +97,7 @@ bStatus_t DevInfo_SetParameter(uint8_t param, uint8_t len, void *value);
  *          data type (example: data type of uint16_t will be cast to
  *          uint16_t pointer).
  */
-extern bStatus_t DevInfo_GetParameter(uint8_t param, void *value);
+extern bStatus_t ble_dev_info_get_param(uint8_t param, void *value);
 
 /*********************************************************************
 *********************************************************************/
@@ -106,4 +106,4 @@ extern bStatus_t DevInfo_GetParameter(uint8_t param, void *value);
 }
 #endif
 
-#endif /* DEVINFOSERVICE_H */
+#endif /* BLE_DEV_INFO_H */

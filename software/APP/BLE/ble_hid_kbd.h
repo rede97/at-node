@@ -10,8 +10,8 @@
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
-#ifndef HIDKBDSERVICE_H
-#define HIDKBDSERVICE_H
+#ifndef BLE_HID_KBD_H
+#define BLE_HID_KBD_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,16 +26,16 @@ extern "C" {
  */
 
 // Number of HID reports defined in the service
-#define HID_NUM_REPORTS        7
+#define BLE_HID_KBD_NUM_REPORTS        7
 
 // HID Report IDs for the service
-#define HID_RPT_ID_KEY_IN      0                      // Keyboard input report ID
-#define HID_RPT_ID_MOUSE_IN    1                      // Mouse input report ID
-#define HID_RPT_ID_LED_OUT     0                      // LED output report ID
-#define HID_RPT_ID_FEATURE     0                      // Feature report ID
+#define BLE_HID_RPT_ID_KEY_IN      0                      // Keyboard input report ID
+#define BLE_HID_RPT_ID_MOUSE_IN    1                      // Mouse input report ID
+#define BLE_HID_RPT_ID_LED_OUT     0                      // LED output report ID
+#define BLE_HID_RPT_ID_FEATURE     0                      // Feature report ID
 
 // HID feature flags
-#define HID_FEATURE_FLAGS      HID_FLAGS_REMOTE_WAKE
+#define BLE_HID_KBD_FEATURE_FLAGS      BLE_HID_FLAGS_REMOTE_WAKE
 
 /*********************************************************************
  * TYPEDEFS
@@ -54,7 +54,7 @@ extern "C" {
  */
 
 /*********************************************************************
- * @fn      Hid_AddService
+ * @fn      ble_hid_kbd_add_service
  *
  * @brief   Initializes the HID service for keyboard by registering
  *          GATT attributes with the GATT server.
@@ -63,10 +63,10 @@ extern "C" {
  *
  * @return  Success or Failure
  */
-extern bStatus_t Hid_AddService(void);
+extern bStatus_t ble_hid_kbd_add_service(void);
 
 /*********************************************************************
- * @fn      Hid_SetParameter
+ * @fn      ble_hid_kbd_set_param
  *
  * @brief   Set a HID Kbd parameter.
  *
@@ -81,11 +81,11 @@ extern bStatus_t Hid_AddService(void);
  *
  * @return  GATT status code.
  */
-extern uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len,
+extern uint8_t ble_hid_kbd_set_param(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len,
                                 void *pValue);
 
 /*********************************************************************
- * @fn      Hid_GetParameter
+ * @fn      ble_hid_kbd_get_param
  *
  * @brief   Get a HID Kbd parameter.
  *
@@ -100,7 +100,7 @@ extern uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t
  *
  * @return  GATT status code.
  */
-extern uint8_t Hid_GetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint16_t *pLen, void *pValue);
+extern uint8_t ble_hid_kbd_get_param(uint8_t id, uint8_t type, uint16_t uuid, uint16_t *pLen, void *pValue);
 
 /*********************************************************************
 *********************************************************************/
@@ -109,4 +109,4 @@ extern uint8_t Hid_GetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint16_
 }
 #endif
 
-#endif /* HIDKBDSERVICE_H */
+#endif /* BLE_HID_KBD_H */

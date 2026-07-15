@@ -48,7 +48,7 @@ Old monolith `hidkbd.c` + `AT.c` was split into:
 
 | New file | Purpose |
 |----------|---------|
-| `APP/hidkbd_ble.c` | BLE HID keyboard — advertising, connection, GATT report send via `HidDev_Report()` |
+| `APP/hidkbd_ble.c` | BLE HID keyboard — advertising, connection, GATT report send via `ble_hid_dev_report()` |
 | `APP/hidkbd_usb.c` | USB HID keyboard — `USB_HID_SendReport()` wrapper |
 | `APP/include/hidkbd_common.h` | Keyboard routing layer API — mode select (USB/BLE/BOTH) + key send functions |
 | `APP/at_parser.c` | AT parser — UART1 ring buffer + CDC poll, `=`/`,` tokenizer, dual channel response routing |
@@ -64,7 +64,7 @@ Deleted: `APP/hidkbd.c`, `APP/hidkbd_main.c`, `HAL/` directory (moved to `APP/HW
 AT command → at_cmds handler (at_cmd_KEY etc.)
   → kb_*() function (at_cmds.c)
     → kb_flush() checks kb_mode
-      → kb_ble_send_report() [hidkbd_ble.c] → HidDev_Report() [BLE/hiddev.c]
+      → kb_ble_send_report() [hidkbd_ble.c] → ble_hid_dev_report() [BLE/hiddev.c]
       → kb_usb_send_report() [hidkbd_usb.c] → USB_HID_SendReport() [usb_dev.c]
 ```
 
@@ -92,7 +92,7 @@ Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
 
 ```
 CH58X_BLEInit → HAL_Init → AT_Init → HalKeyConfig → GAPRole_PeripheralInit
-→ HidDev_Init → HidEmu_Init → USB_Device_Setup → PFIC_EnableIRQ(USB_IRQn)
+→ ble_hid_dev_init → ble_hid_emu_init → USB_Device_Setup → PFIC_EnableIRQ(USB_IRQn)
 → Main_Circulation() [while(1) TMOS_SystemProcess()]
 ```
 
@@ -101,8 +101,8 @@ CH58X_BLEInit → HAL_Init → AT_Init → HalKeyConfig → GAPRole_PeripheralIn
 | Task | Registered in | File |
 |------|--------------|------|
 | HAL task | `HAL_Init()` | `APP/HWS/MCU.c` |
-| HID Dev task | `HidDev_Init()` | `APP/BLE/hiddev.c` |
-| HID Emu task | `HidEmu_Init()` | `APP/hidkbd_ble.c` |
+| HID Dev task | `ble_hid_dev_init()` | `APP/BLE/hiddev.c` |
+| HID Emu task | `ble_hid_emu_init()` | `APP/hidkbd_ble.c` |
 | AT task | `AT_Init()` | `APP/at_parser.c` |
 
 ## Critical constraints

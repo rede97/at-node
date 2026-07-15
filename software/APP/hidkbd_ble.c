@@ -16,10 +16,10 @@
 #include "config.h"
 #include "LED.h"
 #include "KEY.h"
-#include "devinfoservice.h"
-#include "battservice.h"
-#include "hidkbdservice.h"
-#include "hiddev.h"
+#include "ble_dev_info.h"
+#include "ble_batt.h"
+#include "ble_hid_kbd.h"
+#include "ble_hid_dev.h"
 #include "hidkbd.h"
 #include "usb_dev.h"
 #include "hidkbd_common.h"
@@ -69,7 +69,7 @@
 #define DEFAULT_IO_CAPABILITIES              GAPBOND_IO_CAP_NO_INPUT_NO_OUTPUT
 
 // Battery level is critical when it is less than this %
-#define DEFAULT_BATT_CRITICAL_LEVEL          6
+#define BLE_BATT_DEFAULT_CRITICAL_LEVEL          6
 
 /*********************************************************************
  * TYPEDEFS
@@ -80,7 +80,7 @@
  */
 
 // Task ID
-static uint8_t hidEmuTaskId = INVALID_TASK_ID;
+static uint8_t ble_hid_emu_task_id = INVALID_TASK_ID;
 
 /*********************************************************************
  * EXTERNAL VARIABLES
@@ -145,14 +145,14 @@ static uint8_t advertData[] = {
 static const uint8_t attDeviceName[GAP_DEVICE_NAME_LEN] = "AT-Node";
 
 // HID Dev configuration
-static hidDevCfg_t hidEmuCfg = {
+static ble_hid_dev_cfg_t ble_hid_emu_cfg = {
     DEFAULT_HID_IDLE_TIMEOUT, // Idle timeout
-    HID_FEATURE_FLAGS         // HID feature flags
+    BLE_HID_KBD_FEATURE_FLAGS         // HID feature flags
 };
 
-uint16_t hidEmuConnHandle = GAP_CONNHANDLE_INIT;
+uint16_t ble_hid_emu_conn_handle = GAP_CONNHANDLE_INIT;
 
-uint8_t kb_ble_connected(void)  { return (hidEmuConnHandle != GAP_CONNHANDLE_INIT) ? 1 : 0; }
+uint8_t kb_ble_connected(void)  { return (ble_hid_emu_conn_handle != GAP_CONNHANDLE_INIT) ? 1 : 0; }
 
 void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
 {
@@ -160,36 +160,36 @@ void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
     buf[0] = mods;
     buf[1] = 0;
     for (int j = 0; j < 6; j++) buf[2+j] = (j < count) ? keys[j] : 0;
-    HidDev_Report(HID_RPT_ID_KEY_IN, HID_REPORT_TYPE_INPUT, 8, buf);
+    ble_hid_dev_report(BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT, 8, buf);
 }
 
 /*********************************************************************
  * LOCAL FUNCTIONS
  */
 
-static void    hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg);
-static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData);
-static uint8_t hidEmuRptCB(uint8_t id, uint8_t type, uint16_t uuid,
+static void    ble_hid_emu_process_tmos_msg(tmos_event_hdr_t *pMsg);
+static uint8_t ble_hid_emu_rcv_report(uint8_t len, uint8_t *pData);
+static uint8_t ble_hid_emu_rpt_cb(uint8_t id, uint8_t type, uint16_t uuid,
                            uint8_t oper, uint16_t *pLen, uint8_t *pData);
-static void    hidEmuEvtCB(uint8_t evt);
-static void    hidEmuStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent);
+static void    ble_hid_emu_evt_cb(uint8_t evt);
+static void    ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEvent);
 
 /*********************************************************************
  * PROFILE CALLBACKS
  */
 
-static hidDevCB_t hidEmuHidCBs = {
-    hidEmuRptCB,
-    hidEmuEvtCB,
+static ble_hid_dev_cb_t ble_hid_emu_cbs = {
+    ble_hid_emu_rpt_cb,
+    ble_hid_emu_evt_cb,
     NULL,
-    hidEmuStateCB};
+    ble_hid_emu_state_cb};
 
 /*********************************************************************
  * PUBLIC FUNCTIONS
  */
 
 /*********************************************************************
- * @fn      HidEmu_Init
+ * @fn      ble_hid_emu_init
  *
  * @brief   Initialization function for the HidEmuKbd App Task.
  *          This is called during initialization and should contain
@@ -202,9 +202,9 @@ static hidDevCB_t hidEmuHidCBs = {
  *
  * @return  none
  */
-void HidEmu_Init()
+void ble_hid_emu_init()
 {
-    hidEmuTaskId = TMOS_ProcessEventRegister(HidEmu_ProcessEvent);
+    ble_hid_emu_task_id = TMOS_ProcessEventRegister(ble_hid_emu_process_event);
 
     // Setup the GAP Peripheral Role Profile
     {
@@ -236,22 +236,22 @@ void HidEmu_Init()
 
     // Setup Battery Characteristic Values
     {
-        uint8_t critical = DEFAULT_BATT_CRITICAL_LEVEL;
-        Batt_SetParameter(BATT_PARAM_CRITICAL_LEVEL, sizeof(uint8_t), &critical);
+        uint8_t critical = BLE_BATT_DEFAULT_CRITICAL_LEVEL;
+        ble_batt_set_param(BLE_BATT_PARAM_CRITICAL_LEVEL, sizeof(uint8_t), &critical);
     }
 
     // Set up HID keyboard service
-    Hid_AddService();
+    ble_hid_kbd_add_service();
 
     // Register for HID Dev callback
-    HidDev_Register(&hidEmuCfg, &hidEmuHidCBs);
+    ble_hid_dev_register(&ble_hid_emu_cfg, &ble_hid_emu_cbs);
 
     // Setup a delayed profile startup
-    tmos_set_event(hidEmuTaskId, START_DEVICE_EVT);
+    tmos_set_event(ble_hid_emu_task_id, START_DEVICE_EVT);
 }
 
 /*********************************************************************
- * @fn      HidEmu_ProcessEvent
+ * @fn      ble_hid_emu_process_event
  *
  * @brief   HidEmuKbd Application Task event processor.  This function
  *          is called to process all events for the task.  Events
@@ -263,16 +263,16 @@ void HidEmu_Init()
  *
  * @return  events not processed
  */
-uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
+uint16_t ble_hid_emu_process_event(uint8_t task_id, uint16_t events)
 {
 
     if(events & SYS_EVENT_MSG)
     {
         uint8_t *pMsg;
 
-        if((pMsg = tmos_msg_receive(hidEmuTaskId)) != NULL)
+        if((pMsg = tmos_msg_receive(ble_hid_emu_task_id)) != NULL)
         {
-            hidEmu_ProcessTMOSMsg((tmos_event_hdr_t *)pMsg);
+            ble_hid_emu_process_tmos_msg((tmos_event_hdr_t *)pMsg);
 
             // Release the TMOS message
             tmos_msg_deallocate(pMsg);
@@ -290,12 +290,12 @@ uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
     if(events & START_PARAM_UPDATE_EVT)
     {
         // Send connect param update request
-        GAPRole_PeripheralConnParamUpdateReq(hidEmuConnHandle,
+        GAPRole_PeripheralConnParamUpdateReq(ble_hid_emu_conn_handle,
                                              DEFAULT_DESIRED_MIN_CONN_INTERVAL,
                                              DEFAULT_DESIRED_MAX_CONN_INTERVAL,
                                              DEFAULT_DESIRED_SLAVE_LATENCY,
                                              DEFAULT_DESIRED_CONN_TIMEOUT,
-                                             hidEmuTaskId);
+                                             ble_hid_emu_task_id);
 
         return (events ^ START_PARAM_UPDATE_EVT);
     }
@@ -303,7 +303,7 @@ uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
     if(events & START_PHY_UPDATE_EVT)
     {
         // start phy update
-        PRINT("Send Phy Update %x...\n", GAPRole_UpdatePHY(hidEmuConnHandle, 0, 
+        PRINT("Send Phy Update %x...\n", GAPRole_UpdatePHY(ble_hid_emu_conn_handle, 0, 
                     GAP_PHY_BIT_LE_2M, GAP_PHY_BIT_LE_2M, GAP_PHY_OPTIONS_NOPRE));
 
         return (events ^ START_PHY_UPDATE_EVT);
@@ -313,7 +313,7 @@ uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
 }
 
 /*********************************************************************
- * @fn      hidEmu_ProcessTMOSMsg
+ * @fn      ble_hid_emu_process_tmos_msg
  *
  * @brief   Process an incoming task message.
  *
@@ -321,7 +321,7 @@ uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events)
  *
  * @return  none
  */
-static void hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg)
+static void ble_hid_emu_process_tmos_msg(tmos_event_hdr_t *pMsg)
 {
     switch(pMsg->event)
     {
@@ -331,7 +331,7 @@ static void hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg)
 }
 
 /*********************************************************************
- * @fn      hidEmuStateCB
+ * @fn      ble_hid_emu_state_cb
  *
  * @brief   GAP state change callback.
  *
@@ -339,7 +339,7 @@ static void hidEmu_ProcessTMOSMsg(tmos_event_hdr_t *pMsg)
  *
  * @return  none
  */
-static void hidEmuStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
+static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEvent)
 {
     switch(newState & GAPROLE_STATE_ADV_MASK)
     {
@@ -365,8 +365,8 @@ static void hidEmuStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
                 gapEstLinkReqEvent_t *event = (gapEstLinkReqEvent_t *)pEvent;
 
                 // get connection handle
-                hidEmuConnHandle = event->connectionHandle;
-                tmos_start_task(hidEmuTaskId, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
+                ble_hid_emu_conn_handle = event->connectionHandle;
+                tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
                 PRINT("Connected..\n");
             }
             break;
@@ -409,7 +409,7 @@ static void hidEmuStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
 }
 
 /*********************************************************************
- * @fn      hidEmuRcvReport
+ * @fn      ble_hid_emu_rcv_report
  *
  * @brief   Process an incoming HID keyboard report.
  *
@@ -418,7 +418,7 @@ static void hidEmuStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
  *
  * @return  status
  */
-static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData)
+static uint8_t ble_hid_emu_rcv_report(uint8_t len, uint8_t *pData)
 {
     // verify data length
     if(len == HID_LED_OUT_RPT_LEN)
@@ -433,7 +433,7 @@ static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData)
 }
 
 /*********************************************************************
- * @fn      hidEmuRptCB
+ * @fn      ble_hid_emu_rpt_cb
  *
  * @brief   HID Dev report callback.
  *
@@ -446,44 +446,44 @@ static uint8_t hidEmuRcvReport(uint8_t len, uint8_t *pData)
  *
  * @return  GATT status code.
  */
-static uint8_t hidEmuRptCB(uint8_t id, uint8_t type, uint16_t uuid,
+static uint8_t ble_hid_emu_rpt_cb(uint8_t id, uint8_t type, uint16_t uuid,
                            uint8_t oper, uint16_t *pLen, uint8_t *pData)
 {
     uint8_t status = SUCCESS;
 
     // write
-    if(oper == HID_DEV_OPER_WRITE)
+    if(oper == BLE_HID_DEV_OPER_WRITE)
     {
         if(uuid == REPORT_UUID)
         {
             // process write to LED output report; ignore others
-            if(type == HID_REPORT_TYPE_OUTPUT)
+            if(type == BLE_HID_REPORT_TYPE_OUTPUT)
             {
-                status = hidEmuRcvReport(*pLen, pData);
+                status = ble_hid_emu_rcv_report(*pLen, pData);
             }
         }
 
         if(status == SUCCESS)
         {
-            status = Hid_SetParameter(id, type, uuid, *pLen, pData);
+            status = ble_hid_kbd_set_param(id, type, uuid, *pLen, pData);
         }
     }
     // read
-    else if(oper == HID_DEV_OPER_READ)
+    else if(oper == BLE_HID_DEV_OPER_READ)
     {
-        status = Hid_GetParameter(id, type, uuid, pLen, pData);
+        status = ble_hid_kbd_get_param(id, type, uuid, pLen, pData);
     }
     // notifications enabled
-    else if(oper == HID_DEV_OPER_ENABLE)
+    else if(oper == BLE_HID_DEV_OPER_ENABLE)
     {
         // Key scanning already activated in main() — works with USB even without BLE
-        // tmos_start_task(hidEmuTaskId, START_REPORT_EVT, 500);
+        // tmos_start_task(ble_hid_emu_task_id, START_REPORT_EVT, 500);
     }
     return status;
 }
 
 /*********************************************************************
- * @fn      hidEmuEvtCB
+ * @fn      ble_hid_emu_evt_cb
  *
  * @brief   HID Dev event callback.
  *
@@ -491,7 +491,7 @@ static uint8_t hidEmuRptCB(uint8_t id, uint8_t type, uint16_t uuid,
  *
  * @return  HID response code.
  */
-static void hidEmuEvtCB(uint8_t evt)
+static void ble_hid_emu_evt_cb(uint8_t evt)
 {
     // process enter/exit suspend or enter/exit boot mode
     return;

@@ -10,8 +10,8 @@
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
-#ifndef HIDDEV_H
-#define HIDDEV_H
+#ifndef BLE_HID_DEV_H
+#define BLE_HID_DEV_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -30,42 +30,42 @@ extern "C" {
  */
 
 // HID Device Parameters
-#define HIDDEV_ERASE_ALLBONDS             0     // Erase all of the bonded devices. Write Only. No Size.
+#define BLE_HID_DEV_ERASE_ALLBONDS             0     // Erase all of the bonded devices. Write Only. No Size.
 
 // HID read/write operation
-#define HID_DEV_OPER_WRITE                0     // Write operation
-#define HID_DEV_OPER_READ                 1     // Read operation
-#define HID_DEV_OPER_ENABLE               2     // Notification enabled for report ID
-#define HID_DEV_OPER_DISABLE              3     // Notifications disabled for report ID
+#define BLE_HID_DEV_OPER_WRITE                0     // Write operation
+#define BLE_HID_DEV_OPER_READ                 1     // Read operation
+#define BLE_HID_DEV_OPER_ENABLE               2     // Notification enabled for report ID
+#define BLE_HID_DEV_OPER_DISABLE              3     // Notifications disabled for report ID
 
 // HID callback events
-#define HID_DEV_SUSPEND_EVT               0     // HID suspend
-#define HID_DEV_EXIT_SUSPEND_EVT          1     // HID exit suspend
-#define HID_DEV_SET_BOOT_EVT              2     // HID set boot mode
-#define HID_DEV_SET_REPORT_EVT            3     // HID set report mode
+#define BLE_HID_DEV_SUSPEND_EVT               0     // HID suspend
+#define BLE_HID_DEV_EXIT_SUSPEND_EVT          1     // HID exit suspend
+#define BLE_HID_DEV_SET_BOOT_EVT              2     // HID set boot mode
+#define BLE_HID_DEV_SET_REPORT_EVT            3     // HID set report mode
 
 /* HID Report type */
-#define HID_REPORT_TYPE_INPUT             1
-#define HID_REPORT_TYPE_OUTPUT            2
-#define HID_REPORT_TYPE_FEATURE           3
+#define BLE_HID_REPORT_TYPE_INPUT             1
+#define BLE_HID_REPORT_TYPE_OUTPUT            2
+#define BLE_HID_REPORT_TYPE_FEATURE           3
 
 /* HID information flags */
-#define HID_FLAGS_REMOTE_WAKE             0x01  // RemoteWake
-#define HID_FLAGS_NORMALLY_CONNECTABLE    0x02  // NormallyConnectable
+#define BLE_HID_FLAGS_REMOTE_WAKE             0x01  // RemoteWake
+#define BLE_HID_FLAGS_NORMALLY_CONNECTABLE    0x02  // NormallyConnectable
 
 /* Control point commands */
-#define HID_CMD_SUSPEND                   0x00  // Suspend
-#define HID_CMD_EXIT_SUSPEND              0x01  // Exit Suspend
+#define BLE_HID_CMD_SUSPEND                   0x00  // Suspend
+#define BLE_HID_CMD_EXIT_SUSPEND              0x01  // Exit Suspend
 
 /* HID protocol mode values */
-#define HID_PROTOCOL_MODE_BOOT            0x00  // Boot Protocol Mode
-#define HID_PROTOCOL_MODE_REPORT          0x01  // Report Protocol Mode
+#define BLE_HID_PROTOCOL_MODE_BOOT            0x00  // Boot Protocol Mode
+#define BLE_HID_PROTOCOL_MODE_REPORT          0x01  // Report Protocol Mode
 
 /* Attribute value lengths */
-#define HID_PROTOCOL_MODE_LEN             1     // HID Protocol Mode
-#define HID_INFORMATION_LEN               4     // HID Information
-#define HID_REPORT_REF_LEN                2     // HID Report Reference Descriptor
-#define HID_EXT_REPORT_REF_LEN            2     // External Report Reference Descriptor
+#define BLE_HID_PROTOCOL_MODE_LEN             1     // HID Protocol Mode
+#define BLE_HID_INFORMATION_LEN               4     // HID Information
+#define BLE_HID_REPORT_REF_LEN                2     // HID Report Reference Descriptor
+#define BLE_HID_EXT_REPORT_REF_LEN            2     // External Report Reference Descriptor
 
 // HID Keyboard/Keypad Usage IDs (subset of the codes available in the USB HID Usage Tables spec)
 #define HID_KEYBOARD_RESERVED             0     // 0x00 - No event inidicated
@@ -231,7 +231,7 @@ typedef struct
     uint8_t  id;         // Report ID
     uint8_t  type;       // Report type
     uint8_t  mode;       // Protocol mode (report or boot)
-} hidRptMap_t;
+} ble_hid_rpt_map_t;
 
 // HID dev configuration structure
 typedef struct
@@ -239,7 +239,7 @@ typedef struct
     uint32_t idleTimeout; // Idle timeout in milliseconds
     uint8_t  hidFlags;    // HID feature flags
 
-} hidDevCfg_t;
+} ble_hid_dev_cfg_t;
 
 /*********************************************************************
  * Global Variables
@@ -248,36 +248,36 @@ typedef struct
 // These variables are defined in the service .c file that uses HID Dev
 
 // HID report map length
-extern uint16_t hidReportMapLen;
+extern uint16_t ble_hid_report_map_len;
 
 // HID protocol mode
-extern uint8_t hidProtocolMode;
+extern uint8_t ble_hid_protocol_mode;
 
 /*********************************************************************
  * Profile Callbacks
  */
 
 // HID Report callback
-typedef uint8_t (*hidDevReportCB_t)(uint8_t id, uint8_t type, uint16_t uuid,
+typedef uint8_t (*ble_hid_dev_report_cb_t)(uint8_t id, uint8_t type, uint16_t uuid,
                                     uint8_t oper, uint16_t *pLen, uint8_t *pData);
 
 // HID event callback
-typedef void (*hidDevEvtCB_t)(uint8_t evt);
+typedef void (*ble_hid_dev_evt_cb_t)(uint8_t evt);
 
 // HID passcode callback
-typedef void (*hidDevPasscodeCB_t)(uint8_t *deviceAddr, uint16_t connectionHandle,
+typedef void (*ble_hid_dev_passcode_cb_t)(uint8_t *deviceAddr, uint16_t connectionHandle,
                                    uint8_t uiInputs, uint8_t uiOutputs);
 
 typedef struct
 {
-    hidDevReportCB_t      reportCB;
-    hidDevEvtCB_t         evtCB;
-    hidDevPasscodeCB_t    passcodeCB;
+    ble_hid_dev_report_cb_t      reportCB;
+    ble_hid_dev_evt_cb_t         evtCB;
+    ble_hid_dev_passcode_cb_t    passcodeCB;
     gapRolesStateNotify_t pfnStateChange; //!< Whenever the device changes state
-} hidDevCB_t;
+} ble_hid_dev_cb_t;
 
 /*********************************************************************
- * @fn      HidDev_Init
+ * @fn      ble_hid_dev_init
  *
  * @brief   Initialization function for the Hid Dev Task.
  *          This is called during initialization and should contain
@@ -290,10 +290,10 @@ typedef struct
  *
  * @return  none
  */
-extern void HidDev_Init(void);
+extern void ble_hid_dev_init(void);
 
 /*********************************************************************
- * @fn      HidDev_ProcessEvent
+ * @fn      ble_hid_dev_process_event
  *
  * @brief   Hid Dev Task event processor.  This function
  *          is called to process all events for the task.  Events
@@ -305,10 +305,10 @@ extern void HidDev_Init(void);
  *
  * @return  events not processed
  */
-extern uint16_t HidDev_ProcessEvent(uint8_t task_id, uint16_t events);
+extern uint16_t ble_hid_dev_process_event(uint8_t task_id, uint16_t events);
 
 /*********************************************************************
- * @fn      HidDev_Register
+ * @fn      ble_hid_dev_register
  *
  * @brief   Register a callback function with HID Dev.
  *
@@ -317,10 +317,10 @@ extern uint16_t HidDev_ProcessEvent(uint8_t task_id, uint16_t events);
  *
  * @return  None.
  */
-extern void HidDev_Register(hidDevCfg_t *pCfg, hidDevCB_t *pCBs);
+extern void ble_hid_dev_register(ble_hid_dev_cfg_t *pCfg, ble_hid_dev_cb_t *pCBs);
 
 /*********************************************************************
- * @fn      HidDev_RegisterReports
+ * @fn      ble_hid_dev_register_reports
  *
  * @brief   Register the report table with HID Dev.
  *
@@ -329,10 +329,10 @@ extern void HidDev_Register(hidDevCfg_t *pCfg, hidDevCB_t *pCBs);
  *
  * @return  None.
  */
-extern void HidDev_RegisterReports(uint8_t numReports, hidRptMap_t *pRpt);
+extern void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *pRpt);
 
 /*********************************************************************
- * @fn      HidDev_Report
+ * @fn      ble_hid_dev_report
  *
  * @brief   Send a HID report.
  *
@@ -343,19 +343,19 @@ extern void HidDev_RegisterReports(uint8_t numReports, hidRptMap_t *pRpt);
  *
  * @return  None.
  */
-extern uint8_t HidDev_Report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
+extern uint8_t ble_hid_dev_report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
 
 /*********************************************************************
- * @fn      HidDev_Close
+ * @fn      ble_hid_dev_close
  *
  * @brief   Close the connection or stop advertising.
  *
  * @return  None.
  */
-extern void HidDev_Close(void);
+extern void ble_hid_dev_close(void);
 
 /*********************************************************************
- * @fn      HidDev_SetParameter
+ * @fn      ble_hid_dev_set_param
  *
  * @brief   Set a HID Dev parameter.
  *
@@ -368,10 +368,10 @@ extern void HidDev_Close(void);
  *
  * @return  bStatus_t
  */
-extern bStatus_t HidDev_SetParameter(uint8_t param, uint8_t len, void *pValue);
+extern bStatus_t ble_hid_dev_set_param(uint8_t param, uint8_t len, void *pValue);
 
 /*********************************************************************
- * @fn      HidDev_GetParameter
+ * @fn      ble_hid_dev_get_param
  *
  * @brief   Get a HID Dev parameter.
  *
@@ -383,10 +383,10 @@ extern bStatus_t HidDev_SetParameter(uint8_t param, uint8_t len, void *pValue);
  *
  * @return  bStatus_t
  */
-extern bStatus_t HidDev_GetParameter(uint8_t param, void *pValue);
+extern bStatus_t ble_hid_dev_get_param(uint8_t param, void *pValue);
 
 /*********************************************************************
- * @fn      HidDev_PasscodeRsp
+ * @fn      ble_hid_dev_passcode_rsp
  *
  * @brief   Respond to a passcode request.
  *
@@ -396,10 +396,10 @@ extern bStatus_t HidDev_GetParameter(uint8_t param, void *pValue);
  *
  * @return  none
  */
-extern void HidDev_PasscodeRsp(uint8_t status, uint32_t passcode);
+extern void ble_hid_dev_passcode_rsp(uint8_t status, uint32_t passcode);
 
 /*********************************************************************
- * @fn          HidDev_ReadAttrCB
+ * @fn          ble_hid_dev_read_attr_cb
  *
  * @brief       HID Dev attribute read callback.
  *
@@ -412,11 +412,11 @@ extern void HidDev_PasscodeRsp(uint8_t status, uint32_t passcode);
  *
  * @return      Success or Failure
  */
-extern bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
+extern bStatus_t ble_hid_dev_read_attr_cb(uint16_t connHandle, gattAttribute_t *pAttr,
                                    uint8_t *pValue, uint16_t *pLen, uint16_t offset, uint16_t maxLen, uint8_t method);
 
 /*********************************************************************
- * @fn      HidDev_WriteAttrCB
+ * @fn      ble_hid_dev_write_attr_cb
  *
  * @brief   HID Dev attribute read callback.
  *
@@ -428,7 +428,7 @@ extern bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
  *
  * @return  Success or Failure
  */
-extern bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
+extern bStatus_t ble_hid_dev_write_attr_cb(uint16_t connHandle, gattAttribute_t *pAttr,
                                     uint8_t *pValue, uint16_t len, uint16_t offset, uint8_t method);
 
 /*********************************************************************
@@ -438,4 +438,4 @@ extern bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
 }
 #endif
 
-#endif /* HIDDEV_H */
+#endif /* BLE_HID_DEV_H */

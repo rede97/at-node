@@ -14,7 +14,7 @@
  * INCLUDES
  */
 #include "config.h"
-#include "devinfoservice.h"
+#include "ble_dev_info.h"
 
 /*********************************************************************
  * MACROS
@@ -92,7 +92,7 @@ static const gattAttrType_t devInfoService = {ATT_BT_UUID_SIZE, devInfoServUUID}
 
 // System ID characteristic
 static uint8_t devInfoSystemIdProps = GATT_PROP_READ;
-static uint8_t devInfoSystemId[DEVINFO_SYSTEM_ID_LEN] = {0, 0, 0, 0, 0, 0, 0, 0};
+static uint8_t devInfoSystemId[BLE_DEV_INFO_SYSTEM_ID_LEN] = {0, 0, 0, 0, 0, 0, 0, 0};
 
 // Model Number String characteristic
 static uint8_t       devInfoModelNumberProps = GATT_PROP_READ;
@@ -121,14 +121,14 @@ static const uint8_t devInfoMfrName[] = "Manufacturer Name";
 // IEEE 11073-20601 Regulatory Certification Data List characteristic
 static uint8_t       devInfo11073CertProps = GATT_PROP_READ;
 static const uint8_t devInfo11073Cert[] = {
-    DEVINFO_11073_BODY_EXP, // authoritative body type
+    BLE_DEV_INFO_11073_BODY_EXP, // authoritative body type
     0x00,                   // authoritative body structure type
                             // authoritative body data follows below:
     'e', 'x', 'p', 'e', 'r', 'i', 'm', 'e', 'n', 't', 'a', 'l'};
 
 // System ID characteristic
 static uint8_t devInfoPnpIdProps = GATT_PROP_READ;
-static uint8_t devInfoPnpId[DEVINFO_PNP_ID_LEN] = {
+static uint8_t devInfoPnpId[BLE_DEV_INFO_PNP_ID_LEN] = {
     1,                                    // Vendor ID source (1=Bluetooth SIG)
     LO_UINT16(0x07D7), HI_UINT16(0x07D7), // Vendor ID (WCH)
     LO_UINT16(0x0000), HI_UINT16(0x0000), // Product ID (vendor-specific)
@@ -299,14 +299,14 @@ gattServiceCBs_t devInfoCBs = {
  */
 
 /*********************************************************************
- * @fn      DevInfo_AddService
+ * @fn      ble_dev_info_add_service
  *
  * @brief   Initializes the Device Information service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-bStatus_t DevInfo_AddService(void)
+bStatus_t ble_dev_info_add_service(void)
 {
     // Register GATT attribute list and CBs with GATT Server App
     return GATTServApp_RegisterService(devInfoAttrTbl,
@@ -316,7 +316,7 @@ bStatus_t DevInfo_AddService(void)
 }
 
 /*********************************************************************
- * @fn      DevInfo_SetParameter
+ * @fn      ble_dev_info_set_param
  *
  * @brief   Set a Device Information parameter.
  *
@@ -329,13 +329,13 @@ bStatus_t DevInfo_AddService(void)
  *
  * @return  bStatus_t
  */
-bStatus_t DevInfo_SetParameter(uint8_t param, uint8_t len, void *value)
+bStatus_t ble_dev_info_set_param(uint8_t param, uint8_t len, void *value)
 {
     bStatus_t ret = SUCCESS;
 
     switch(param)
     {
-        case DEVINFO_SYSTEM_ID:
+        case BLE_DEV_INFO_SYSTEM_ID:
             tmos_memcpy(devInfoSystemId, value, len);
             break;
 
@@ -348,7 +348,7 @@ bStatus_t DevInfo_SetParameter(uint8_t param, uint8_t len, void *value)
 }
 
 /*********************************************************************
- * @fn      DevInfo_GetParameter
+ * @fn      ble_dev_info_get_param
  *
  * @brief   Get a Device Information parameter.
  *
@@ -360,44 +360,44 @@ bStatus_t DevInfo_SetParameter(uint8_t param, uint8_t len, void *value)
  *
  * @return  bStatus_t
  */
-bStatus_t DevInfo_GetParameter(uint8_t param, void *value)
+bStatus_t ble_dev_info_get_param(uint8_t param, void *value)
 {
     bStatus_t ret = SUCCESS;
 
     switch(param)
     {
-        case DEVINFO_SYSTEM_ID:
+        case BLE_DEV_INFO_SYSTEM_ID:
             tmos_memcpy(value, devInfoSystemId, sizeof(devInfoSystemId));
             break;
 
-        case DEVINFO_MODEL_NUMBER:
+        case BLE_DEV_INFO_MODEL_NUMBER:
             tmos_memcpy(value, devInfoModelNumber, sizeof(devInfoModelNumber));
             break;
-        case DEVINFO_SERIAL_NUMBER:
+        case BLE_DEV_INFO_SERIAL_NUMBER:
             tmos_memcpy(value, devInfoSerialNumber, sizeof(devInfoSerialNumber));
             break;
 
-        case DEVINFO_FIRMWARE_REV:
+        case BLE_DEV_INFO_FIRMWARE_REV:
             tmos_memcpy(value, devInfoFirmwareRev, sizeof(devInfoFirmwareRev));
             break;
 
-        case DEVINFO_HARDWARE_REV:
+        case BLE_DEV_INFO_HARDWARE_REV:
             tmos_memcpy(value, devInfoHardwareRev, sizeof(devInfoHardwareRev));
             break;
 
-        case DEVINFO_SOFTWARE_REV:
+        case BLE_DEV_INFO_SOFTWARE_REV:
             tmos_memcpy(value, devInfoSoftwareRev, sizeof(devInfoSoftwareRev));
             break;
 
-        case DEVINFO_MANUFACTURER_NAME:
+        case BLE_DEV_INFO_MANUFACTURER_NAME:
             tmos_memcpy(value, devInfoMfrName, sizeof(devInfoMfrName));
             break;
 
-        case DEVINFO_11073_CERT_DATA:
+        case BLE_DEV_INFO_11073_CERT_DATA:
             tmos_memcpy(value, devInfo11073Cert, sizeof(devInfo11073Cert));
             break;
 
-        case DEVINFO_PNP_ID:
+        case BLE_DEV_INFO_PNP_ID:
             tmos_memcpy(value, devInfoPnpId, sizeof(devInfoPnpId));
             break;
 

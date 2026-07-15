@@ -15,11 +15,11 @@
  */
 
 #include "config.h"
-#include "battservice.h"
-#include "scanparamservice.h"
-#include "devinfoservice.h"
+#include "ble_batt.h"
+#include "ble_scan_param.h"
+#include "ble_dev_info.h"
 #include "hidkbd.h"
-#include "hiddev.h"
+#include "ble_hid_dev.h"
 
 /*********************************************************************
  * MACROS
@@ -87,13 +87,13 @@ static uint16_t gapConnHandle;
 // Status of last pairing
 static uint8_t pairingStatus = SUCCESS;
 
-static hidRptMap_t *pHidDevRptTbl;
+static ble_hid_rpt_map_t *pHidDevRptTbl;
 
 static uint8_t hidDevRptTblLen;
 
-static hidDevCB_t *pHidDevCB;
+static ble_hid_dev_cb_t *pHidDevCB;
 
-static hidDevCfg_t *pHidDevCfg;
+static ble_hid_dev_cfg_t *pHidDevCfg;
 
 /*********************************************************************
  * LOCAL FUNCTIONS
@@ -113,9 +113,9 @@ static void hidDevBattCB(uint8_t event);
 static void hidDevScanParamCB(uint8_t event);
 static void hidDevBattPeriodicTask(void);
 
-static hidRptMap_t *hidDevRptByHandle(uint16_t handle);
-static hidRptMap_t *hidDevRptById(uint8_t id, uint8_t type);
-static hidRptMap_t *hidDevRptByCccdHandle(uint16_t handle);
+static ble_hid_rpt_map_t *hidDevRptByHandle(uint16_t handle);
+static ble_hid_rpt_map_t *hidDevRptById(uint8_t id, uint8_t type);
+static ble_hid_rpt_map_t *hidDevRptByCccdHandle(uint16_t handle);
 
 static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
 static void    hidDevHighAdvertising(void);
@@ -146,7 +146,7 @@ static gapBondCBs_t hidDevBondCB = {
  */
 
 /*********************************************************************
- * @fn      HidDev_Init
+ * @fn      ble_hid_dev_init
  *
  * @brief   Initialization function for the Hid Dev Task.
  *          This is called during initialization and should contain
@@ -159,9 +159,9 @@ static gapBondCBs_t hidDevBondCB = {
  *
  * @return  none
  */
-void HidDev_Init()
+void ble_hid_dev_init()
 {
-    hidDevTaskId = TMOS_ProcessEventRegister(HidDev_ProcessEvent);
+    hidDevTaskId = TMOS_ProcessEventRegister(ble_hid_dev_process_event);
 
     // Setup the GAP Bond Manager
     {
@@ -177,22 +177,22 @@ void HidDev_Init()
     // Set up services
     GGS_AddService(GATT_ALL_SERVICES);         // GAP
     GATTServApp_AddService(GATT_ALL_SERVICES); // GATT attributes
-    DevInfo_AddService();
-    Batt_AddService();
-    // ScanParam_AddService();
+    ble_dev_info_add_service();
+    ble_batt_add_service();
+    // ble_scan_param_add_service();
 
     // Register for Battery service callback
-    Batt_Register(hidDevBattCB);
+    ble_batt_register(hidDevBattCB);
 
     // Register for Scan Parameters service callback
-    // ScanParam_Register(hidDevScanParamCB);
+    // ble_scan_param_register(hidDevScanParamCB);
 
     // Setup a delayed profile startup
     tmos_set_event(hidDevTaskId, START_DEVICE_EVT);
 }
 
 /*********************************************************************
- * @fn      HidDev_ProcessEvent
+ * @fn      ble_hid_dev_process_event
  *
  * @brief   Hid Dev Task event processor.  This function
  *          is called to process all events for the task.  Events
@@ -204,7 +204,7 @@ void HidDev_Init()
  *
  * @return  events not processed
  */
-uint16_t HidDev_ProcessEvent(uint8_t task_id, uint16_t events)
+uint16_t ble_hid_dev_process_event(uint8_t task_id, uint16_t events)
 {
     //VOID task_id; // TMOS required parameter that isn't used in this function
 
@@ -244,7 +244,7 @@ uint16_t HidDev_ProcessEvent(uint8_t task_id, uint16_t events)
 }
 
 /*********************************************************************
- * @fn      HidDev_Register
+ * @fn      ble_hid_dev_register
  *
  * @brief   Register a callback function with HID Dev.
  *
@@ -253,14 +253,14 @@ uint16_t HidDev_ProcessEvent(uint8_t task_id, uint16_t events)
  *
  * @return  None.
  */
-void HidDev_Register(hidDevCfg_t *pCfg, hidDevCB_t *pCBs)
+void ble_hid_dev_register(ble_hid_dev_cfg_t *pCfg, ble_hid_dev_cb_t *pCBs)
 {
     pHidDevCB = pCBs;
     pHidDevCfg = pCfg;
 }
 
 /*********************************************************************
- * @fn      HidDev_RegisterReports
+ * @fn      ble_hid_dev_register_reports
  *
  * @brief   Register the report table with HID Dev.
  *
@@ -269,14 +269,14 @@ void HidDev_Register(hidDevCfg_t *pCfg, hidDevCB_t *pCBs)
  *
  * @return  None.
  */
-void HidDev_RegisterReports(uint8_t numReports, hidRptMap_t *pRpt)
+void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *pRpt)
 {
     pHidDevRptTbl = pRpt;
     hidDevRptTblLen = numReports;
 }
 
 /*********************************************************************
- * @fn      HidDev_Report
+ * @fn      ble_hid_dev_report
  *
  * @brief   Send a HID report.
  *
@@ -287,7 +287,7 @@ void HidDev_RegisterReports(uint8_t numReports, hidRptMap_t *pRpt)
  *
  * @return  None.
  */
-uint8_t HidDev_Report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
+uint8_t ble_hid_dev_report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
 {
     // if connected
     if(hidDevGapState == GAPROLE_CONNECTED)
@@ -319,13 +319,13 @@ uint8_t HidDev_Report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
 }
 
 /*********************************************************************
- * @fn      HidDev_Close
+ * @fn      ble_hid_dev_close
  *
  * @brief   Close the connection or stop advertising.
  *
  * @return  None.
  */
-void HidDev_Close(void)
+void ble_hid_dev_close(void)
 {
     uint8_t param;
 
@@ -343,7 +343,7 @@ void HidDev_Close(void)
 }
 
 /*********************************************************************
- * @fn      HidDev_SetParameter
+ * @fn      ble_hid_dev_set_param
  *
  * @brief   Set a HID Dev parameter.
  *
@@ -356,13 +356,13 @@ void HidDev_Close(void)
  *
  * @return  bStatus_t
  */
-bStatus_t HidDev_SetParameter(uint8_t param, uint8_t len, void *pValue)
+bStatus_t ble_hid_dev_set_param(uint8_t param, uint8_t len, void *pValue)
 {
     bStatus_t ret = SUCCESS;
 
     switch(param)
     {
-        case HIDDEV_ERASE_ALLBONDS:
+        case BLE_HID_DEV_ERASE_ALLBONDS:
             if(len == 0)
             {
                 // Drop connection
@@ -389,7 +389,7 @@ bStatus_t HidDev_SetParameter(uint8_t param, uint8_t len, void *pValue)
 }
 
 /*********************************************************************
- * @fn      HidDev_GetParameter
+ * @fn      ble_hid_dev_get_param
  *
  * @brief   Get a HID Dev parameter.
  *
@@ -401,7 +401,7 @@ bStatus_t HidDev_SetParameter(uint8_t param, uint8_t len, void *pValue)
  *
  * @return  bStatus_t
  */
-bStatus_t HidDev_GetParameter(uint8_t param, void *pValue)
+bStatus_t ble_hid_dev_get_param(uint8_t param, void *pValue)
 {
     bStatus_t ret = SUCCESS;
 
@@ -416,7 +416,7 @@ bStatus_t HidDev_GetParameter(uint8_t param, void *pValue)
 }
 
 /*********************************************************************
- * @fn      HidDev_PasscodeRsp
+ * @fn      ble_hid_dev_passcode_rsp
  *
  * @brief   Respond to a passcode request.
  *
@@ -426,14 +426,14 @@ bStatus_t HidDev_GetParameter(uint8_t param, void *pValue)
  *
  * @return  none
  */
-void HidDev_PasscodeRsp(uint8_t status, uint32_t passcode)
+void ble_hid_dev_passcode_rsp(uint8_t status, uint32_t passcode)
 {
     // Send passcode response
     GAPBondMgr_PasscodeRsp(gapConnHandle, status, passcode);
 }
 
 /*********************************************************************
- * @fn          HidDev_ReadAttrCB
+ * @fn          ble_hid_dev_read_attr_cb
  *
  * @brief       HID Dev attribute read callback.
  *
@@ -446,11 +446,11 @@ void HidDev_PasscodeRsp(uint8_t status, uint32_t passcode)
  *
  * @return      Success or Failure
  */
-bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
+bStatus_t ble_hid_dev_read_attr_cb(uint16_t connHandle, gattAttribute_t *pAttr,
                             uint8_t *pValue, uint16_t *pLen, uint16_t offset, uint16_t maxLen, uint8_t method)
 {
     bStatus_t    status = SUCCESS;
-    hidRptMap_t *pRpt;
+    ble_hid_rpt_map_t *pRpt;
 
     uint16_t uuid = BUILD_UINT16(pAttr->type.uuid[0], pAttr->type.uuid[1]);
 
@@ -470,7 +470,7 @@ bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
         {
             // execute report callback
             status = (*pHidDevCB->reportCB)(pRpt->id, pRpt->type, uuid,
-                                            HID_DEV_OPER_READ, pLen, pValue);
+                                            BLE_HID_DEV_OPER_READ, pLen, pValue);
         }
         else
         {
@@ -480,14 +480,14 @@ bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
     else if(uuid == REPORT_MAP_UUID)
     {
         // verify offset
-        if(offset >= hidReportMapLen)
+        if(offset >= ble_hid_report_map_len)
         {
             status = ATT_ERR_INVALID_OFFSET;
         }
         else
         {
             // determine read length
-            *pLen = MIN(maxLen, (hidReportMapLen - offset));
+            *pLen = MIN(maxLen, (ble_hid_report_map_len - offset));
 
             // copy data
             tmos_memcpy(pValue, pAttr->pValue + offset, *pLen);
@@ -495,30 +495,30 @@ bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
     }
     else if(uuid == HID_INFORMATION_UUID)
     {
-        *pLen = HID_INFORMATION_LEN;
-        tmos_memcpy(pValue, pAttr->pValue, HID_INFORMATION_LEN);
+        *pLen = BLE_HID_INFORMATION_LEN;
+        tmos_memcpy(pValue, pAttr->pValue, BLE_HID_INFORMATION_LEN);
     }
     else if(uuid == GATT_REPORT_REF_UUID)
     {
-        *pLen = HID_REPORT_REF_LEN;
-        tmos_memcpy(pValue, pAttr->pValue, HID_REPORT_REF_LEN);
+        *pLen = BLE_HID_REPORT_REF_LEN;
+        tmos_memcpy(pValue, pAttr->pValue, BLE_HID_REPORT_REF_LEN);
     }
     else if(uuid == PROTOCOL_MODE_UUID)
     {
-        *pLen = HID_PROTOCOL_MODE_LEN;
+        *pLen = BLE_HID_PROTOCOL_MODE_LEN;
         pValue[0] = pAttr->pValue[0];
     }
     else if(uuid == GATT_EXT_REPORT_REF_UUID)
     {
-        *pLen = HID_EXT_REPORT_REF_LEN;
-        tmos_memcpy(pValue, pAttr->pValue, HID_EXT_REPORT_REF_LEN);
+        *pLen = BLE_HID_EXT_REPORT_REF_LEN;
+        tmos_memcpy(pValue, pAttr->pValue, BLE_HID_EXT_REPORT_REF_LEN);
     }
 
     return (status);
 }
 
 /*********************************************************************
- * @fn      HidDev_WriteAttrCB
+ * @fn      ble_hid_dev_write_attr_cb
  *
  * @brief   HID Dev attribute read callback.
  *
@@ -530,12 +530,12 @@ bStatus_t HidDev_ReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
  *
  * @return  Success or Failure
  */
-bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
+bStatus_t ble_hid_dev_write_attr_cb(uint16_t connHandle, gattAttribute_t *pAttr,
                              uint8_t *pValue, uint16_t len, uint16_t offset, uint8_t method)
 {
     uint16_t     uuid;
     bStatus_t    status = SUCCESS;
-    hidRptMap_t *pRpt;
+    ble_hid_rpt_map_t *pRpt;
 
     // Make sure it's not a blob operation (no attributes in the profile are long)
     if(offset > 0)
@@ -553,7 +553,7 @@ bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
         {
             // execute report callback
             status = (*pHidDevCB->reportCB)(pRpt->id, pRpt->type, uuid,
-                                            HID_DEV_OPER_WRITE, &len, pValue);
+                                            BLE_HID_DEV_OPER_WRITE, &len, pValue);
         }
     }
     else if(uuid == HID_CTRL_PT_UUID)
@@ -561,10 +561,10 @@ bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
         // Validate length and value range
         if(len == 1)
         {
-            if(pValue[0] == HID_CMD_SUSPEND || pValue[0] == HID_CMD_EXIT_SUSPEND)
+            if(pValue[0] == BLE_HID_CMD_SUSPEND || pValue[0] == BLE_HID_CMD_EXIT_SUSPEND)
             {
                 // execute HID app event callback
-                (*pHidDevCB->evtCB)((pValue[0] == HID_CMD_SUSPEND) ? HID_DEV_SUSPEND_EVT : HID_DEV_EXIT_SUSPEND_EVT);
+                (*pHidDevCB->evtCB)((pValue[0] == BLE_HID_CMD_SUSPEND) ? BLE_HID_DEV_SUSPEND_EVT : BLE_HID_DEV_EXIT_SUSPEND_EVT);
             }
             else
             {
@@ -589,22 +589,22 @@ bStatus_t HidDev_WriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
             {
                 // execute report callback
                 (*pHidDevCB->reportCB)(pRpt->id, pRpt->type, uuid,
-                                       (charCfg == GATT_CLIENT_CFG_NOTIFY) ? HID_DEV_OPER_ENABLE : HID_DEV_OPER_DISABLE,
+                                       (charCfg == GATT_CLIENT_CFG_NOTIFY) ? BLE_HID_DEV_OPER_ENABLE : BLE_HID_DEV_OPER_DISABLE,
                                        &len, pValue);
             }
         }
     }
     else if(uuid == PROTOCOL_MODE_UUID)
     {
-        if(len == HID_PROTOCOL_MODE_LEN)
+        if(len == BLE_HID_PROTOCOL_MODE_LEN)
         {
-            if(pValue[0] == HID_PROTOCOL_MODE_BOOT ||
-               pValue[0] == HID_PROTOCOL_MODE_REPORT)
+            if(pValue[0] == BLE_HID_PROTOCOL_MODE_BOOT ||
+               pValue[0] == BLE_HID_PROTOCOL_MODE_REPORT)
             {
                 pAttr->pValue[0] = pValue[0];
 
                 // execute HID app event callback
-                (*pHidDevCB->evtCB)((pValue[0] == HID_PROTOCOL_MODE_BOOT) ? HID_DEV_SET_BOOT_EVT : HID_DEV_SET_REPORT_EVT);
+                (*pHidDevCB->evtCB)((pValue[0] == BLE_HID_PROTOCOL_MODE_BOOT) ? BLE_HID_DEV_SET_BOOT_EVT : BLE_HID_DEV_SET_REPORT_EVT);
             }
             else
             {
@@ -706,7 +706,7 @@ static void hidDevProcessGAPMsg(gapRoleEvent_t *pEvent)
 static void hidDevHandleConnStatusCB(uint16_t connHandle, uint8_t changeType)
 {
     uint8_t          i;
-    hidRptMap_t     *p = pHidDevRptTbl;
+    ble_hid_rpt_map_t     *p = pHidDevRptTbl;
     uint16_t         retHandle;
     gattAttribute_t *pAttr;
 
@@ -741,17 +741,17 @@ static void hidDevHandleConnStatusCB(uint16_t connHandle, uint8_t changeType)
 static void hidDevDisconnected(void)
 {
     // Reset client characteristic configuration descriptors
-    Batt_HandleConnStatusCB(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
-    // ScanParam_HandleConnStatusCB(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
+    ble_batt_handle_conn_status_cb(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
+    // ble_scan_param_handle_conn_status_cb(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
     hidDevHandleConnStatusCB(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
 
     // Reset state variables
     hidDevConnSecure = FALSE;
-    hidProtocolMode = HID_PROTOCOL_MODE_REPORT;
+    ble_hid_protocol_mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
     // if bonded and normally connectable start advertising
     if((hidDevBondCount() > 0) &&
-       (pHidDevCfg->hidFlags & HID_FLAGS_NORMALLY_CONNECTABLE))
+       (pHidDevCfg->hidFlags & BLE_HID_FLAGS_NORMALLY_CONNECTABLE))
     {
         hidDevLowAdvertising();
     }
@@ -856,7 +856,7 @@ static void hidDevPairStateCB(uint16_t connHandle, uint8_t state, uint8_t status
             hidDevConnSecure = TRUE;
 
 #if DEFAULT_SCAN_PARAM_NOTIFY_TEST == TRUE
-            ScanParam_RefreshNotify(gapConnHandle);
+            ble_scan_param_refresh_notify(gapConnHandle);
 #endif
         }
     }
@@ -906,11 +906,11 @@ static void hidDevPasscodeCB(uint8_t *deviceAddr, uint16_t connectionHandle,
  */
 static void hidDevBattCB(uint8_t event)
 {
-    if(event == BATT_LEVEL_NOTI_ENABLED)
+    if(event == BLE_BATT_LEVEL_NOTI_ENABLED)
     {
         tmos_start_task(hidDevTaskId, BATT_PERIODIC_EVT, DEFAULT_BATT_PERIOD);
     }
-    else if(event == BATT_LEVEL_NOTI_DISABLED)
+    else if(event == BLE_BATT_LEVEL_NOTI_DISABLED)
     {
         // stop periodic measurement
         tmos_stop_task(hidDevTaskId, BATT_PERIODIC_EVT);
@@ -942,7 +942,7 @@ static void hidDevScanParamCB(uint8_t event)
 static void hidDevBattPeriodicTask(void)
 {
     // perform battery level check
-    Batt_MeasLevel();
+    ble_batt_meas_level();
 
     // Restart timer
     tmos_start_task(hidDevTaskId, BATT_PERIODIC_EVT, DEFAULT_BATT_PERIOD);
@@ -957,14 +957,14 @@ static void hidDevBattPeriodicTask(void)
  *
  * @return  Pointer to HID report structure
  */
-static hidRptMap_t *hidDevRptByHandle(uint16_t handle)
+static ble_hid_rpt_map_t *hidDevRptByHandle(uint16_t handle)
 {
     uint8_t      i;
-    hidRptMap_t *p = pHidDevRptTbl;
+    ble_hid_rpt_map_t *p = pHidDevRptTbl;
 
     for(i = hidDevRptTblLen; i > 0; i--, p++)
     {
-        if(p->handle == handle && p->mode == hidProtocolMode)
+        if(p->handle == handle && p->mode == ble_hid_protocol_mode)
         {
             return p;
         }
@@ -982,10 +982,10 @@ static hidRptMap_t *hidDevRptByHandle(uint16_t handle)
  *
  * @return  Pointer to HID report structure
  */
-static hidRptMap_t *hidDevRptByCccdHandle(uint16_t handle)
+static ble_hid_rpt_map_t *hidDevRptByCccdHandle(uint16_t handle)
 {
     uint8_t      i;
-    hidRptMap_t *p = pHidDevRptTbl;
+    ble_hid_rpt_map_t *p = pHidDevRptTbl;
 
     for(i = hidDevRptTblLen; i > 0; i--, p++)
     {
@@ -1008,14 +1008,14 @@ static hidRptMap_t *hidDevRptByCccdHandle(uint16_t handle)
  *
  * @return  Pointer to HID report structure
  */
-static hidRptMap_t *hidDevRptById(uint8_t id, uint8_t type)
+static ble_hid_rpt_map_t *hidDevRptById(uint8_t id, uint8_t type)
 {
     uint8_t      i;
-    hidRptMap_t *p = pHidDevRptTbl;
+    ble_hid_rpt_map_t *p = pHidDevRptTbl;
 
     for(i = hidDevRptTblLen; i > 0; i--, p++)
     {
-        if(p->id == id && p->type == type && p->mode == hidProtocolMode)
+        if(p->id == id && p->type == type && p->mode == ble_hid_protocol_mode)
         {
             return p;
         }
@@ -1038,7 +1038,7 @@ static hidRptMap_t *hidDevRptById(uint8_t id, uint8_t type)
  */
 static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
 {
-    hidRptMap_t     *pRpt;
+    ble_hid_rpt_map_t     *pRpt;
     gattAttribute_t *pAttr;
     uint16_t         retHandle;
     uint8_t          state = bleNoResources;

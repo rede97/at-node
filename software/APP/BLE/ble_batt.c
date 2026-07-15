@@ -14,8 +14,8 @@
  * INCLUDES
  */
 #include "config.h"
-#include "hiddev.h"
-#include "battservice.h"
+#include "ble_hid_dev.h"
+#include "ble_batt.h"
 
 /*********************************************************************
  * MACROS
@@ -61,16 +61,16 @@ const uint8_t battLevelUUID[ATT_BT_UUID_SIZE] = {
  */
 
 // Application callback
-static battServiceCB_t battServiceCB;
+static ble_batt_service_cb_t battServiceCB;
 
 // Measurement setup callback
-static battServiceSetupCB_t battServiceSetupCB = NULL;
+static ble_batt_service_setup_cb_t battServiceSetupCB = NULL;
 
 // Measurement teardown callback
-static battServiceTeardownCB_t battServiceTeardownCB = NULL;
+static ble_batt_service_teardown_cb_t battServiceTeardownCB = NULL;
 
 // Measurement calculation callback
-static battServiceCalcCB_t battServiceCalcCB = NULL;
+static ble_batt_service_calc_cb_t battServiceCalcCB = NULL;
 
 static uint16_t battMinLevel = BATT_ADC_LEVEL_2V; // For VDD/3 measurements
 static uint16_t battMaxLevel = BATT_ADC_LEVEL_3V; // For VDD/3 measurements
@@ -79,7 +79,7 @@ static uint16_t battMaxLevel = BATT_ADC_LEVEL_3V; // For VDD/3 measurements
 static uint8_t battCriticalLevel;
 
 // ADC channel to be used for reading
-//static uint8_t battServiceAdcCh = HAL_ADC_CHANNEL_VDD;
+//static uint8_t ble_batt_adc_ch = HAL_ADC_CHANNEL_VDD;
 
 /*********************************************************************
  * Profile Attributes - variables
@@ -94,8 +94,8 @@ static uint8_t       battLevel = 100;
 static gattCharCfg_t battLevelClientCharCfg[GATT_MAX_NUM_CONN];
 
 // HID Report Reference characteristic descriptor, battery level
-static uint8_t hidReportRefBattLevel[HID_REPORT_REF_LEN] = {
-    HID_RPT_ID_BATT_LEVEL_IN, HID_REPORT_TYPE_INPUT};
+static uint8_t hidReportRefBattLevel[BLE_HID_REPORT_REF_LEN] = {
+    BLE_HID_RPT_ID_BATT_LEVEL_IN, BLE_HID_REPORT_TYPE_INPUT};
 
 /*********************************************************************
  * Profile Attributes - Table
@@ -165,14 +165,14 @@ gattServiceCBs_t battCBs = {
  */
 
 /*********************************************************************
- * @fn      Batt_AddService
+ * @fn      ble_batt_add_service
  *
  * @brief   Initializes the Battery Service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-bStatus_t Batt_AddService(void)
+bStatus_t ble_batt_add_service(void)
 {
     uint8_t status = SUCCESS;
 
@@ -189,7 +189,7 @@ bStatus_t Batt_AddService(void)
 }
 
 /*********************************************************************
- * @fn      Batt_Register
+ * @fn      ble_batt_register
  *
  * @brief   Register a callback function with the Battery Service.
  *
@@ -197,13 +197,13 @@ bStatus_t Batt_AddService(void)
  *
  * @return  None.
  */
-extern void Batt_Register(battServiceCB_t pfnServiceCB)
+extern void ble_batt_register(ble_batt_service_cb_t pfnServiceCB)
 {
     battServiceCB = pfnServiceCB;
 }
 
 /*********************************************************************
- * @fn      Batt_SetParameter
+ * @fn      ble_batt_set_param
  *
  * @brief   Set a Battery Service parameter.
  *
@@ -216,13 +216,13 @@ extern void Batt_Register(battServiceCB_t pfnServiceCB)
  *
  * @return  bStatus_t
  */
-bStatus_t Batt_SetParameter(uint8_t param, uint8_t len, void *value)
+bStatus_t ble_batt_set_param(uint8_t param, uint8_t len, void *value)
 {
     bStatus_t ret = SUCCESS;
 
     switch(param)
     {
-        case BATT_PARAM_CRITICAL_LEVEL:
+        case BLE_BATT_PARAM_CRITICAL_LEVEL:
             battCriticalLevel = *((uint8_t *)value);
 
             // If below the critical level and critical state not set, notify it
@@ -241,7 +241,7 @@ bStatus_t Batt_SetParameter(uint8_t param, uint8_t len, void *value)
 }
 
 /*********************************************************************
- * @fn      Batt_GetParameter
+ * @fn      ble_batt_get_param
  *
  * @brief   Get a Battery Service parameter.
  *
@@ -253,32 +253,32 @@ bStatus_t Batt_SetParameter(uint8_t param, uint8_t len, void *value)
  *
  * @return  bStatus_t
  */
-bStatus_t Batt_GetParameter(uint8_t param, void *value)
+bStatus_t ble_batt_get_param(uint8_t param, void *value)
 {
     bStatus_t ret = SUCCESS;
     switch(param)
     {
-        case BATT_PARAM_LEVEL:
+        case BLE_BATT_PARAM_LEVEL:
             *((uint8_t *)value) = battLevel;
             break;
 
-        case BATT_PARAM_CRITICAL_LEVEL:
+        case BLE_BATT_PARAM_CRITICAL_LEVEL:
             *((uint8_t *)value) = battCriticalLevel;
             break;
 
-        case BATT_PARAM_SERVICE_HANDLE:
+        case BLE_BATT_PARAM_SERVICE_HANDLE:
             *((uint16_t *)value) = GATT_SERVICE_HANDLE(battAttrTbl);
             break;
 
-        case BATT_PARAM_BATT_LEVEL_IN_REPORT:
+        case BLE_BLE_BATT_PARAM_LEVEL_IN_REPORT:
         {
-            hidRptMap_t *pRpt = (hidRptMap_t *)value;
+            ble_hid_rpt_map_t *pRpt = (ble_hid_rpt_map_t *)value;
 
             pRpt->id = hidReportRefBattLevel[0];
             pRpt->type = hidReportRefBattLevel[1];
             pRpt->handle = battAttrTbl[BATT_LEVEL_VALUE_IDX].handle;
             pRpt->cccdHandle = battAttrTbl[BATT_LEVEL_VALUE_CCCD_IDX].handle;
-            pRpt->mode = HID_PROTOCOL_MODE_REPORT;
+            pRpt->mode = BLE_HID_PROTOCOL_MODE_REPORT;
         }
         break;
 
@@ -291,7 +291,7 @@ bStatus_t Batt_GetParameter(uint8_t param, void *value)
 }
 
 /*********************************************************************
- * @fn          Batt_MeasLevel
+ * @fn          ble_batt_meas_level
  *
  * @brief       Measure the battery level and update the battery
  *              level value in the service characteristics.  If
@@ -302,7 +302,7 @@ bStatus_t Batt_GetParameter(uint8_t param, void *value)
  *
  * @return      Success
  */
-bStatus_t Batt_MeasLevel(void)
+bStatus_t ble_batt_meas_level(void)
 {
     uint8_t level;
 
@@ -322,7 +322,7 @@ bStatus_t Batt_MeasLevel(void)
 }
 
 /*********************************************************************
- * @fn      Batt_Setup
+ * @fn      ble_batt_setup
  *
  * @brief   Set up which ADC source is to be used. Defaults to VDD/3.
  *
@@ -335,11 +335,11 @@ bStatus_t Batt_MeasLevel(void)
  *
  * @return  none.
  */
-void Batt_Setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
-                battServiceSetupCB_t sCB, battServiceTeardownCB_t tCB,
-                battServiceCalcCB_t cCB)
+void ble_batt_setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
+                ble_batt_service_setup_cb_t sCB, ble_batt_service_teardown_cb_t tCB,
+                ble_batt_service_calc_cb_t cCB)
 {
-    //battServiceAdcCh = adc_ch;
+    //ble_batt_adc_ch = adc_ch;
     battMinLevel = minVal;
     battMaxLevel = maxVal;
 
@@ -395,8 +395,8 @@ static bStatus_t battReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
     }
     else if(uuid == GATT_REPORT_REF_UUID)
     {
-        *pLen = HID_REPORT_REF_LEN;
-        tmos_memcpy(pValue, pAttr->pValue, HID_REPORT_REF_LEN);
+        *pLen = BLE_HID_REPORT_REF_LEN;
+        tmos_memcpy(pValue, pAttr->pValue, BLE_HID_REPORT_REF_LEN);
     }
     else
     {
@@ -436,7 +436,7 @@ static bStatus_t battWriteAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
 
                 if(battServiceCB)
                 {
-                    (*battServiceCB)((charCfg == GATT_CFG_NO_OPERATION) ? BATT_LEVEL_NOTI_DISABLED : BATT_LEVEL_NOTI_ENABLED);
+                    (*battServiceCB)((charCfg == GATT_CFG_NO_OPERATION) ? BLE_BATT_LEVEL_NOTI_DISABLED : BLE_BATT_LEVEL_NOTI_ENABLED);
                 }
             }
             break;
@@ -556,7 +556,7 @@ static void battNotifyLevel(void)
 }
 
 /*********************************************************************
- * @fn          Batt_HandleConnStatusCB
+ * @fn          ble_batt_handle_conn_status_cb
  *
  * @brief       Battery Service link status change handler function.
  *
@@ -565,7 +565,7 @@ static void battNotifyLevel(void)
  *
  * @return      none
  */
-void Batt_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType)
+void ble_batt_handle_conn_status_cb(uint16_t connHandle, uint8_t changeType)
 {
     // Make sure this is not loopback connection
     if(connHandle != LOOPBACK_CONNHANDLE)

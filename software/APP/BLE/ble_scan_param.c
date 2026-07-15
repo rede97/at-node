@@ -14,7 +14,7 @@
  * INCLUDES
  */
 #include "config.h"
-#include "scanparamservice.h"
+#include "ble_scan_param.h"
 
 /*********************************************************************
  * MACROS
@@ -56,7 +56,7 @@ const uint8_t scanParamRefreshUUID[ATT_BT_UUID_SIZE] = {
  */
 
 // Application callback
-static scanParamServiceCB_t scanParamServiceCB;
+static ble_scan_param_service_cb_t scanParamServiceCB;
 
 /*********************************************************************
  * Profile Attributes - variables
@@ -67,11 +67,11 @@ static const gattAttrType_t scanParamService = {ATT_BT_UUID_SIZE, scanParamServU
 
 // Scan Interval Window characteristic
 static uint8_t scanIntervalWindowProps = GATT_PROP_WRITE_NO_RSP;
-static uint8_t scanIntervalWindow[SCAN_INTERVAL_WINDOW_CHAR_LEN];
+static uint8_t scanIntervalWindow[BLE_SCAN_INTERVAL_WINDOW_CHAR_LEN];
 
 // Scan Parameter Refresh characteristic
 static uint8_t       scanParamRefreshProps = GATT_PROP_NOTIFY;
-static uint8_t       scanParamRefresh[SCAN_PARAM_REFRESH_LEN];
+static uint8_t       scanParamRefresh[BLE_SCAN_PARAM_REFRESH_LEN];
 static gattCharCfg_t scanParamRefreshClientCharCfg[GATT_MAX_NUM_CONN];
 
 /*********************************************************************
@@ -158,14 +158,14 @@ gattServiceCBs_t scanParamCBs = {
  */
 
 /*********************************************************************
- * @fn      ScanParam_AddService
+ * @fn      ble_scan_param_add_service
  *
  * @brief   Initializes the Battery Service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-bStatus_t ScanParam_AddService(void)
+bStatus_t ble_scan_param_add_service(void)
 {
     uint8_t status = SUCCESS;
 
@@ -180,7 +180,7 @@ bStatus_t ScanParam_AddService(void)
 }
 
 /*********************************************************************
- * @fn      ScanParam_Register
+ * @fn      ble_scan_param_register
  *
  * @brief   Register a callback function with the Battery Service.
  *
@@ -188,13 +188,13 @@ bStatus_t ScanParam_AddService(void)
  *
  * @return  None.
  */
-extern void ScanParam_Register(scanParamServiceCB_t pfnServiceCB)
+extern void ble_scan_param_register(ble_scan_param_service_cb_t pfnServiceCB)
 {
     scanParamServiceCB = pfnServiceCB;
 }
 
 /*********************************************************************
- * @fn      ScanParam_SetParameter
+ * @fn      ble_scan_param_set_param
  *
  * @brief   Set a Battery Service parameter.
  *
@@ -207,7 +207,7 @@ extern void ScanParam_Register(scanParamServiceCB_t pfnServiceCB)
  *
  * @return  bStatus_t
  */
-bStatus_t ScanParam_SetParameter(uint8_t param, uint8_t len, void *value)
+bStatus_t ble_scan_param_set_param(uint8_t param, uint8_t len, void *value)
 {
     bStatus_t ret = SUCCESS;
 
@@ -222,7 +222,7 @@ bStatus_t ScanParam_SetParameter(uint8_t param, uint8_t len, void *value)
 }
 
 /*********************************************************************
- * @fn      ScanParam_GetParameter
+ * @fn      ble_scan_param_get_param
  *
  * @brief   Get a Battery Service parameter.
  *
@@ -234,17 +234,17 @@ bStatus_t ScanParam_SetParameter(uint8_t param, uint8_t len, void *value)
  *
  * @return  bStatus_t
  */
-bStatus_t ScanParam_GetParameter(uint8_t param, void *value)
+bStatus_t ble_scan_param_get_param(uint8_t param, void *value)
 {
     bStatus_t ret = SUCCESS;
     switch(param)
     {
-        case SCAN_PARAM_PARAM_INTERVAL:
+        case BLE_SCAN_PARAM_INTERVAL:
             *((uint16_t *)value) = BUILD_UINT16(scanIntervalWindow[0],
                                                 scanIntervalWindow[1]);
             break;
 
-        case SCAN_PARAM_PARAM_WINDOW:
+        case BLE_SCAN_PARAM_WINDOW:
             *((uint16_t *)value) = BUILD_UINT16(scanIntervalWindow[2],
                                                 scanIntervalWindow[3]);
             break;
@@ -258,7 +258,7 @@ bStatus_t ScanParam_GetParameter(uint8_t param, void *value)
 }
 
 /*********************************************************************
- * @fn      ScanParam_RefreshNotify
+ * @fn      ble_scan_param_refresh_notify
  *
  * @brief   Notify the peer to refresh the scan parameters.
  *
@@ -266,7 +266,7 @@ bStatus_t ScanParam_GetParameter(uint8_t param, void *value)
  *
  * @return  None
  */
-void ScanParam_RefreshNotify(uint16_t connHandle)
+void ble_scan_param_refresh_notify(uint16_t connHandle)
 {
     uint16_t value;
 
@@ -276,13 +276,13 @@ void ScanParam_RefreshNotify(uint16_t connHandle)
         attHandleValueNoti_t noti;
 
         noti.pValue = GATT_bm_alloc(connHandle, ATT_HANDLE_VALUE_NOTI,
-                                    SCAN_PARAM_REFRESH_LEN, NULL, 0);
+                                    BLE_SCAN_PARAM_REFRESH_LEN, NULL, 0);
         if(noti.pValue != NULL)
         {
             // send notification
             noti.handle = scanParamAttrTbl[SCAN_PARAM_REFRESH_CCCD_IDX].handle;
-            noti.len = SCAN_PARAM_REFRESH_LEN;
-            noti.pValue[0] = SCAN_PARAM_REFRESH_REQ;
+            noti.len = BLE_SCAN_PARAM_REFRESH_LEN;
+            noti.pValue[0] = BLE_SCAN_PARAM_REFRESH_REQ;
 
             if(GATT_Notification(connHandle, &noti, FALSE) != SUCCESS)
             {
@@ -344,7 +344,7 @@ static bStatus_t scanParamWriteAttrCB(uint16_t connHandle, gattAttribute_t *pAtt
     // Only one writeable attribute
     if(uuid == SCAN_INTERVAL_WINDOW_UUID)
     {
-        if(len == SCAN_INTERVAL_WINDOW_CHAR_LEN)
+        if(len == BLE_SCAN_INTERVAL_WINDOW_CHAR_LEN)
         {
             uint16_t interval = BUILD_UINT16(pValue[0], pValue[1]);
             uint16_t window = BUILD_UINT16(pValue[0], pValue[1]);
@@ -354,7 +354,7 @@ static bStatus_t scanParamWriteAttrCB(uint16_t connHandle, gattAttribute_t *pAtt
             {
                 tmos_memcpy(pAttr->pValue, pValue, len);
 
-                (*scanParamServiceCB)(SCAN_INTERVAL_WINDOW_SET);
+                (*scanParamServiceCB)(BLE_SCAN_INTERVAL_WINDOW_SET);
             }
             else
             {
@@ -380,7 +380,7 @@ static bStatus_t scanParamWriteAttrCB(uint16_t connHandle, gattAttribute_t *pAtt
 }
 
 /*********************************************************************
- * @fn          ScanParam_HandleConnStatusCB
+ * @fn          ble_scan_param_handle_conn_status_cb
  *
  * @brief       Service link status change handler function.
  *
@@ -389,7 +389,7 @@ static bStatus_t scanParamWriteAttrCB(uint16_t connHandle, gattAttribute_t *pAtt
  *
  * @return      none
  */
-void ScanParam_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType)
+void ble_scan_param_handle_conn_status_cb(uint16_t connHandle, uint8_t changeType)
 {
     // Make sure this is not loopback connection
     if(connHandle != LOOPBACK_CONNHANDLE)

@@ -10,8 +10,8 @@
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
-#ifndef SCANPARAMSERVICE_H
-#define SCANPARAMSERVICE_H
+#ifndef BLE_SCAN_PARAM_H
+#define BLE_SCAN_PARAM_H
 
 #ifdef __cplusplus
 extern "C" {
@@ -26,18 +26,18 @@ extern "C" {
  */
 
 // Scan Characteristic Lengths
-#define SCAN_INTERVAL_WINDOW_CHAR_LEN    4
-#define SCAN_PARAM_REFRESH_LEN           1
+#define BLE_SCAN_INTERVAL_WINDOW_CHAR_LEN    4
+#define BLE_SCAN_PARAM_REFRESH_LEN           1
 
 // Scan Parameter Refresh Values
-#define SCAN_PARAM_REFRESH_REQ           0x00
+#define BLE_SCAN_PARAM_REFRESH_REQ           0x00
 
 // Callback events
-#define SCAN_INTERVAL_WINDOW_SET         1
+#define BLE_SCAN_INTERVAL_WINDOW_SET         1
 
 // Get/Set parameters
-#define SCAN_PARAM_PARAM_INTERVAL        0
-#define SCAN_PARAM_PARAM_WINDOW          1
+#define BLE_SCAN_PARAM_INTERVAL        0
+#define BLE_SCAN_PARAM_WINDOW          1
 
 /*********************************************************************
  * TYPEDEFS
@@ -52,24 +52,24 @@ extern "C" {
  */
 
 // Scan Parameters Service callback function
-typedef void (*scanParamServiceCB_t)(uint8_t event);
+typedef void (*ble_scan_param_service_cb_t)(uint8_t event);
 
 /*********************************************************************
  * API FUNCTIONS
  */
 
 /*********************************************************************
- * @fn      ScanParam_AddService
+ * @fn      ble_scan_param_add_service
  *
  * @brief   Initializes the Service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-extern bStatus_t ScanParam_AddService(void);
+extern bStatus_t ble_scan_param_add_service(void);
 
 /*********************************************************************
- * @fn      ScanParam_Register
+ * @fn      ble_scan_param_register
  *
  * @brief   Register a callback function with the Scan Parameters Service.
  *
@@ -77,10 +77,10 @@ extern bStatus_t ScanParam_AddService(void);
  *
  * @return  None.
  */
-extern void ScanParam_Register(scanParamServiceCB_t pfnServiceCB);
+extern void ble_scan_param_register(ble_scan_param_service_cb_t pfnServiceCB);
 
 /*********************************************************************
- * @fn      ScanParam_SetParameter
+ * @fn      ble_scan_param_set_param
  *
  * @brief   Set a Scan Parameters Service parameter.
  *
@@ -93,10 +93,10 @@ extern void ScanParam_Register(scanParamServiceCB_t pfnServiceCB);
  *
  * @return  bStatus_t
  */
-extern bStatus_t ScanParam_SetParameter(uint8_t param, uint8_t len, void *value);
+extern bStatus_t ble_scan_param_set_param(uint8_t param, uint8_t len, void *value);
 
 /*********************************************************************
- * @fn      ScanParam_GetParameter
+ * @fn      ble_scan_param_get_param
  *
  * @brief   Get a Scan Parameters Service parameter.
  *
@@ -108,10 +108,10 @@ extern bStatus_t ScanParam_SetParameter(uint8_t param, uint8_t len, void *value)
  *
  * @return  bStatus_t
  */
-extern bStatus_t ScanParam_GetParameter(uint8_t param, void *value);
+extern bStatus_t ble_scan_param_get_param(uint8_t param, void *value);
 
 /*********************************************************************
- * @fn      ScanParam_RefreshNotify
+ * @fn      ble_scan_param_refresh_notify
  *
  * @brief   Notify the peer to refresh the scan parameters.
  *
@@ -119,9 +119,9 @@ extern bStatus_t ScanParam_GetParameter(uint8_t param, void *value);
  *
  * @return  None
  */
-extern void ScanParam_RefreshNotify(uint16_t connHandle);
+extern void ble_scan_param_refresh_notify(uint16_t connHandle);
 
-extern void ScanParam_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType);
+extern void ble_scan_param_handle_conn_status_cb(uint16_t connHandle, uint8_t changeType);
 
 /*********************************************************************
 *********************************************************************/
@@ -130,4 +130,4 @@ extern void ScanParam_HandleConnStatusCB(uint16_t connHandle, uint8_t changeType
 }
 #endif
 
-#endif /* SCANPARAMSERVICE_H */
+#endif /* BLE_SCAN_PARAM_H */

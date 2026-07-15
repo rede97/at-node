@@ -7,7 +7,7 @@
 
 #include "config.h"
 #include "HWS.h"
-#include "hiddev.h"
+#include "ble_hid_dev.h"
 #include "hidkbd.h"
 #include "usb_dev.h"
 #include "at_parser.h"
@@ -70,8 +70,8 @@ int main(void)
     AT_Init((at_cmd_t *)cmd_table, cmd_table_count);
     HalKeyConfig(key_press);
     GAPRole_PeripheralInit();
-    HidDev_Init();
-    HidEmu_Init();
+    ble_hid_dev_init();
+    ble_hid_emu_init();
 
 #if(defined(HAL_SLEEP)) && (HAL_SLEEP == TRUE)
     PRINT("HAL_SLEEP enabled - USB disabled\n");

@@ -5,25 +5,25 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../APP/BLE/battservice.c \
-../APP/BLE/devinfoservice.c \
-../APP/BLE/hiddev.c \
-../APP/BLE/hidkbdservice.c \
-../APP/BLE/scanparamservice.c 
+../APP/BLE/ble_batt.c \
+../APP/BLE/ble_dev_info.c \
+../APP/BLE/ble_hid_dev.c \
+../APP/BLE/ble_hid_kbd.c \
+../APP/BLE/ble_scan_param.c 
 
 C_DEPS += \
-./APP/BLE/battservice.d \
-./APP/BLE/devinfoservice.d \
-./APP/BLE/hiddev.d \
-./APP/BLE/hidkbdservice.d \
-./APP/BLE/scanparamservice.d 
+./APP/BLE/ble_batt.d \
+./APP/BLE/ble_dev_info.d \
+./APP/BLE/ble_hid_dev.d \
+./APP/BLE/ble_hid_kbd.d \
+./APP/BLE/ble_scan_param.d 
 
 OBJS += \
-./APP/BLE/battservice.o \
-./APP/BLE/devinfoservice.o \
-./APP/BLE/hiddev.o \
-./APP/BLE/hidkbdservice.o \
-./APP/BLE/scanparamservice.o 
+./APP/BLE/ble_batt.o \
+./APP/BLE/ble_dev_info.o \
+./APP/BLE/ble_hid_dev.o \
+./APP/BLE/ble_hid_kbd.o \
+./APP/BLE/ble_scan_param.o 
 
 DIR_OBJS += \
 ./APP/BLE/*.o \

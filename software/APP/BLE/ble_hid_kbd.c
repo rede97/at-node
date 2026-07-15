@@ -14,9 +14,9 @@
  * INCLUDES
  */
 #include "config.h"
-#include "hidkbdservice.h"
-#include "hiddev.h"
-#include "battservice.h"
+#include "ble_hid_kbd.h"
+#include "ble_hid_dev.h"
+#include "ble_batt.h"
 
 /*********************************************************************
  * MACROS
@@ -62,7 +62,7 @@ const uint8_t hidReportUUID[ATT_BT_UUID_SIZE] = {
     LO_UINT16(REPORT_UUID), HI_UINT16(REPORT_UUID)};
 
 // HID Protocol Mode characteristic
-const uint8_t hidProtocolModeUUID[ATT_BT_UUID_SIZE] = {
+const uint8_t ble_hid_protocol_modeUUID[ATT_BT_UUID_SIZE] = {
     LO_UINT16(PROTOCOL_MODE_UUID), HI_UINT16(PROTOCOL_MODE_UUID)};
 
 /*********************************************************************
@@ -78,10 +78,10 @@ const uint8_t hidProtocolModeUUID[ATT_BT_UUID_SIZE] = {
  */
 
 // HID Information characteristic value
-static const uint8_t hidInfo[HID_INFORMATION_LEN] = {
+static const uint8_t hidInfo[BLE_HID_INFORMATION_LEN] = {
     LO_UINT16(0x0111), HI_UINT16(0x0111), // bcdHID (USB HID version)
     0x00,                                 // bCountryCode
-    HID_FEATURE_FLAGS                     // Flags
+    BLE_HID_KBD_FEATURE_FLAGS                     // Flags
 };
 
 // HID Report Map characteristic value
@@ -133,10 +133,10 @@ static const uint8_t hidReportMap[] = {
 };
 
 // HID report map length
-uint16_t hidReportMapLen = sizeof(hidReportMap);
+uint16_t ble_hid_report_map_len = sizeof(hidReportMap);
 
 // HID report mapping table
-static hidRptMap_t hidRptMap[HID_NUM_REPORTS];
+static ble_hid_rpt_map_t hidRptMap[BLE_HID_KBD_NUM_REPORTS];
 
 /*********************************************************************
  * Profile Attributes - variables
@@ -163,8 +163,8 @@ static uint8_t hidControlPointProps = GATT_PROP_WRITE_NO_RSP;
 static uint8_t hidControlPoint;
 
 // HID Protocol Mode characteristic
-static uint8_t hidProtocolModeProps = GATT_PROP_READ | GATT_PROP_WRITE_NO_RSP;
-uint8_t        hidProtocolMode = HID_PROTOCOL_MODE_REPORT;
+static uint8_t ble_hid_protocol_modeProps = GATT_PROP_READ | GATT_PROP_WRITE_NO_RSP;
+uint8_t        ble_hid_protocol_mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
 // HID Report characteristic, key input
 static uint8_t       hidReportKeyInProps = GATT_PROP_READ | GATT_PROP_NOTIFY;
@@ -172,16 +172,16 @@ static uint8_t       hidReportKeyIn;
 static gattCharCfg_t hidReportKeyInClientCharCfg[GATT_MAX_NUM_CONN];
 
 // HID Report Reference characteristic descriptor, key input
-static uint8_t hidReportRefKeyIn[HID_REPORT_REF_LEN] =
-    {HID_RPT_ID_KEY_IN, HID_REPORT_TYPE_INPUT};
+static uint8_t hidReportRefKeyIn[BLE_HID_REPORT_REF_LEN] =
+    {BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT};
 
 // HID Report characteristic, LED output
 static uint8_t hidReportLedOutProps = GATT_PROP_READ | GATT_PROP_WRITE | GATT_PROP_WRITE_NO_RSP;
 static uint8_t hidReportLedOut;
 
 // HID Report Reference characteristic descriptor, LED output
-static uint8_t hidReportRefLedOut[HID_REPORT_REF_LEN] =
-    {HID_RPT_ID_LED_OUT, HID_REPORT_TYPE_OUTPUT};
+static uint8_t hidReportRefLedOut[BLE_HID_REPORT_REF_LEN] =
+    {BLE_HID_RPT_ID_LED_OUT, BLE_HID_REPORT_TYPE_OUTPUT};
 
 // HID Boot Keyboard Input Report
 static uint8_t       hidReportBootKeyInProps = GATT_PROP_READ | GATT_PROP_NOTIFY;
@@ -197,8 +197,8 @@ static uint8_t hidReportFeatureProps = GATT_PROP_READ | GATT_PROP_WRITE;
 static uint8_t hidReportFeature;
 
 // HID Report Reference characteristic descriptor, Feature
-static uint8_t hidReportRefFeature[HID_REPORT_REF_LEN] =
-    {HID_RPT_ID_FEATURE, HID_REPORT_TYPE_FEATURE};
+static uint8_t hidReportRefFeature[BLE_HID_REPORT_REF_LEN] =
+    {BLE_HID_RPT_ID_FEATURE, BLE_HID_REPORT_TYPE_FEATURE};
 
 /*********************************************************************
  * Profile Attributes - Table
@@ -253,14 +253,14 @@ static gattAttribute_t hidAttrTbl[] = {
         {ATT_BT_UUID_SIZE, characterUUID},
         GATT_PERMIT_READ,
         0,
-        &hidProtocolModeProps},
+        &ble_hid_protocol_modeProps},
 
     // HID Protocol Mode characteristic
     {
-        {ATT_BT_UUID_SIZE, hidProtocolModeUUID},
+        {ATT_BT_UUID_SIZE, ble_hid_protocol_modeUUID},
         GATT_PERMIT_ENCRYPT_READ | GATT_PERMIT_ENCRYPT_WRITE,
         0,
-        &hidProtocolMode},
+        &ble_hid_protocol_mode},
 
     // HID Report Map characteristic declaration
     {
@@ -432,8 +432,8 @@ enum
 
 // Service Callbacks
 gattServiceCBs_t hidKbdCBs = {
-    HidDev_ReadAttrCB,  // Read callback function pointer
-    HidDev_WriteAttrCB, // Write callback function pointer
+    ble_hid_dev_read_attr_cb,  // Read callback function pointer
+    ble_hid_dev_write_attr_cb, // Write callback function pointer
     NULL                // Authorization callback function pointer
 };
 
@@ -442,14 +442,14 @@ gattServiceCBs_t hidKbdCBs = {
  */
 
 /*********************************************************************
- * @fn      Hid_AddService
+ * @fn      ble_hid_kbd_add_service
  *
  * @brief   Initializes the HID Service by registering
  *          GATT attributes with the GATT server.
  *
  * @return  Success or Failure
  */
-bStatus_t Hid_AddService(void)
+bStatus_t ble_hid_kbd_add_service(void)
 {
     uint8_t status = SUCCESS;
 
@@ -461,7 +461,7 @@ bStatus_t Hid_AddService(void)
     status = GATTServApp_RegisterService(hidAttrTbl, GATT_NUM_ATTRS(hidAttrTbl), GATT_MAX_ENCRYPT_KEY_SIZE, &hidKbdCBs);
 
     // Set up included service
-    Batt_GetParameter(BATT_PARAM_SERVICE_HANDLE,
+    ble_batt_get_param(BLE_BATT_PARAM_SERVICE_HANDLE,
                       &GATT_INCLUDED_HANDLE(hidAttrTbl, HID_INCLUDED_SERVICE_IDX));
 
     // Construct map of reports to characteristic handles
@@ -472,14 +472,14 @@ bStatus_t Hid_AddService(void)
     hidRptMap[0].type = hidReportRefKeyIn[1];
     hidRptMap[0].handle = hidAttrTbl[HID_REPORT_KEY_IN_IDX].handle;
     hidRptMap[0].cccdHandle = hidAttrTbl[HID_REPORT_KEY_IN_CCCD_IDX].handle;
-    hidRptMap[0].mode = HID_PROTOCOL_MODE_REPORT;
+    hidRptMap[0].mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
     // LED output report
     hidRptMap[1].id = hidReportRefLedOut[0];
     hidRptMap[1].type = hidReportRefLedOut[1];
     hidRptMap[1].handle = hidAttrTbl[HID_REPORT_LED_OUT_IDX].handle;
     hidRptMap[1].cccdHandle = 0;
-    hidRptMap[1].mode = HID_PROTOCOL_MODE_REPORT;
+    hidRptMap[1].mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
     // Boot keyboard input report
     // Use same ID and type as key input report
@@ -487,7 +487,7 @@ bStatus_t Hid_AddService(void)
     hidRptMap[2].type = hidReportRefKeyIn[1];
     hidRptMap[2].handle = hidAttrTbl[HID_BOOT_KEY_IN_IDX].handle;
     hidRptMap[2].cccdHandle = hidAttrTbl[HID_BOOT_KEY_IN_CCCD_IDX].handle;
-    hidRptMap[2].mode = HID_PROTOCOL_MODE_BOOT;
+    hidRptMap[2].mode = BLE_HID_PROTOCOL_MODE_BOOT;
 
     // Boot keyboard output report
     // Use same ID and type as LED output report
@@ -495,26 +495,26 @@ bStatus_t Hid_AddService(void)
     hidRptMap[3].type = hidReportRefLedOut[1];
     hidRptMap[3].handle = hidAttrTbl[HID_BOOT_KEY_OUT_IDX].handle;
     hidRptMap[3].cccdHandle = 0;
-    hidRptMap[3].mode = HID_PROTOCOL_MODE_BOOT;
+    hidRptMap[3].mode = BLE_HID_PROTOCOL_MODE_BOOT;
 
     // Feature report
     hidRptMap[4].id = hidReportRefFeature[0];
     hidRptMap[4].type = hidReportRefFeature[1];
     hidRptMap[4].handle = hidAttrTbl[HID_FEATURE_IDX].handle;
     hidRptMap[4].cccdHandle = 0;
-    hidRptMap[4].mode = HID_PROTOCOL_MODE_REPORT;
+    hidRptMap[4].mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
     // Battery level input report
-    Batt_GetParameter(BATT_PARAM_BATT_LEVEL_IN_REPORT, &(hidRptMap[5]));
+    ble_batt_get_param(BLE_BLE_BATT_PARAM_LEVEL_IN_REPORT, &(hidRptMap[5]));
 
     // Setup report ID map
-    HidDev_RegisterReports(HID_NUM_REPORTS, hidRptMap);
+    ble_hid_dev_register_reports(BLE_HID_KBD_NUM_REPORTS, hidRptMap);
 
     return (status);
 }
 
 /*********************************************************************
- * @fn      Hid_SetParameter
+ * @fn      ble_hid_kbd_set_param
  *
  * @brief   Set a HID Kbd parameter.
  *
@@ -529,14 +529,14 @@ bStatus_t Hid_AddService(void)
  *
  * @return  GATT status code.
  */
-uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len, void *pValue)
+uint8_t ble_hid_kbd_set_param(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len, void *pValue)
 {
     bStatus_t ret = SUCCESS;
 
     switch(uuid)
     {
         case REPORT_UUID:
-            if(type == HID_REPORT_TYPE_OUTPUT)
+            if(type == BLE_HID_REPORT_TYPE_OUTPUT)
             {
                 if(len == 1)
                 {
@@ -547,7 +547,7 @@ uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len, v
                     ret = ATT_ERR_INVALID_VALUE_SIZE;
                 }
             }
-            else if(type == HID_REPORT_TYPE_FEATURE)
+            else if(type == BLE_HID_REPORT_TYPE_FEATURE)
             {
                 if(len == 1)
                 {
@@ -584,7 +584,7 @@ uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len, v
 }
 
 /*********************************************************************
- * @fn      Hid_GetParameter
+ * @fn      ble_hid_kbd_get_param
  *
  * @brief   Get a HID Kbd parameter.
  *
@@ -599,17 +599,17 @@ uint8_t Hid_SetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint8_t len, v
  *
  * @return  GATT status code.
  */
-uint8_t Hid_GetParameter(uint8_t id, uint8_t type, uint16_t uuid, uint16_t *pLen, void *pValue)
+uint8_t ble_hid_kbd_get_param(uint8_t id, uint8_t type, uint16_t uuid, uint16_t *pLen, void *pValue)
 {
     switch(uuid)
     {
         case REPORT_UUID:
-            if(type == HID_REPORT_TYPE_OUTPUT)
+            if(type == BLE_HID_REPORT_TYPE_OUTPUT)
             {
                 *((uint8_t *)pValue) = hidReportLedOut;
                 *pLen = 1;
             }
-            else if(type == HID_REPORT_TYPE_FEATURE)
+            else if(type == BLE_HID_REPORT_TYPE_FEATURE)
             {
                 *((uint8_t *)pValue) = hidReportFeature;
                 *pLen = 1;

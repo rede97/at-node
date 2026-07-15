@@ -51,8 +51,8 @@ extern "C" {
 /*
  * Task Initialization for the BLE Application
  */
-extern void HidEmu_Init(void);
-extern uint16_t HidEmu_ProcessEvent(uint8_t task_id, uint16_t events);
+extern void ble_hid_emu_init(void);
+extern uint16_t ble_hid_emu_process_event(uint8_t task_id, uint16_t events);
 extern uint8_t kb_ble_connected(void);
 
 /*********************************************************************
