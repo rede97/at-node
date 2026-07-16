@@ -28,26 +28,23 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 static int kb_flush(void)
 {
     int sent = 0;
-    PRINT("KB: flush mods=%02X count=%d mode=%d BLE=%d USB=%d\n",
-          kbd_mods, kbd_count, kb_mode, kb_ble_connected(), Ready);
-    if (kb_mode & KB_BLE) {
-        if (kb_ble_connected()) {
-            kb_ble_send_report(kbd_mods, kbd_keys, kbd_count);
-            sent = 1;
-        }
+    if (kb_mode & KB_BLE && kb_ble_connected()) {
+        PRINT("KB> BLE:%02X%02X%02X%02X%02X%02X mods=%02X\n",
+              kbd_keys[0],kbd_keys[1],kbd_keys[2],kbd_keys[3],kbd_keys[4],kbd_keys[5], kbd_mods);
+        kb_ble_send_report(kbd_mods, kbd_keys, kbd_count);
+        sent = 1;
     }
-    if (kb_mode & KB_USB) {
-        if (Ready) {
-            kb_usb_send_report(kbd_mods, kbd_keys, kbd_count);
-            sent = 1;
-        }
+    if (kb_mode & KB_USB && Ready) {
+        PRINT("KB> USB:%02X%02X%02X%02X%02X%02X mods=%02X\n",
+              kbd_keys[0],kbd_keys[1],kbd_keys[2],kbd_keys[3],kbd_keys[4],kbd_keys[5], kbd_mods);
+        kb_usb_send_report(kbd_mods, kbd_keys, kbd_count);
+        sent = 1;
     }
     return sent ? 0 : -1;
 }
 
 int kb_press_and_release(uint8_t keycode)
 {
-    PRINT("KB: press+release %02X mode=%d\n", keycode, kb_mode);
     kbd_keys[0] = keycode;
     for (int i = 1; i < 6; i++) kbd_keys[i] = 0;
     kbd_count = 1;
@@ -105,9 +102,17 @@ static int at_cmd_KB(int argc, char *argv[])  {
     if (argv[1][0]=='B' && argv[1][1]=='O' && argv[1][2]=='T' && argv[1][3]=='H' && !argv[1][4]) { kb_set_mode(KB_BOTH); AT_Response("KB=BOTH"); return 0; }
     AT_Response("usage: AT+KB[=USB|BLE|BOTH]"); return -1;
 }
+/* AT+KEY=<mods>,<k1>,..,<k6> — raw HID report. Missing args = 0. */
 static int at_cmd_KEY(int argc, char *argv[])  {
-    if (argc < 2) { AT_Response("usage: AT+KEY=<kc>"); return -1; }
-    if (kb_press_and_release(atoi(argv[1])) < 0) {
+    if (argc < 2) { AT_Response("usage: AT+KEY=<mods>,<k1>,..,<k6>"); return -1; }
+    kbd_mods  = (argc > 1) ? atoi(argv[1]) : 0;
+    kbd_count = 0;
+    for (int i = 2; i <= 7; i++) {
+        uint8_t kc = (argc > i) ? atoi(argv[i]) : 0;
+        if (kc) kbd_keys[kbd_count++] = kc;
+    }
+    for (int i = kbd_count; i < 6; i++) kbd_keys[i] = 0;
+    if (kb_flush() < 0) {
         AT_Response("ERROR: no active output — check AT+KB status");
         return -1;
     }
@@ -143,10 +148,10 @@ const at_cmd_t cmd_table[] = {
     { "AT+VER",     "firmware version",               at_cmd_VER },
     { "AT+HELP",    "command list",                   at_cmd_HELP },
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
-    { "AT+KEY",     "press+release key <kc>",         at_cmd_KEY },
+    { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
     { "AT+KEY_DOWN","hold key <kc>",                  at_cmd_KEY_DOWN },
     { "AT+KEY_UP",  "release key <kc>",               at_cmd_KEY_UP },
-    { "AT+MOD",     "set modifiers <mask> (1=Ctrl 2=Shift 4=Alt 8=Win)", at_cmd_MOD },
+    { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
 };
 const int cmd_table_count = sizeof(cmd_table) / sizeof(cmd_table[0]);

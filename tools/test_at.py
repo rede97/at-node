@@ -4,7 +4,7 @@ import serial, serial.tools.list_ports, sys, time
 
 def find_port():
     for p in serial.tools.list_ports.comports():
-        if p.vid == 0x1A86:
+        if p.vid == 0x1A86 and p.pid != 0x8010:
             return p.device
     return None
 

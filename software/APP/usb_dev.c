@@ -431,7 +431,6 @@ void USB_CDC_Write(const uint8_t *data, uint16_t len)
  */
 void USB_HID_SendReport(uint8_t *buf, uint8_t len)
 {
-    PRINT("USB_HID: key=%02x\n", buf[2]);
     uint8_t i;
     for (i = 0; i < len && i < EP2_SIZE; i++)
         pEP2_IN_DataBuf[i] = buf[i];
