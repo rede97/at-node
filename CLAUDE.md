@@ -28,6 +28,10 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 
 # AT command test (device auto-detected by VID 0x1A86)
 uv run python tools/test_at.py
+
+# Send HID keys (general-purpose, parameterized keycodes)
+uv run python tools/send_key.py --mode BLE --key 0x39   # CapsLock via BLE
+uv run python tools/send_key.py --mode USB --mod 0x02 --key 0x04  # Shift+A via USB
 ```
 
 ## Architecture
@@ -77,8 +81,8 @@ Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
 - **Parser**: TMOS task polling at 10ms (`AT_EVENT`) — registered in `AT_Init()`
 - **Channels**: UART1 (ring buffer, 512B) + CDC (`USB_CDC_Read()`) — both feed same line parser
 - **Response**: routed back to originating channel; CDC responses echo input line first
-- **Format**: `AT+CMD=arg1,arg2\r\n` → `\r\nOK\r\n` or `\r\nERROR\r\n`
-- **Implemented commands**: `AT`, `AT+VER`, `AT+HELP`, `AT+KB`, `AT+KEY`, `AT+KEY_DOWN`, `AT+KEY_UP`, `AT+MOD`, `AT+ECHO`
+- **Format**: `AT+CMD=arg1,arg2\n` → `\r\nOK\r\n` or `\r\nERROR\r\n` (parser uses `\n` line terminator; `\r\n` also accepted)
+- **Implemented commands**: `AT`, `AT+VER`, `AT+HELP`, `AT+KB`, `AT+KEY` (raw HID report: `<mods>,<k1>,..,<k6>`), `AT+KEY_DOWN`, `AT+KEY_UP`, `AT+MOD`, `AT+ECHO`
 - **Max line**: 256 chars (`AT_LINE_MAX`); will need 1024 for RAW IR
 
 ### USB endpoint allocation
@@ -129,4 +133,4 @@ USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
 - **HWS naming**: files `hws_<subsys>.c/h`, functions `hws_<subsys>_<action>()`, macros `HWS_<SUBSYS>_<NAME>`, include guard `__HWS_<SUBSYS>_H`.
 - **AI-native design**: project designed for AI-assisted development — every module has file header context, ASCII architecture diagrams, self-documenting naming. Read `software/DESIGN.md` §1.4 for the full AI-readability philosophy. CLAUDE.md + DESIGN.md together give any AI agent enough context to start contributing without human explanation.
 - **EVT/ directory**: WCH CH583 SDK reference code (gitignored, not compiled).
-- **References**: [DESIGN.md](software/DESIGN.md) (design philosophy, architecture, coding standards), [REFACTOR_PLAN.md](software/REFACTOR_PLAN.md) (current rename progress), [README.md](software/README.md) (features, pinout), [REQUIREMENTS.md](software/REQUIREMENTS.md) (full specs, Chinese).
+- **References**: [DESIGN.md](software/DESIGN.md) (design philosophy, architecture, coding standards), [REQUIREMENTS.md](software/REQUIREMENTS.md) (full specs), [POWER.md](software/POWER.md) (low-power design guide).

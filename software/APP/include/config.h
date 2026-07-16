@@ -148,7 +148,7 @@
  * HWS_LED — LED control subsystem (ON/OFF/BLINK/FLASH/TOGGLE).
  *
  *   Disable if board has no LEDs or LED GPIO pins are repurposed.
- *   Saves one TMOS timer when disabled (LED_BLINK_EVENT not scheduled).
+ *   Saves one TMOS timer when disabled (HWS_LED_BLINK_EVENT not scheduled).
  */
 #ifndef HWS_LED
 #define HWS_LED  TRUE
