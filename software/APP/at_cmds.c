@@ -94,7 +94,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+KEY_DOWN - hold key <kc>\r\n"
         "  AT+KEY_UP   - release key <kc>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
-        "  AT+KEY_STR  - string→keys [stub]\r\n"
+        "  AT+KEY_SEQ  - batch HID <delay>,<mods>,<k1>..<k6>,...\r\n"
         "  [GPIO]\r\n"
         "  AT+GPIO_W   - write <pin>,<level> [stub]\r\n"
         "  AT+GPIO_R   - read <pin> [stub]\r\n"
@@ -173,6 +173,50 @@ static int at_cmd_MOD(int argc, char *argv[])  {
     return 0;
 }
 
+/* AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,<mods>,<k1>..<k6>,...
+ * Batch HID report playback. Each report = exactly 7 values (1 mods + 6 keys).
+ * Script pre-translates text → HID report sequence, firmware plays back with
+ * delay_ms pacing between reports. Much faster than per-report AT commands.
+ *
+ * Example (Shift+h, release, e, release):
+ *   AT+KEY_SEQ=5,2,0B,0,0,0,0,0,0,0,0,0,0,0,0,0,08,0,0,0,0,0,0,0,0,0,0,0,0
+ *   → 4 reports at 5ms intervals: Shift+h down, all up, e down, all up
+ */
+static int at_cmd_KEY_SEQ(int argc, char *argv[])
+{
+    if (argc < 9) {  /* delay + at least 1 report (7 values) */
+        AT_Response("usage: AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,...");
+        return -1;
+    }
+    int delay_ms = atoi(argv[1]);
+    if (delay_ms < 1)  delay_ms = 1;
+    if (delay_ms > 200) delay_ms = 200;  /* safety cap */
+
+    int sent = 0;
+    int arg_idx = 2;
+    while (arg_idx + 6 < argc) {  /* need 7 more values for a full report */
+        kbd_mods = atoi(argv[arg_idx++]);
+        kbd_count = 0;
+        for (int i = 0; i < 6; i++) {
+            uint8_t kc = (uint8_t)atoi(argv[arg_idx++]);
+            if (kc) kbd_keys[kbd_count++] = kc;
+        }
+        for (int i = kbd_count; i < 6; i++) kbd_keys[i] = 0;
+        if (kb_flush() == 0) sent++;
+
+        /* Busy-wait between reports. TMOS is cooperative — this blocks
+           other tasks briefly, but for batch HID reports (typically <50ms
+           total) it's faster and simpler than TMOS timer chaining. */
+        if (arg_idx + 6 < argc) {
+            for (volatile uint32_t d = 0; d < (uint32_t)delay_ms * 6000; d++) {
+                __asm volatile ("nop");
+            }
+        }
+    }
+    AT_Response("%d reports sent", sent);
+    return sent > 0 ? 0 : -1;
+}
+
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
 
 /* Core */
@@ -180,8 +224,6 @@ static int at_cmd_STATUS(int argc, char *argv[])  { (void)argc; (void)argv; retu
 static int at_cmd_RST(int argc, char *argv[])     { (void)argc; (void)argv; return 0; }  /* TODO: SYS_ResetExecute() */
 
 /* Keyboard */
-static int at_cmd_KEY_STR(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }  /* TODO: ASCII→HID lookup table; script-side send_key.py preferred */
-
 /* GPIO */
 static int at_cmd_GPIO_W(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
 static int at_cmd_GPIO_R(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
@@ -228,7 +270,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+KEY_DOWN","hold key <kc>",                  at_cmd_KEY_DOWN },
     { "AT+KEY_UP",  "release key <kc>",               at_cmd_KEY_UP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
-    { "AT+KEY_STR", "[stub] string→keys <text>",     at_cmd_KEY_STR },
+    { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     /* GPIO */
     { "AT+GPIO_W",  "[stub] write <pin>,<level>",    at_cmd_GPIO_W },
     { "AT+GPIO_R",  "[stub] read <pin>",             at_cmd_GPIO_R },
