@@ -75,12 +75,42 @@ int kb_key_up(uint8_t keycode)
 int kb_set_mods(uint8_t mods) { kbd_mods = mods; return kb_flush(); }
 int kb_release_all(void)      { kbd_count = 0; kbd_mods = 0; return kb_flush(); }
 
-/* ===== AT command handlers ===== */
+/* ===== AT command handlers — implemented ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
 static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 BLE: %s", VER_LIB); return 0; }
 static int at_cmd_HELP(int argc, char *argv[])  {
     (void)argc; (void)argv;
-    AT_Response("AT-Node Commands:\r\n  AT       - handshake\r\n  AT+VER   - version\r\n  AT+HELP  - this help\r\n  AT+KB    - keyboard USB/BLE/BOTH\r\n  AT+KEY   - press+release <kc>\r\n  AT+KEY_DOWN - hold key <kc>\r\n  AT+KEY_UP - release key <kc>\r\n  AT+MOD   - set modifiers <mask>\r\n  AT+ECHO  - echo <text>");
+    AT_Response("AT-Node Commands:\r\n"
+        "  [Core]\r\n"
+        "  AT       - handshake\r\n"
+        "  AT+VER   - version\r\n"
+        "  AT+HELP  - this help\r\n"
+        "  AT+ECHO  - echo <text>\r\n"
+        "  AT+STATUS - device status [stub]\r\n"
+        "  AT+RST   - software reset [stub]\r\n"
+        "  [Keyboard]\r\n"
+        "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
+        "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
+        "  AT+KEY_DOWN - hold key <kc>\r\n"
+        "  AT+KEY_UP   - release key <kc>\r\n"
+        "  AT+MOD   - modifiers <mask>\r\n"
+        "  AT+KEY_STR  - string→keys [stub]\r\n"
+        "  [GPIO]\r\n"
+        "  AT+GPIO_W   - write <pin>,<level> [stub]\r\n"
+        "  AT+GPIO_R   - read <pin> [stub]\r\n"
+        "  [Sensor]\r\n"
+        "  AT+ADC      - read <ch> [stub]\r\n"
+        "  AT+I2C_SCAN - scan bus [stub]\r\n"
+        "  AT+I2C_R    - read <addr>,<reg>,<len> [stub]\r\n"
+        "  AT+I2C_W    - write <addr>,<reg>,<data> [stub]\r\n"
+        "  [Power]\r\n"
+        "  AT+SLEEP    - sleep <mode> [stub]\r\n"
+        "  [Wireless]\r\n"
+        "  AT+BT_SCAN  - BLE scan [stub]\r\n"
+        "  [Infrared]\r\n"
+        "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
+        "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
+        "  AT+IR=RAW   - send raw <t1>,<t2>,... [stub]");
     return 0;
 }
 static int at_cmd_ECHO(int argc, char *argv[])  {
@@ -143,15 +173,75 @@ static int at_cmd_MOD(int argc, char *argv[])  {
     return 0;
 }
 
+/* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
+
+/* Core */
+static int at_cmd_STATUS(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+static int at_cmd_RST(int argc, char *argv[])     { (void)argc; (void)argv; return 0; }  /* TODO: SYS_ResetExecute() */
+
+/* Keyboard */
+static int at_cmd_KEY_STR(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }  /* TODO: ASCII→HID lookup table; script-side send_key.py preferred */
+
+/* GPIO */
+static int at_cmd_GPIO_W(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+static int at_cmd_GPIO_R(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+
+/* Sensor */
+static int at_cmd_ADC(int argc, char *argv[])     { (void)argc; (void)argv; return 0; }
+static int at_cmd_I2C_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
+static int at_cmd_I2C_R(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
+static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
+
+/* Power */
+static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
+
+/* Wireless */
+static int at_cmd_BT_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
+
+/* Infrared */
+static int at_cmd_IR_NEC(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+static int at_cmd_IR_SIRC(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
+static int at_cmd_IR_RAW(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+
+/* ===== Command table =====
+ *
+ *   Organized by function group. Entries marked [stub] return OK but
+ *   perform no action — they reserve the command name for future
+ *   implementation without breaking host scripts that issue them.
+ *
+ *   Removed from requirements:
+ *     AT+COMB — redundant, merged into AT+KEY (<mods>,<k1>,..,<k6>)
+ *     AT+WOL  — CH582F has no Ethernet MAC, not feasible
+ *     AT+ISP  — not supported (no IAP bootloader planned)
+ */
 const at_cmd_t cmd_table[] = {
+    /* Core */
     { "AT",         "handshake -> OK",                at_cmd_AT },
     { "AT+VER",     "firmware version",               at_cmd_VER },
     { "AT+HELP",    "command list",                   at_cmd_HELP },
+    { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
+    { "AT+STATUS",  "[stub] device status",           at_cmd_STATUS },
+    { "AT+RST",     "[stub] software reset",          at_cmd_RST },
+    /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
     { "AT+KEY_DOWN","hold key <kc>",                  at_cmd_KEY_DOWN },
     { "AT+KEY_UP",  "release key <kc>",               at_cmd_KEY_UP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
-    { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
+    { "AT+KEY_STR", "[stub] string→keys <text>",     at_cmd_KEY_STR },
+    /* GPIO */
+    { "AT+GPIO_W",  "[stub] write <pin>,<level>",    at_cmd_GPIO_W },
+    { "AT+GPIO_R",  "[stub] read <pin>",             at_cmd_GPIO_R },
+    /* Sensor */
+    { "AT+ADC",     "[stub] read ADC <ch>",          at_cmd_ADC },
+    { "AT+I2C_SCAN","[stub] scan I2C bus",           at_cmd_I2C_SCAN },
+    { "AT+I2C_R",   "[stub] I2C read <addr>,<reg>,<len>", at_cmd_I2C_R },
+    { "AT+I2C_W",   "[stub] I2C write <addr>,<reg>,<data>", at_cmd_I2C_W },
+    /* Power */
+    { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
+    /* Wireless */
+    { "AT+BT_SCAN", "[stub] BLE scan",               at_cmd_BT_SCAN },
+    /* Infrared */
+    { "AT+IR",      "[stub] IR=NEC|SIRC|RAW,...",    at_cmd_IR_NEC },  /* sub-cmd parsed as arg1 */
 };
 const int cmd_table_count = sizeof(cmd_table) / sizeof(cmd_table[0]);
