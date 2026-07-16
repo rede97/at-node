@@ -155,6 +155,7 @@ uint8_t kb_ble_connected(void)  { return (ble_hid_emu_conn_handle != GAP_CONNHAN
 void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
 {
     uint8_t buf[8];
+    if (!kb_ble_connected()) return;  /* drop silently — no host to receive */
     buf[0] = mods;
     buf[1] = 0;
     for (int j = 0; j < 6; j++) buf[2+j] = (j < count) ? keys[j] : 0;

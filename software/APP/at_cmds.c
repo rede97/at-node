@@ -25,33 +25,46 @@ kb_mode_t kb_get_mode(void)   { return kb_mode; }
 extern void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count);
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
-static void kb_flush(void)
+static int kb_flush(void)
 {
-    PRINT("KB: flush mods=%02X count=%d keys=%02X%02X%02X%02X%02X%02X\n",
-          kbd_mods, kbd_count, kbd_keys[0],kbd_keys[1],kbd_keys[2],kbd_keys[3],kbd_keys[4],kbd_keys[5]);
-    if (kb_mode & KB_BLE) kb_ble_send_report(kbd_mods, kbd_keys, kbd_count);
-    if (kb_mode & KB_USB) kb_usb_send_report(kbd_mods, kbd_keys, kbd_count);
+    int sent = 0;
+    PRINT("KB: flush mods=%02X count=%d mode=%d BLE=%d USB=%d\n",
+          kbd_mods, kbd_count, kb_mode, kb_ble_connected(), Ready);
+    if (kb_mode & KB_BLE) {
+        if (kb_ble_connected()) {
+            kb_ble_send_report(kbd_mods, kbd_keys, kbd_count);
+            sent = 1;
+        }
+    }
+    if (kb_mode & KB_USB) {
+        if (Ready) {
+            kb_usb_send_report(kbd_mods, kbd_keys, kbd_count);
+            sent = 1;
+        }
+    }
+    return sent ? 0 : -1;
 }
 
-void kb_press_and_release(uint8_t keycode)
+int kb_press_and_release(uint8_t keycode)
 {
     PRINT("KB: press+release %02X mode=%d\n", keycode, kb_mode);
     kbd_keys[0] = keycode;
     for (int i = 1; i < 6; i++) kbd_keys[i] = 0;
     kbd_count = 1;
-    kb_flush();
+    int r = kb_flush();
     kbd_count = 0;
-    kb_flush();
+    int r2 = kb_flush();
+    return (r < 0 && r2 < 0) ? -1 : 0;
 }
 
-void kb_key_down(uint8_t keycode)
+int kb_key_down(uint8_t keycode)
 {
-    if (kbd_count >= 6) return;
+    if (kbd_count >= 6) return -1;
     kbd_keys[kbd_count++] = keycode;
-    kb_flush();
+    return kb_flush();
 }
 
-void kb_key_up(uint8_t keycode)
+int kb_key_up(uint8_t keycode)
 {
     for (int i = 0; i < kbd_count; i++) {
         if (kbd_keys[i] == keycode) {
@@ -59,11 +72,11 @@ void kb_key_up(uint8_t keycode)
             break;
         }
     }
-    kb_flush();
+    return kb_flush();
 }
 
-void kb_set_mods(uint8_t mods) { kbd_mods = mods; kb_flush(); }
-void kb_release_all(void) { kbd_count = 0; kbd_mods = 0; kb_flush(); }
+int kb_set_mods(uint8_t mods) { kbd_mods = mods; return kb_flush(); }
+int kb_release_all(void)      { kbd_count = 0; kbd_mods = 0; return kb_flush(); }
 
 /* ===== AT command handlers ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
@@ -94,22 +107,34 @@ static int at_cmd_KB(int argc, char *argv[])  {
 }
 static int at_cmd_KEY(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+KEY=<kc>"); return -1; }
-    kb_press_and_release(atoi(argv[1]));
+    if (kb_press_and_release(atoi(argv[1])) < 0) {
+        AT_Response("ERROR: no active output — check AT+KB status");
+        return -1;
+    }
     return 0;
 }
 static int at_cmd_KEY_DOWN(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+KEY_DOWN=<kc>"); return -1; }
-    kb_key_down(atoi(argv[1]));
+    if (kb_key_down(atoi(argv[1])) < 0) {
+        AT_Response("ERROR: no active output — check AT+KB status");
+        return -1;
+    }
     return 0;
 }
 static int at_cmd_KEY_UP(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+KEY_UP=<kc>"); return -1; }
-    kb_key_up(atoi(argv[1]));
+    if (kb_key_up(atoi(argv[1])) < 0) {
+        AT_Response("ERROR: no active output — check AT+KB status");
+        return -1;
+    }
     return 0;
 }
 static int at_cmd_MOD(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+MOD=<mask>"); return -1; }
-    kb_set_mods(atoi(argv[1]));
+    if (kb_set_mods(atoi(argv[1])) < 0) {
+        AT_Response("ERROR: no active output — check AT+KB status");
+        return -1;
+    }
     return 0;
 }
 

@@ -35,6 +35,7 @@ ser.dtr = True
 all_ok = True
 all_ok &= test(ser, b"AT\r\n")
 all_ok &= test(ser, b"AT+VER\r\n", "AT-Node")
+all_ok &= test(ser, b"AT+KB\r\n")
 all_ok &= test(ser, b"AT+ECHO=hello\r\n", "hello")
 all_ok &= test(ser, b"AT+HELP\r\n", "AT+VER")
 ser.close()
