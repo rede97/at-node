@@ -128,7 +128,7 @@ USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
 - **All `.c/.h/.S` are UTF-8 without BOM**, ASCII comments only.
 - **C only**, gnu99. Toolchain: `riscv-none-embed-gcc` (MounRiver Studio).
 - **BLE SNV**: Flash at `0x77E00` (last 512B of Data Flash), 1 bonded device, new pairing overwrites.
-- **`MEM_BUF[BLE_MEMHEAP_SIZE/4]`**: BLE heap at top of RAM, ≥6KB.
+- **`MEM_BUF[BLE_MEMHEAP_SIZE/4]`**: BLE heap at top of RAM, default 5KB (hard floor 4KB, checked in `ble_stack_init`).
 - **BLE init** in `APP/BLE/ble_stack.c` `ble_stack_init()` — `sleepCB` only registered when `HWS_SLEEP == TRUE`.
 - **HWS naming**: files `hws_<subsys>.c/h`, functions `hws_<subsys>_<action>()`, macros `HWS_<SUBSYS>_<NAME>`, include guard `__HWS_<SUBSYS>_H`.
 - **AI-native design**: project designed for AI-assisted development — every module has file header context, ASCII architecture diagrams, self-documenting naming. Read `software/DESIGN.md` §1.4 for the full AI-readability philosophy. CLAUDE.md + DESIGN.md together give any AI agent enough context to start contributing without human explanation.

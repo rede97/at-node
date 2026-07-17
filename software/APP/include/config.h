@@ -302,23 +302,53 @@
  */
 
 /*********************************************************************
+ * BLE_DONGLE — BLE HID Host (receiver/dongle) mode. FUTURE, not yet
+ * implemented. Compile-time role switch:
+ *
+ *   FALSE (default): Keyboard mode. Pure Peripheral role — AT-Node is
+ *                    the keyboard. CENTRAL_MAX_CONNECTION defaults to
+ *                    0 (no heap wasted on unused Central contexts).
+ *   TRUE:  Dongle mode. AT-Node acts as Central, connects TO a BLE
+ *          keyboard, forwards its HID reports over USB. Sets
+ *          CENTRAL_MAX_CONNECTION=1 and raises the heap default.
+ *          NOTE: not implemented — enabling today only reserves
+ *          resources, no receiver logic exists.
+ *
+ *   Roadmap (REQUIREMENTS.md §3.1.2): this boolean will be replaced by
+ *   a tri-state BLE_MODE = KBD / DONGLE / DUAL. DUAL builds both roles
+ *   in and switches at runtime via AT+ROLE (flash flag + soft reset).
+ *
+ *   The roles are compile-time exclusive because GATT service tables
+ *   and connection contexts are statically allocated — a runtime
+ *   switch pays for both configurations simultaneously.
+ */
+#ifndef BLE_DONGLE
+#define BLE_DONGLE  FALSE
+#endif
+
+/*********************************************************************
  * BLE_MEMHEAP_SIZE — BLE protocol stack heap allocation.
  *
- *   Unit: bytes. Minimum: 6144 (6 KB). Must be 4-byte aligned.
+ *   Unit: bytes. Must be 4-byte aligned.
  *   This heap is allocated at the top of RAM → main.c MEM_BUF[].
  *
  *   The BLE stack uses this for: connection contexts, GATT database,
  *   ATT/GATT transaction buffers, security keys, advertising data.
  *
- *   Increasing this value: supports more concurrent connections,
- *   larger GATT databases, or longer ATT MTU.
- *   Decreasing: frees RAM for application, but must stay ≥ 6 KB.
+ *   Hard floor: 4096 (ble_stack_init halts below 4 KB). WCH examples
+ *   use 6 KB. AT-Node is a single-connection peripheral with a small
+ *   GATT database and 27-byte buffers, so 5 KB suffices — if bonding
+ *   or connections become unstable, restore 6 KB.
  *
- *   Default: 6 KB (minimum). AT-Node is a single-connection peripheral
- *   with a small GATT database, so minimum is sufficient.
+ *   Default: 5 KB (keyboard mode) / 6 KB (BLE_DONGLE=TRUE, reserves
+ *   room for the Central connection context).
  */
 #ifndef BLE_MEMHEAP_SIZE
+  #if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
 #define BLE_MEMHEAP_SIZE  (1024 * 6)
+  #else
+#define BLE_MEMHEAP_SIZE  (1024 * 5)
+  #endif
 #endif
 
 /*********************************************************************
@@ -465,12 +495,16 @@
 /*********************************************************************
  * CENTRAL_MAX_CONNECTION — maximum simultaneous Central roles.
  *
- *   Default: 3 (reserved but unused in Peripheral-only config).
- *   Only relevant if application also scans/connects as Central.
- *   AT-Node does not use Central role; value is a SDK default.
+ *   Default: 0 (keyboard mode — no Central code in firmware, so no
+ *   heap is wasted on Central contexts). BLE_DONGLE=TRUE sets 1
+ *   (AT-Node connects to one BLE keyboard as HID host).
  */
 #ifndef CENTRAL_MAX_CONNECTION
-#define CENTRAL_MAX_CONNECTION  3
+  #if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+#define CENTRAL_MAX_CONNECTION  1
+  #else
+#define CENTRAL_MAX_CONNECTION  0
+  #endif
 #endif
 
 /* ====================================================================

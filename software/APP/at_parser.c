@@ -17,8 +17,9 @@
 #include <stdarg.h>
 #include <strings.h>
 
-/* --- ring buffer (UART1) --- */
-#define AT_RX_BUF_SIZE  512
+/* --- ring buffer (UART1) ---
+   256B: at 115200 baud max ~115 bytes arrive per 10ms poll cycle. */
+#define AT_RX_BUF_SIZE  256
 static uint8_t  at_rx_buf[AT_RX_BUF_SIZE];
 static uint16_t at_rx_head = 0;
 static uint16_t at_rx_tail = 0;
@@ -38,10 +39,10 @@ static int       at_channel = AT_CH_UART;
    66 entries: cmd name + delay + 9 reports x 7 values — one report more
    than SEQ_MAX_REPORTS=8, so over-limit KEY_SEQ reaches the handler and
    gets a precise "max N reports" error instead of a parse truncation.
-   (Still bounded by AT_LINE_MAX=256 at ~4 chars per value.) */
+   (Still bounded by AT_LINE_MAX=256 at ~4 chars per value.)
+   Tokenization runs in place on at_line — no separate token buffer. */
 #define AT_ARGV_MAX  66
 static char *at_argv[AT_ARGV_MAX];
-static char  at_token_buf[AT_LINE_MAX];
 
 /* --- TMOS --- */
 #define AT_EVENT  0x0001
@@ -122,10 +123,10 @@ static void at_process_line(void)
         at_line[--len] = '\0';
     if (len == 0) return;
 
-    strcpy(at_token_buf, at_line);
+    /* Tokenize in place (at_line is rebuilt for each new line anyway) */
     int argc = 0;
     char *save;
-    char *tok = strtok_r(at_token_buf, "=", &save);
+    char *tok = strtok_r(at_line, "=", &save);
     if (tok) {
         at_argv[argc++] = tok;
         if (save && *save) {
