@@ -118,10 +118,11 @@ USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
 | AT task | `at_init()` → `AT_Init()` | `APP/at_parser.c` |
 | HID Dev task | `ble_hid_dev_init()` | `APP/BLE/ble_hid_dev.c` |
 | HID Emu task | `ble_hid_emu_init()` | `APP/hidkbd_ble.c` |
+| Dongle task | `ble_dongle_init()` (when `BLE_DONGLE=TRUE`, replaces Peripheral) | `APP/BLE/ble_dongle.c` |
 
 ## Critical constraints
 
-- **USB + sleep mutually exclusive**: `HWS_SLEEP=TRUE` → USB disabled at compile time (`#if` in main.c). USB clock stops in sleep → enumeration lost (code 43).
+- **Feature conflicts are compile errors**: features are first-class macros (`USB_ENABLE`, `HWS_SLEEP`, `BLE_DONGLE`); invalid combos (#error in config.h): USB+sleep (USB clock stops in sleep → enumeration lost, code 43), dongle without USB (reports forward over USB HID).
 - **`usb_dev.c` is WCH EVT copy**: `USB_DevTransProcess` is based on official `HID_CompliantDev/src/Main.c`. Don't rewrite it.
 - **Key scanning in `main()`**, not BLE callback — works on USB without BLE paired.
 - **GPIO_Pin_All init does NOT interfere with USB D+/D-** (PB10/11) on CH582F — confirmed.

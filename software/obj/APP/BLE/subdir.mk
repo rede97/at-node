@@ -7,6 +7,7 @@
 C_SRCS += \
 ../APP/BLE/ble_batt.c \
 ../APP/BLE/ble_dev_info.c \
+../APP/BLE/ble_dongle.c \
 ../APP/BLE/ble_hid_dev.c \
 ../APP/BLE/ble_hid_kbd.c \
 ../APP/BLE/ble_stack.c 
@@ -14,6 +15,7 @@ C_SRCS += \
 C_DEPS += \
 ./APP/BLE/ble_batt.d \
 ./APP/BLE/ble_dev_info.d \
+./APP/BLE/ble_dongle.d \
 ./APP/BLE/ble_hid_dev.d \
 ./APP/BLE/ble_hid_kbd.d \
 ./APP/BLE/ble_stack.d 
@@ -21,6 +23,7 @@ C_DEPS += \
 OBJS += \
 ./APP/BLE/ble_batt.o \
 ./APP/BLE/ble_dev_info.o \
+./APP/BLE/ble_dongle.o \
 ./APP/BLE/ble_hid_dev.o \
 ./APP/BLE/ble_hid_kbd.o \
 ./APP/BLE/ble_stack.o 
