@@ -125,17 +125,60 @@ void hws_ble_calibrate_lsi(void)
 /* ===== HWS TMOS task ===== */
 
 /*******************************************************************************
+ * Periodic subsystem tasks — table-driven dispatch.
+ *
+ *   Each entry: event bit + handler + re-arm period. The core event
+ *   loop walks this table: matching event → run handler → re-arm the
+ *   timer for the next period. LED is NOT here — hws_led_update()
+ *   self-schedules variable delays (blink timing), so it keeps its
+ *   own dedicated branch in hws_process_event().
+ */
+typedef struct {
+    tmosEvents  event;      /* event bit (defined in hws.h) */
+    void      (*handler)(void);
+    uint32_t    period_ms;  /* re-arm interval (calibration period exceeds 65535 ms) */
+} hws_task_t;
+
+#if(defined BLE_CALIBRATION_ENABLE) && (BLE_CALIBRATION_ENABLE == TRUE)
+static void hws_calib_task(void)
+{
+    /* BLE RF calibration — compensates for temperature drift in the
+       2.4 GHz frontend. BLE_RegInit() is provided by libCH58xBLE.a. */
+    BLE_RegInit();
+#if(CLK_OSC32K)
+    /* Internal 32K RC oscillator calibration.
+       When using external 32K crystal (CLK_OSC32K=0), adjust LSE drive
+       current instead — reduces power without losing accuracy. */
+    hws_ble_calibrate_lsi();
+#else
+    uint8_t x32Kpw = (R8_XT32K_TUNE & 0xfc) | 0x01;
+    sys_safe_access_enable();
+    R8_XT32K_TUNE = x32Kpw;
+    sys_safe_access_disable();
+#endif
+}
+#endif
+
+static const hws_task_t hws_tasks[] = {
+#if(defined HWS_KEY) && (HWS_KEY == TRUE)
+    { HWS_KEY_EVENT, hws_key_poll, HWS_KEY_POLL_MS },
+#endif
+#if(defined BLE_CALIBRATION_ENABLE) && (BLE_CALIBRATION_ENABLE == TRUE)
+    { HWS_CALIB_EVENT, hws_calib_task, BLE_CALIBRATION_PERIOD },
+#endif
+};
+
+/*******************************************************************************
  * @fn      hws_process_event
  *
  * @brief   HWS TMOS task event processor — dispatches hardware events.
  *
  *   Init stage: registered as TMOS task by hws_init(). Runs in TMOS loop.
  *   Events handled:
- *     SYS_EVENT_MSG       — TMOS message queue dispatch (currently unused).
- *     HWS_LED_BLINK_EVENT — LED blink/flash state machine update.
- *     HWS_KEY_EVENT       — Key scanning poll (100 ms periodic).
- *     HWS_CALIB_EVENT     — BLE RF + LSI calibration (periodic, default 120 s).
- *     HWS_TEST_EVENT      — Heartbeat PRINT("* ") every 1 s (debug aid).
+ *     HWS_LED_BLINK_EVENT — LED blink/flash state machine update
+ *                           (self-scheduling, no core re-arm).
+ *     Table tasks         — hws_tasks[] periodic handlers (KEY poll,
+ *                           BLE calibration), re-armed by the core.
  *
  *   Each event handler returns (events ^ handled_event) to mark it processed.
  *   Unhandled events are returned to TMOS for other tasks.
@@ -146,66 +189,25 @@ void hws_ble_calibrate_lsi(void)
  */
 tmosEvents hws_process_event(tmosTaskID task_id, tmosEvents events)
 {
-    uint8_t *msgPtr;
+    (void)task_id;
 
-    if(events & SYS_EVENT_MSG)
-    {
-        msgPtr = tmos_msg_receive(task_id);
-        if(msgPtr)
-        {
-            tmos_msg_deallocate(msgPtr);
-        }
-        return events ^ SYS_EVENT_MSG;
-    }
+#if(defined HWS_LED) && (HWS_LED == TRUE)
     if(events & HWS_LED_BLINK_EVENT)
     {
-#if(defined HWS_LED) && (HWS_LED == TRUE)
-        hws_led_update();
-#endif
+        hws_led_update();   /* self-schedules next blink transition */
         return events ^ HWS_LED_BLINK_EVENT;
     }
-    if(events & HWS_KEY_EVENT)
-    {
-#if(defined HWS_KEY) && (HWS_KEY == TRUE)
-        hws_key_poll();
-        /* Re-arm key poll timer: 100 ms periodic scan.
-           Faster than debounce time (~50 ms), slower than TMOS tick (625 us). */
-        tmos_start_task(hws_task_id, HWS_KEY_EVENT, MS1_TO_SYSTEM_TIME(100));
-        return events ^ HWS_KEY_EVENT;
 #endif
-    }
-    if(events & HWS_CALIB_EVENT)
+
+    for(uint8_t i = 0; i < sizeof(hws_tasks) / sizeof(hws_tasks[0]); i++)
     {
-        uint8_t x32Kpw;
-#if(defined BLE_CALIBRATION_ENABLE) && (BLE_CALIBRATION_ENABLE == TRUE)
-        /* BLE RF calibration — compensates for temperature drift in the
-           2.4 GHz frontend. BLE_RegInit() is provided by libCH58xBLE.a. */
-        BLE_RegInit();
-#if(CLK_OSC32K)
-        /* Internal 32K RC oscillator calibration.
-           When using external 32K crystal (CLK_OSC32K=0), adjust LSE drive
-           current instead — reduces power without losing accuracy. */
-        hws_ble_calibrate_lsi();
-#else
-        x32Kpw = (R8_XT32K_TUNE & 0xfc) | 0x01;
-        sys_safe_access_enable();
-        R8_XT32K_TUNE = x32Kpw;
-        sys_safe_access_disable();
-#endif
-        /* Schedule next calibration. Default period: BLE_CALIBRATION_PERIOD (120 s).
-           Each calibration takes <10 ms — negligible power/performance impact. */
-        tmos_start_task(hws_task_id, HWS_CALIB_EVENT, MS1_TO_SYSTEM_TIME(BLE_CALIBRATION_PERIOD));
-        return events ^ HWS_CALIB_EVENT;
-#endif
-    }
-    if(events & HWS_TEST_EVENT)
-    {
-        /* Heartbeat — prints "* " every second. Useful for verifying
-           TMOS scheduler is running and device hasn't crashed.
-           Remove in production to save UART bandwidth. */
-        PRINT("* \n");
-        tmos_start_task(hws_task_id, HWS_TEST_EVENT, MS1_TO_SYSTEM_TIME(1000));
-        return events ^ HWS_TEST_EVENT;
+        if(events & hws_tasks[i].event)
+        {
+            hws_tasks[i].handler();
+            tmos_start_task(hws_task_id, hws_tasks[i].event,
+                            MS1_TO_SYSTEM_TIME(hws_tasks[i].period_ms));
+            return events ^ hws_tasks[i].event;
+        }
     }
     return 0;
 }
@@ -272,32 +274,29 @@ void hws_init(hws_key_cb_t key_cb)
     /* Schedule first RF calibration 800 ms after boot.
        Deferred: gives BLE stack time to initialize before calibrating.
        Subsequent calibrations every BLE_CALIBRATION_PERIOD ms. */
-    tmos_start_task(hws_task_id, HWS_CALIB_EVENT, 800);
+    tmos_start_task(hws_task_id, HWS_CALIB_EVENT, MS1_TO_SYSTEM_TIME(800));
 #endif
 }
 
 /* ===== Temperature sensor ===== */
 
 /*******************************************************************************
- * @fn      hws_get_temp
+ * @fn      hws_adc_sample
  *
- * @brief   Read internal temperature sensor ADC value.
+ * @brief   Shared ADC single-conversion helper with save/restore.
  *
- *   Called as: BLE stack callback (cfg.tsCB) — invoked by BLE lib to
- *   detect temperature changes that require RF re-calibration.
+ *   The CH582F ADC is shared between the internal temperature sensor
+ *   (hws_get_temp, called by the BLE stack) and the battery monitor
+ *   (hws_batt_read_mv). This helper saves the full ADC configuration,
+ *   runs one conversion using the caller's channel setup function,
+ *   then restores the previous configuration — callers can't
+ *   interfere with each other.
  *
- *   The CH582F internal temperature sensor shares the ADC with other
- *   peripherals. This function saves/restores ADC configuration to
- *   avoid interfering with concurrent ADC operations.
- *
- *   Side effects: Temporarily reconfigures ADC channel and trigger.
- *                 Restores original config before returning.
- *                 Blocks until ADC conversion completes (~10 µs).
- *
- *   @return Raw 12-bit ADC value (higher = warmer).
- *           BLE stack checks if delta exceeds ~7°C threshold.
+ *   @param  adc_init  Channel setup function (e.g. ADC_InterTSSampInit,
+ *                     ADC_InterBATSampInit). Called after state save.
+ *   @return Raw 12-bit ADC value.
  */
-uint16_t hws_get_temp(void)
+uint16_t hws_adc_sample(void (*adc_init)(void))
 {
     uint8_t  sensor, channel, config, tkey_cfg;
     uint16_t adc_data;
@@ -308,13 +307,10 @@ uint16_t hws_get_temp(void)
     channel  = R8_ADC_CHANNEL;
     config   = R8_ADC_CFG;
 
-    /* Configure ADC for internal temperature sensor */
-    ADC_InterTSSampInit();
+    /* Configure channel and run one conversion (~10 us) */
+    adc_init();
     R8_ADC_CONVERT |= RB_ADC_START;
-
-    /* Wait for conversion complete */
     while(R8_ADC_CONVERT & RB_ADC_START);
-
     adc_data = R16_ADC_DATA;
 
     /* Restore previous ADC configuration */
@@ -323,5 +319,21 @@ uint16_t hws_get_temp(void)
     R8_ADC_CFG = config;
     R8_TKEY_CFG = tkey_cfg;
 
-    return (adc_data);
+    return adc_data;
+}
+
+/*******************************************************************************
+ * @fn      hws_get_temp
+ *
+ * @brief   Read internal temperature sensor ADC value.
+ *
+ *   Called as: BLE stack callback (cfg.tsCB) — invoked by BLE lib to
+ *   detect temperature changes that require RF re-calibration.
+ *
+ *   @return Raw 12-bit ADC value (higher = warmer).
+ *           BLE stack checks if delta exceeds ~7°C threshold.
+ */
+uint16_t hws_get_temp(void)
+{
+    return hws_adc_sample(ADC_InterTSSampInit);
 }

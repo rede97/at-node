@@ -3,25 +3,24 @@
  * Author             : WCH
  * Version            : V1.2
  * Date               : 2022/01/18
- * Description        : 睡眠配置及其初始化
+ * Description        : Sleep mode entry and wake-up configuration (RTC wake)
  *********************************************************************************
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
- * Attention: This software (modified or not) and binary are used for 
+ * Attention: This software (modified or not) and binary are used for
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
 /******************************************************************************/
-/* 头文件包含 */
 #include "hws.h"
 
 /*******************************************************************************
  * @fn          hws_sleep_enter
  *
- * @brief       启动睡眠
+ * @brief       Enter sleep — called by the BLE stack as cfg.sleepCB.
  *
- * @param   time    - 唤醒的时间点（RTC绝对值）
+ * @param   time    - wake-up instant (absolute RTC value)
  *
- * @return      state.
+ * @return      state (0 = slept, 2 = duration out of range, 3 = RTC flag pending)
  */
 uint32_t hws_sleep_enter(uint32_t time)
 {
@@ -31,15 +30,15 @@ uint32_t hws_sleep_enter(uint32_t time)
     
     SYS_DisableAllIrq(&irq_status);
     time_curr = RTC_GetCycle32k();
-    // 检测睡眠时间
+    // compute sleep duration (handle RTC counter wrap)
     if (time < time_curr) {
         time_sleep = time + (RTC_TIMER_MAX_VALUE - time_curr);
     } else {
         time_sleep = time - time_curr;
     }
-    
-    // 若睡眠时间小于最小睡眠时间或大于最大睡眠时间，则不睡眠
-    if ((time_sleep < SLEEP_RTC_MIN_TIME) || 
+
+    // reject sleep if duration is outside the allowed window
+    if ((time_sleep < SLEEP_RTC_MIN_TIME) ||
         (time_sleep > SLEEP_RTC_MAX_TIME)) {
         SYS_RecoverIrq(irq_status);
         return 2;
@@ -47,17 +46,17 @@ uint32_t hws_sleep_enter(uint32_t time)
 
     hws_rtc_set_trigger(time);
     SYS_RecoverIrq(irq_status);
-  #if(DEBUG == Debug_UART1) // 使用其他串口输出打印信息需要修改这行代码
+  #if(DEBUG == Debug_UART1) // wait for UART1 TX flush before sleeping
     while((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0)
     {
         __nop();
     }
   #endif
-    // LOW POWER-sleep模式
+    // low-power sleep mode
     if(!RTCTigFlag)
     {
         LowPower_Sleep(RB_PWR_RAM2K | RB_PWR_RAM30K | RB_PWR_EXTEND);
-        if(RTCTigFlag) // 注意如果使用了RTC以外的唤醒方式，需要注意此时32M晶振未稳定
+        if(RTCTigFlag) // if woken by something other than RTC, note the 32M crystal may not be stable yet
         {
             time += WAKE_UP_RTC_MAX_TIME;
             if(time > 0xA8C00000)
@@ -67,7 +66,7 @@ uint32_t hws_sleep_enter(uint32_t time)
             hws_rtc_set_trigger(time);
             LowPower_Idle();
         }
-        HSECFG_Current(HSE_RCur_100); // 降为额定电流(低功耗函数中提升了HSE偏置电流)
+        HSECFG_Current(HSE_RCur_100); // back to rated current (low-power fn raised HSE bias)
     }
     else
     {
@@ -80,7 +79,7 @@ uint32_t hws_sleep_enter(uint32_t time)
 /*******************************************************************************
  * @fn      hws_sleep_init
  *
- * @brief   配置睡眠唤醒的方式   - RTC唤醒，触发模式
+ * @brief   Configure sleep wake-up source — RTC wake, trigger mode.
  *
  * @param   None.
  *
@@ -90,11 +89,11 @@ void hws_sleep_init(void)
 {
 #if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE)
     sys_safe_access_enable();
-    R8_SLP_WAKE_CTRL |= RB_SLP_RTC_WAKE; // RTC唤醒
-    sys_safe_access_disable();              //
+    R8_SLP_WAKE_CTRL |= RB_SLP_RTC_WAKE; // RTC wake-up
+    sys_safe_access_disable();
     sys_safe_access_enable();
-    R8_RTC_MODE_CTRL |= RB_RTC_TRIG_EN;  // 触发模式
-    sys_safe_access_disable();              //
+    R8_RTC_MODE_CTRL |= RB_RTC_TRIG_EN;  // trigger mode
+    sys_safe_access_disable();
     PFIC_EnableIRQ(RTC_IRQn);
 #endif
 }

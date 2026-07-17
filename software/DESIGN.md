@@ -240,7 +240,8 @@ AT 命令 → at_parser.c（行缓冲 + 参数分词）
 
 1. 在 `APP/HWS/` 下创建 `hws_xxx.c` / `hws_xxx.h`
 2. 只操作对应外设的寄存器（通过 StdPeriphDriver API）
-3. 如需周期性事件，在 `hws_process_event()` 中注册新事件
+3. 如需周期性事件，在 `hws_core.c` 的 `hws_tasks[]` 表中加一行
+   `{事件位, 处理函数, 周期ms}`（事件位在 `hws.h` 定义，勿与其他任务重叠）
 4. 在 `hws_init()` 中加入初始化调用
 5. **不要**在 HWS 层引用 `at_cmds`、`usb_dev`、BLE Service 等上层符号
 

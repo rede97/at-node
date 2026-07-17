@@ -31,11 +31,12 @@ extern "C" {
 
 /* HWS task events — bitmask flags for TMOS event dispatch.
    Each subsystem uses one event bit. Bits must not overlap
-   with other TMOS tasks (AT, BLE HID) or SYS_EVENT_MSG. */
+   with other TMOS tasks (AT, BLE HID) or SYS_EVENT_MSG.
+   Periodic tasks (KEY, CALIB) are dispatched via the hws_tasks[]
+   table in hws_core.c; LED self-schedules its blink timing. */
 #define HWS_LED_BLINK_EVENT  0x0001  /* LED state machine update */
 #define HWS_KEY_EVENT        0x0002  /* key scan poll (100 ms) */
 #define HWS_CALIB_EVENT      0x2000  /* BLE RF + LSI calibration (periodic) */
-#define HWS_TEST_EVENT       0x4000  /* heartbeat PRINT debug aid */
 
 /*********************************************************************
  * GLOBAL VARIABLES
@@ -77,17 +78,29 @@ void hws_init(hws_key_cb_t key_cb);
 /* --- TMOS task event processor --- */
 
 /**
- * @brief   HWS TMOS task event processor — dispatches LED/KEY/CALIB/TEST events.
+ * @brief   HWS TMOS task event processor — dispatches LED/KEY/CALIB events.
  *
  *   Registered as TMOS task by hws_init(). Called by TMOS scheduler
- *   when any HWS event bit is set. Each handled event is cleared
- *   from the return value.
+ *   when any HWS event bit is set. Periodic tasks are dispatched via
+ *   the hws_tasks[] table (hws_core.c); LED self-schedules blink timing.
+ *   Each handled event is cleared from the return value.
  *
  *   @return Bitmask of unhandled events (0 = all processed).
  */
 tmosEvents hws_process_event(tmosTaskID task_id, tmosEvents events);
 
 /* --- BLE support callbacks --- */
+
+/**
+ * @brief   Shared ADC single-conversion helper (save/convert/restore).
+ *
+ *   The ADC is shared between the temperature sensor and the battery
+ *   monitor. Pass the channel setup function (ADC_InterTSSampInit,
+ *   ADC_InterBATSampInit); full ADC state is preserved across the call.
+ *   Blocks ~10 µs.
+ *   @return Raw 12-bit ADC value.
+ */
+uint16_t hws_adc_sample(void (*adc_init)(void));
 
 /**
  * @brief   Read internal temperature sensor (ADC).

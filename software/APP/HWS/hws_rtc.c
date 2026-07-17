@@ -3,15 +3,14 @@
  * Author             : WCH
  * Version            : V1.2
  * Date               : 2022/01/18
- * Description        : RTC配置及其初始化
+ * Description        : RTC configuration and init (TMOS timebase, trigger)
  *********************************************************************************
  * Copyright (c) 2021 Nanjing Qinheng Microelectronics Co., Ltd.
- * Attention: This software (modified or not) and binary are used for 
+ * Attention: This software (modified or not) and binary are used for
  * microcontroller manufactured by Nanjing Qinheng Microelectronics.
  *******************************************************************************/
 
 /******************************************************************************/
-/* 头文件包含 */
 #include "hws.h"
 
 /*********************************************************************
@@ -29,9 +28,9 @@ volatile uint32_t RTCTigFlag;
 /*******************************************************************************
  * @fn      hws_rtc_set_trigger
  *
- * @brief   配置RTC触发时间
+ * @brief   Configure RTC trigger time.
  *
- * @param   time    - 触发时间.
+ * @param   time    - trigger instant (absolute RTC value).
  *
  * @return  None.
  */
@@ -46,7 +45,7 @@ void hws_rtc_set_trigger(uint32_t time)
 /*******************************************************************************
  * @fn      RTC_IRQHandler
  *
- * @brief   RTC中断处理
+ * @brief   RTC interrupt handler — sets trigger flag.
  *
  * @param   None.
  *
@@ -63,7 +62,7 @@ void RTC_IRQHandler(void)
 /*******************************************************************************
  * @fn      hws_rtc_init
  *
- * @brief   系统定时器初始化
+ * @brief   System timer init — 32 kHz clock source + TMOS timebase.
  *
  * @param   None.
  *
@@ -85,7 +84,7 @@ void hws_rtc_init(void)
     R8_CK32K_CONFIG |= RB_CLK_OSC32K_XT | RB_CLK_INT32K_PON | RB_CLK_XT32K_PON;
     sys_safe_access_disable();
 #endif
-    RTC_InitTime(2020, 1, 1, 0, 0, 0); //RTC时钟初始化当前时间
+    RTC_InitTime(2020, 1, 1, 0, 0, 0); // init RTC calendar to a fixed epoch
     TMOS_TimerInit(0);
 }
 
