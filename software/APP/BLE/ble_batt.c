@@ -16,6 +16,7 @@
 #include "config.h"
 #include "ble_hid_dev.h"
 #include "ble_batt.h"
+#include "hws.h"
 
 /*********************************************************************
  * MACROS
@@ -24,10 +25,6 @@
 /*********************************************************************
  * CONSTANTS
  */
-
-// ADC voltage levels
-#define BATT_ADC_LEVEL_3V            409
-#define BATT_ADC_LEVEL_2V            273
 
 #define BATT_LEVEL_VALUE_IDX         2    // Position of battery level in attribute array
 #define BATT_LEVEL_VALUE_CCCD_IDX    3    // Position of battery level CCCD in attribute array
@@ -63,23 +60,8 @@ const uint8_t battLevelUUID[ATT_BT_UUID_SIZE] = {
 // Application callback
 static ble_batt_service_cb_t battServiceCB;
 
-// Measurement setup callback
-static ble_batt_service_setup_cb_t battServiceSetupCB = NULL;
-
-// Measurement teardown callback
-static ble_batt_service_teardown_cb_t battServiceTeardownCB = NULL;
-
-// Measurement calculation callback
-static ble_batt_service_calc_cb_t battServiceCalcCB = NULL;
-
-static uint16_t battMinLevel = BATT_ADC_LEVEL_2V; // For VDD/3 measurements
-static uint16_t battMaxLevel = BATT_ADC_LEVEL_3V; // For VDD/3 measurements
-
 // Critical battery level setting
 static uint8_t battCriticalLevel;
-
-// ADC channel to be used for reading
-//static uint8_t ble_batt_adc_ch = HAL_ADC_CHANNEL_VDD;
 
 /*********************************************************************
  * Profile Attributes - variables
@@ -308,8 +290,8 @@ bStatus_t ble_batt_meas_level(void)
 
     level = battMeasure();
 
-    // If level has gone down
-    if(level < battLevel)
+    // If level has changed (either direction — charging can raise it)
+    if(level != battLevel)
     {
         // Update level
         battLevel = level;
@@ -319,33 +301,6 @@ bStatus_t ble_batt_meas_level(void)
     }
 
     return SUCCESS;
-}
-
-/*********************************************************************
- * @fn      ble_batt_setup
- *
- * @brief   Set up which ADC source is to be used. Defaults to VDD/3.
- *
- * @param   adc_ch - ADC Channel, e.g. HAL_ADC_CHN_AIN6
- * @param   minVal - max battery level
- * @param   maxVal - min battery level
- * @param   sCB - HW setup callback
- * @param   tCB - HW tear down callback
- * @param   cCB - percentage calculation callback
- *
- * @return  none.
- */
-void ble_batt_setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
-                ble_batt_service_setup_cb_t sCB, ble_batt_service_teardown_cb_t tCB,
-                ble_batt_service_calc_cb_t cCB)
-{
-    //ble_batt_adc_ch = adc_ch;
-    battMinLevel = minVal;
-    battMaxLevel = maxVal;
-
-    battServiceSetupCB = sCB;
-    battServiceTeardownCB = tCB;
-    battServiceCalcCB = cCB;
 }
 
 /*********************************************************************
@@ -379,16 +334,8 @@ static bStatus_t battReadAttrCB(uint16_t connHandle, gattAttribute_t *pAttr,
     // Measure battery level if reading level
     if(uuid == BATT_LEVEL_UUID)
     {
-        uint8_t level;
-
-        level = battMeasure();
-
-        // If level has gone down
-        if(level < battLevel)
-        {
-            // Update level
-            battLevel = level;
-        }
+        // Always report the freshest measurement (either direction)
+        battLevel = battMeasure();
 
         *pLen = 1;
         pValue[0] = battLevel;
@@ -488,57 +435,15 @@ static void battNotifyCB(linkDBItem_t *pLinkItem)
 /*********************************************************************
  * @fn      battMeasure
  *
- * @brief   Measure the battery level with the ADC and return
- *          it as a percentage 0-100%.
+ * @brief   Measure the battery level via the HWS battery monitor
+ *          (internal ADC channel CH_INTE_VBAT) and return it as a
+ *          percentage 0-100%.
  *
  * @return  Battery level.
  */
 static uint8_t battMeasure(void)
 {
-    uint16_t adc;
-    uint8_t  percent;
-
-    // Call measurement setup callback
-    if(battServiceSetupCB != NULL)
-    {
-        battServiceSetupCB();
-    }
-
-    // Configure ADC and perform a read
-    adc = 300;
-    // Call measurement teardown callback
-    if(battServiceTeardownCB != NULL)
-    {
-        battServiceTeardownCB();
-    }
-
-    if(adc >= battMaxLevel)
-    {
-        percent = 100;
-    }
-    else if(adc <= battMinLevel)
-    {
-        percent = 0;
-    }
-    else
-    {
-        if(battServiceCalcCB != NULL)
-        {
-            percent = battServiceCalcCB(adc);
-        }
-        else
-        {
-            uint16_t range = battMaxLevel - battMinLevel + 1;
-
-            // optional if you want to keep it even, otherwise just take floor of divide
-            // range += (range & 1);
-            range >>= 2; // divide by 4
-
-            percent = (uint8_t)((((adc - battMinLevel) * 25) + (range - 1)) / range);
-        }
-    }
-
-    return percent;
+    return hws_batt_read_percent();
 }
 
 /*********************************************************************

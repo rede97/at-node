@@ -45,15 +45,6 @@ extern "C" {
 // Battery Service callback function
 typedef void (*ble_batt_service_cb_t)(uint8_t event);
 
-// Battery measure HW setup function
-typedef void (*ble_batt_service_setup_cb_t)(void);
-
-// Battery measure percentage calculation function
-typedef uint8_t (*ble_batt_service_calc_cb_t)(uint16_t adcVal);
-
-// Battery measure HW teardown function
-typedef void (*ble_batt_service_teardown_cb_t)(void);
-
 /*********************************************************************
  * MACROS
  */
@@ -131,24 +122,6 @@ extern bStatus_t ble_batt_get_param(uint8_t param, void *value);
  * @return      Success or Failure
  */
 extern bStatus_t ble_batt_meas_level(void);
-
-/*********************************************************************
- * @fn      ble_batt_setup
- *
- * @brief   Set up which ADC source is to be used. Defaults to VDD/3.
- *
- * @param   adc_ch - ADC Channel, e.g. HAL_ADC_CHN_AIN6
- * @param   minVal - max battery level
- * @param   maxVal - min battery level
- * @param   sCB - HW setup callback
- * @param   tCB - HW tear down callback
- * @param   cCB - percentage calculation callback
- *
- * @return  none.
- */
-extern void ble_batt_setup(uint8_t adc_ch, uint16_t minVal, uint16_t maxVal,
-                       ble_batt_service_setup_cb_t sCB, ble_batt_service_teardown_cb_t tCB,
-                       ble_batt_service_calc_cb_t cCB);
 
 /*********************************************************************
  * @fn          ble_batt_handle_conn_status_cb

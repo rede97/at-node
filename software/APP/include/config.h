@@ -154,6 +154,39 @@
 #define HWS_LED  TRUE
 #endif
 
+/*********************************************************************
+ * HWS_BATT_MIN_MV / HWS_BATT_MAX_MV — battery voltage ↔ percent map.
+ *
+ *   Linear mapping used by hws_batt_read_percent():
+ *   MIN_MV and below = 0 %, MAX_MV and above = 100 %.
+ *
+ *   Default: single-cell Li-ion (3.0 V empty / 4.2 V full).
+ *   CR2032:  2000 / 3300.  2×AA: 2000 / 3200.
+ */
+#ifndef HWS_BATT_MIN_MV
+#define HWS_BATT_MIN_MV  3000
+#endif
+#ifndef HWS_BATT_MAX_MV
+#define HWS_BATT_MAX_MV  4200
+#endif
+
+/*********************************************************************
+ * HWS_BATT_ADC_FULLSCALE_MV — ADC raw → mV conversion for CH_INTE_VBAT.
+ *
+ *   mV = raw × FULLSCALE / 4095.
+ *
+ *   The VBAT channel runs with -12 dB PGA (1/4 attenuation), so
+ *   full-scale ≈ 4 × ADC reference. Default 13200 (4 × 3.3 V) is
+ *   THEORETICAL — calibrate per board:
+ *     1. Measure real VDD with a multimeter.
+ *     2. Read raw value (add a debug PRINT in hws_batt_read_mv or
+ *        watch the periodic BLE battery task).
+ *     3. FULLSCALE = VDD_mV × 4095 / raw.
+ */
+#ifndef HWS_BATT_ADC_FULLSCALE_MV
+#define HWS_BATT_ADC_FULLSCALE_MV  13200
+#endif
+
 /* ====================================================================
  * 4. DEBUG — printf output over UART1
  * ====================================================================

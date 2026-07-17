@@ -12,6 +12,7 @@
  *     hws_key   — key scanning with change detection and callback
  *     hws_rtc   — RTC timer (TMOS timebase) and trigger configuration
  *     hws_sleep — low-power sleep mode entry (RTC wake-up)
+ *     hws_batt  — battery VDD monitor (internal ADC channel CH_INTE_VBAT)
  ********************************************************************************/
 
 #ifndef __HWS_H
@@ -26,6 +27,7 @@ extern "C" {
 #include "hws_sleep.h"
 #include "hws_led.h"
 #include "hws_key.h"
+#include "hws_batt.h"
 
 /* HWS task events — bitmask flags for TMOS event dispatch.
    Each subsystem uses one event bit. Bits must not overlap

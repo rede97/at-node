@@ -41,7 +41,7 @@ uv run python tools/send_key.py --mode USB --mod 0x02 --key 0x04  # Shift+A via 
 | Layer | Path | Role |
 |-------|------|------|
 | APP | `software/APP/` | main, AT parser + cmds, BLE/USB keyboard, USB CDC+HID, `config.h` |
-| APP/HWS | `software/APP/HWS/` | Hardware services — core (init/task/temp), LED, KEY, RTC, SLEEP |
+| APP/HWS | `software/APP/HWS/` | Hardware services — core (init/task/temp), LED, KEY, RTC, SLEEP, BATT (VDD via ADC) |
 | APP/BLE | `software/APP/BLE/` | BLE stack init + GATT services — HID Dev, HID Keyboard, Battery, Device Info |
 | BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
