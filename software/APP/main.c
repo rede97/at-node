@@ -85,14 +85,13 @@ void main_loop(void)
  *   a key state change is detected. Runs in TMOS context (not ISR).
  *
  *   Current behavior (test/demo code):
- *     - SW_1 press:   sends F1 key (0x3A) via BOTH USB and BLE routing,
- *                     turns LED1 on.
- *     - SW_1 release: releases all keys, turns LED1 off.
+ *     - SW_1 press:   holds F1 key (0x3A) via kb_* routing layer
+ *                     (USB/BLE per AT+KB mode), turns LED1 on.
+ *     - SW_1 release: releases all keys (zero report), turns LED1 off.
  *
- *   NOTE: USB_HID_SendReport() is called directly in addition to
- *   kb_press_and_release(). This is test code — in production,
- *   only kb_*() routing layer should be used, and key mapping
- *   should be configurable via AT commands.
+ *   All HID output goes through the kb_*() routing layer — no direct
+ *   USB_HID_SendReport() calls. Key mapping should be configurable
+ *   via AT commands in production.
  *
  *   @param  key  Bitmask of keys that changed (HWS_KEY_SW_1..4).
  *                Each bit indicates a key that was pressed or released
@@ -102,15 +101,11 @@ static void key_press(uint8_t key)
 {
     if(key & HWS_KEY_SW_1) {
         PRINT("KEY PRESS\n\n");
-        uint8_t rpt[8] = {0, 0, 0x3A, 0, 0, 0, 0, 0};
-        USB_HID_SendReport(rpt, 8);
-        kb_press_and_release(0x3A);
+        kb_press(0x3A);
         hws_led_set(HWS_LED_1, HWS_LED_MODE_ON);
     } else {
         PRINT("KEY RELEASE\n\n");
-        uint8_t rpt[8] = {0};
-        USB_HID_SendReport(rpt, 8);
-        kb_release_all();
+        kb_release();
         hws_led_set(HWS_LED_1, HWS_LED_MODE_OFF);
     }
 }

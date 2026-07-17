@@ -355,12 +355,17 @@
 #endif
 
 /*********************************************************************
- * BLE_SNV_ADDR — flash address for SNV storage.
+ * BLE_SNV_ADDR — SNV storage offset within Data Flash.
  *
- *   Must be in Data Flash region (0x70000–0x77FFF for 448K flash).
- *   Default: 0x77E00 (last 512 bytes of Data Flash). Stays clear of
- *   application code (starts at 0x00000, grows up) and BLE heap
- *   (in RAM, not flash).
+ *   EEPROM_* commands take Data-Flash-RELATIVE offsets, not absolute
+ *   addresses: offset 0x0000–0x7FFF maps to absolute 0x70000–0x77FFF
+ *   (32 KB Data Flash on CH582F).
+ *
+ *   Default: 0x77E00 - FLASH_ROM_MAX_SIZE = 0x7E00 offset = absolute
+ *   0x77E00 (last 512 bytes of Data Flash). Stays clear of application
+ *   code (grows up from 0x00000) and BLE heap (in RAM, not flash).
+ *   Bounds check in ble_stack_init() validates against the 32 KB
+ *   Data Flash limit (0x78000 - FLASH_ROM_MAX_SIZE = 0x8000).
  */
 #ifndef BLE_SNV_ADDR
 #define BLE_SNV_ADDR  0x77E00 - FLASH_ROM_MAX_SIZE

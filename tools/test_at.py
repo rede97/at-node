@@ -31,6 +31,12 @@ if not port:
 print(f"Device: {port}")
 ser = serial.Serial(port, 115200, timeout=0.3)
 ser.dtr = True
+# Warmup: first OUT transfer after port open can be lost (CDC line-state
+# change races endpoint setup). Send a blank line and drain before testing.
+time.sleep(0.3)
+ser.write(b"\r\n")
+time.sleep(0.3)
+ser.reset_input_buffer()
 
 all_ok = True
 all_ok &= test(ser, b"AT\r\n")
@@ -38,6 +44,7 @@ all_ok &= test(ser, b"AT+VER\r\n", "AT-Node")
 all_ok &= test(ser, b"AT+KB\r\n")
 all_ok &= test(ser, b"AT+ECHO=hello\r\n", "hello")
 all_ok &= test(ser, b"AT+HELP\r\n", "AT+VER")
+all_ok &= test(ser, b"AT+KEY=0\r\n")  # all-zero report: exercises handler, no keystroke
 ser.close()
 print("\nALL PASS" if all_ok else "\nSOME FAILED")
 sys.exit(0 if all_ok else 1)

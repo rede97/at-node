@@ -121,27 +121,47 @@ static const uint8_t MyCfgDescr[] = {
  *  Global state
  */
 static uint8_t  DevConfig = 0;
-uint8_t         Ready = 0;
+static uint8_t  Ready = 0;
 static uint8_t  SetupReqCode;
 static uint16_t SetupReqLen;
 const uint8_t  *pDescr;
 static uint8_t  Idle_Value[2] = {0,0};
 
 /*********************************************************************
- *  CDC data buffer for UART bridge
+ *  usb_ready — 1 when USB is enumerated and ready for HID reports
  */
-static uint8_t  cdc_rx_buf[64];
-static uint16_t cdc_rx_len = 0;
+uint8_t usb_ready(void)
+{
+    return Ready;
+}
+
+/*********************************************************************
+ *  CDC RX ring buffer — filled by EP1 OUT (ISR context), drained by
+ *  AT_Poll via USB_CDC_Read (TMOS task context). Single producer /
+ *  single consumer; volatile indices, no lock needed.
+ *
+ *  Sized to AT_LINE_MAX (256): long command lines span multiple 64B
+ *  USB packets and must accumulate across packets. When full, excess
+ *  bytes are dropped (line will fail to parse as ERROR, never crash).
+ */
+#define CDC_RX_BUF_SIZE  256
+static uint8_t  cdc_rx_buf[CDC_RX_BUF_SIZE];
+static volatile uint16_t cdc_rx_head = 0;   /* write index — ISR */
+static volatile uint16_t cdc_rx_tail = 0;   /* read index  — task */
 
 /*********************************************************************
  *  CDC data receiver (called from USB_DevTransProcess)
- *  Copies received EP1 OUT data to cdc_rx_buf for UART forwarding
+ *  Appends received EP1 OUT data to the ring buffer. Multi-packet
+ *  transfers (>64B) arrive as several calls — must NOT overwrite.
  */
 static void cdc_recv_data(uint8_t len)
 {
-    if (len > sizeof(cdc_rx_buf)) len = sizeof(cdc_rx_buf);
-    memcpy(cdc_rx_buf, pEP1_OUT_DataBuf, len);
-    cdc_rx_len = len;
+    for (uint8_t i = 0; i < len; i++) {
+        uint16_t next = (cdc_rx_head + 1) % CDC_RX_BUF_SIZE;
+        if (next == cdc_rx_tail) break;   /* buffer full — drop rest */
+        cdc_rx_buf[cdc_rx_head] = pEP1_OUT_DataBuf[i];
+        cdc_rx_head = next;
+    }
 }
 
 /*********************************************************************
@@ -408,11 +428,10 @@ static void cdc_send_packet(const uint8_t *data, uint16_t len)
  */
 uint16_t USB_CDC_Read(uint8_t *buf, uint16_t maxlen)
 {
-    uint16_t n = cdc_rx_len;
-    if (n > maxlen) n = maxlen;
-    if (n > 0) {
-        memcpy(buf, cdc_rx_buf, n);
-        cdc_rx_len = 0;
+    uint16_t n = 0;
+    while (n < maxlen && cdc_rx_tail != cdc_rx_head) {
+        buf[n++] = cdc_rx_buf[cdc_rx_tail];
+        cdc_rx_tail = (cdc_rx_tail + 1) % CDC_RX_BUF_SIZE;
     }
     return n;
 }
@@ -475,7 +494,7 @@ void USB_Device_Setup(void)
 
     DevConfig = 0;
     cdcReady = 0;
-    cdc_rx_len = 0;
+    cdc_rx_head = cdc_rx_tail = 0;
 }
 
 /*********************************************************************

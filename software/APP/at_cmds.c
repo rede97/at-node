@@ -11,13 +11,8 @@
 #include "at_parser.h"
 #include <stdlib.h>
 
-extern uint8_t Ready;
-
 /* ===== Keyboard router ===== */
 static kb_mode_t kb_mode = KB_BOTH;
-static uint8_t  kbd_mods = 0;
-static uint8_t  kbd_keys[6];
-static int      kbd_count = 0;
 
 void kb_set_mode(kb_mode_t m) { kb_mode = m; }
 kb_mode_t kb_get_mode(void)   { return kb_mode; }
@@ -25,55 +20,80 @@ kb_mode_t kb_get_mode(void)   { return kb_mode; }
 extern void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count);
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
-static int kb_flush(void)
+/* Dispatch one HID report to active output(s).
+   keys[] is always 6 bytes (zero-padded); count = significant keys.
+   Returns 0 if sent on at least one channel, -1 if no output active. */
+static int kb_flush(uint8_t mods, uint8_t *keys, int count)
 {
     int sent = 0;
     if (kb_mode & KB_BLE && kb_ble_connected()) {
         PRINT("KB> BLE:%02X%02X%02X%02X%02X%02X mods=%02X\n",
-              kbd_keys[0],kbd_keys[1],kbd_keys[2],kbd_keys[3],kbd_keys[4],kbd_keys[5], kbd_mods);
-        kb_ble_send_report(kbd_mods, kbd_keys, kbd_count);
+              keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
+        kb_ble_send_report(mods, keys, count);
         sent = 1;
     }
-    if (kb_mode & KB_USB && Ready) {
+    if (kb_mode & KB_USB && usb_ready()) {
         PRINT("KB> USB:%02X%02X%02X%02X%02X%02X mods=%02X\n",
-              kbd_keys[0],kbd_keys[1],kbd_keys[2],kbd_keys[3],kbd_keys[4],kbd_keys[5], kbd_mods);
-        kb_usb_send_report(kbd_mods, kbd_keys, kbd_count);
+              keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
+        kb_usb_send_report(mods, keys, count);
         sent = 1;
     }
     return sent ? 0 : -1;
 }
 
-int kb_press_and_release(uint8_t keycode)
+int kb_press(uint8_t keycode)
 {
-    kbd_keys[0] = keycode;
-    for (int i = 1; i < 6; i++) kbd_keys[i] = 0;
-    kbd_count = 1;
-    int r = kb_flush();
-    kbd_count = 0;
-    int r2 = kb_flush();
-    return (r < 0 && r2 < 0) ? -1 : 0;
+    uint8_t keys[6] = { keycode, 0, 0, 0, 0, 0 };
+    return kb_flush(0, keys, 1);
 }
 
-int kb_key_down(uint8_t keycode)
+int kb_release(void)
 {
-    if (kbd_count >= 6) return -1;
-    kbd_keys[kbd_count++] = keycode;
-    return kb_flush();
+    uint8_t zero[6] = { 0 };
+    return kb_flush(0, zero, 0);
 }
 
-int kb_key_up(uint8_t keycode)
+int kb_set_mods(uint8_t mods)
 {
-    for (int i = 0; i < kbd_count; i++) {
-        if (kbd_keys[i] == keycode) {
-            kbd_keys[i] = kbd_keys[--kbd_count];
-            break;
+    uint8_t zero[6] = { 0 };
+    return kb_flush(mods, zero, 0);
+}
+
+/* ===== KEY_SEQ playback — TMOS timer driven =====
+ *
+ *   Parsed reports are queued in seq_buf and played back one per TMOS
+ *   timer event, so long sequences never block the cooperative scheduler
+ *   (a busy-wait would starve BLE/USB tasks and could drop BLE packets).
+ *
+ *   SEQ_MAX_REPORTS=8 matches AT_LINE_MAX=256: 8 reports x 7 values at
+ *   up to 3 digits each + separators fit one command line. Longer text
+ *   must be split into multiple AT+KEY_SEQ commands by the host script.
+ *
+ *   Re-issuing AT+KEY_SEQ during playback replaces the running queue.
+ */
+#define SEQ_EVENT         0x0001
+#define SEQ_MAX_REPORTS   8
+
+static tmosTaskID seq_task_id  = INVALID_TASK_ID;
+static uint8_t    seq_buf[SEQ_MAX_REPORTS][7];   /* mods + 6 keys per report */
+static int        seq_count    = 0;
+static int        seq_idx      = 0;
+static uint16_t   seq_delay_ms = 0;
+
+static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
+{
+    (void)tid;
+    if (evt & SEQ_EVENT) {
+        if (seq_idx < seq_count) {
+            kb_flush(seq_buf[seq_idx][0], &seq_buf[seq_idx][1], 6);
+            seq_idx++;
+            if (seq_idx < seq_count)
+                tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(seq_delay_ms));
         }
+        return evt ^ SEQ_EVENT;
     }
-    return kb_flush();
+    return 0;
 }
-
-int kb_set_mods(uint8_t mods) { kbd_mods = mods; return kb_flush(); }
-int kb_release_all(void)      { kbd_count = 0; kbd_mods = 0; return kb_flush(); }
 
 /* ===== AT command handlers — implemented ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
@@ -91,8 +111,6 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
-        "  AT+KEY_DOWN - hold key <kc>\r\n"
-        "  AT+KEY_UP   - release key <kc>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
         "  AT+KEY_SEQ  - batch HID <delay>,<mods>,<k1>..<k6>,...\r\n"
         "  [GPIO]\r\n"
@@ -124,7 +142,7 @@ static int at_cmd_KB(int argc, char *argv[])  {
         AT_Response("mode=%s BLE=%s USB=%s",
             m==KB_USB?"USB":m==KB_BLE?"BLE":"BOTH",
             kb_ble_connected()?"connected":"disconnected",
-            Ready?"ready":"-");
+            usb_ready()?"ready":"-");
         return 0;
     }
     if (argv[1][0]=='U' && argv[1][1]=='S' && argv[1][2]=='B' && !argv[1][3])  { kb_set_mode(KB_USB); AT_Response("KB=USB"); return 0; }
@@ -135,30 +153,14 @@ static int at_cmd_KB(int argc, char *argv[])  {
 /* AT+KEY=<mods>,<k1>,..,<k6> — raw HID report. Missing args = 0. */
 static int at_cmd_KEY(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+KEY=<mods>,<k1>,..,<k6>"); return -1; }
-    kbd_mods  = (argc > 1) ? atoi(argv[1]) : 0;
-    kbd_count = 0;
+    uint8_t mods   = (uint8_t)atoi(argv[1]);
+    uint8_t keys[6] = { 0 };
+    int     count  = 0;
     for (int i = 2; i <= 7; i++) {
-        uint8_t kc = (argc > i) ? atoi(argv[i]) : 0;
-        if (kc) kbd_keys[kbd_count++] = kc;
+        uint8_t kc = (i < argc) ? (uint8_t)atoi(argv[i]) : 0;
+        if (kc) keys[count++] = kc;
     }
-    for (int i = kbd_count; i < 6; i++) kbd_keys[i] = 0;
-    if (kb_flush() < 0) {
-        AT_Response("ERROR: no active output — check AT+KB status");
-        return -1;
-    }
-    return 0;
-}
-static int at_cmd_KEY_DOWN(int argc, char *argv[])  {
-    if (argc < 2) { AT_Response("usage: AT+KEY_DOWN=<kc>"); return -1; }
-    if (kb_key_down(atoi(argv[1])) < 0) {
-        AT_Response("ERROR: no active output — check AT+KB status");
-        return -1;
-    }
-    return 0;
-}
-static int at_cmd_KEY_UP(int argc, char *argv[])  {
-    if (argc < 2) { AT_Response("usage: AT+KEY_UP=<kc>"); return -1; }
-    if (kb_key_up(atoi(argv[1])) < 0) {
+    if (kb_flush(mods, keys, count) < 0) {
         AT_Response("ERROR: no active output — check AT+KB status");
         return -1;
     }
@@ -174,47 +176,47 @@ static int at_cmd_MOD(int argc, char *argv[])  {
 }
 
 /* AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,<mods>,<k1>..<k6>,...
- * Batch HID report playback. Each report = exactly 7 values (1 mods + 6 keys).
- * Script pre-translates text → HID report sequence, firmware plays back with
- * delay_ms pacing between reports. Much faster than per-report AT commands.
+ * Batch HID report playback. Each report = exactly 7 values (1 mods + 6 keys),
+ * all values DECIMAL. Reports are queued and played back by a TMOS timer
+ * at delay_ms pacing — the AT task stays responsive during playback.
+ * Script pre-translates text → HID report sequence.
  *
  * Example (Shift+h, release, e, release):
- *   AT+KEY_SEQ=5,2,0B,0,0,0,0,0,0,0,0,0,0,0,0,0,08,0,0,0,0,0,0,0,0,0,0,0,0
+ *   AT+KEY_SEQ=5,2,11,0,0,0,0,0,0,0,0,0,0,0,0,0,8,0,0,0,0,0,0,0,0,0,0,0,0
  *   → 4 reports at 5ms intervals: Shift+h down, all up, e down, all up
  */
 static int at_cmd_KEY_SEQ(int argc, char *argv[])
 {
-    if (argc < 9) {  /* delay + at least 1 report (7 values) */
+    int nvals = argc - 2;   /* values after delay */
+    if (nvals < 7 || nvals % 7) {
         AT_Response("usage: AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,...");
         return -1;
     }
+    int n = nvals / 7;
+    if (n > SEQ_MAX_REPORTS) {
+        AT_Response("ERROR: max %d reports per command", SEQ_MAX_REPORTS);
+        return -1;
+    }
+
     int delay_ms = atoi(argv[1]);
-    if (delay_ms < 1)  delay_ms = 1;
+    if (delay_ms < 1)   delay_ms = 1;
     if (delay_ms > 200) delay_ms = 200;  /* safety cap */
 
-    int sent = 0;
-    int arg_idx = 2;
-    while (arg_idx + 6 < argc) {  /* need 7 more values for a full report */
-        kbd_mods = atoi(argv[arg_idx++]);
-        kbd_count = 0;
-        for (int i = 0; i < 6; i++) {
-            uint8_t kc = (uint8_t)atoi(argv[arg_idx++]);
-            if (kc) kbd_keys[kbd_count++] = kc;
-        }
-        for (int i = kbd_count; i < 6; i++) kbd_keys[i] = 0;
-        if (kb_flush() == 0) sent++;
+    for (int r = 0; r < n; r++)
+        for (int i = 0; i < 7; i++)
+            seq_buf[r][i] = (uint8_t)atoi(argv[2 + r * 7 + i]);
 
-        /* Busy-wait between reports. TMOS is cooperative — this blocks
-           other tasks briefly, but for batch HID reports (typically <50ms
-           total) it's faster and simpler than TMOS timer chaining. */
-        if (arg_idx + 6 < argc) {
-            for (volatile uint32_t d = 0; d < (uint32_t)delay_ms * 6000; d++) {
-                __asm volatile ("nop");
-            }
-        }
-    }
-    AT_Response("%d reports sent", sent);
-    return sent > 0 ? 0 : -1;
+    /* Lazy TMOS task registration (TMOS running since ble_stack_init) */
+    if (seq_task_id == INVALID_TASK_ID)
+        seq_task_id = TMOS_ProcessEventRegister(kb_seq_process_event);
+
+    seq_count    = n;
+    seq_idx      = 0;
+    seq_delay_ms = (uint16_t)delay_ms;
+    tmos_start_task(seq_task_id, SEQ_EVENT, 0);  /* first report next tick */
+
+    AT_Response("%d reports queued", n);
+    return 0;
 }
 
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
@@ -252,9 +254,11 @@ static int at_cmd_IR_RAW(int argc, char *argv[])  { (void)argc; (void)argv; retu
  *   implementation without breaking host scripts that issue them.
  *
  *   Removed from requirements:
- *     AT+COMB — redundant, merged into AT+KEY (<mods>,<k1>,..,<k6>)
- *     AT+WOL  — CH582F has no Ethernet MAC, not feasible
- *     AT+ISP  — not supported (no IAP bootloader planned)
+ *     AT+COMB     — redundant, merged into AT+KEY (<mods>,<k1>,..,<k6>)
+ *     AT+KEY_DOWN — redundant, hold semantics via repeated AT+KEY reports
+ *     AT+KEY_UP   — redundant, release = AT+KEY with zeroed report
+ *     AT+WOL      — CH582F has no Ethernet MAC, not feasible
+ *     AT+ISP      — not supported (no IAP bootloader planned)
  */
 const at_cmd_t cmd_table[] = {
     /* Core */
@@ -267,8 +271,6 @@ const at_cmd_t cmd_table[] = {
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
-    { "AT+KEY_DOWN","hold key <kc>",                  at_cmd_KEY_DOWN },
-    { "AT+KEY_UP",  "release key <kc>",               at_cmd_KEY_UP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     /* GPIO */

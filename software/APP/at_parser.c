@@ -34,8 +34,13 @@ static int       atCmdCount = 0;
 /* --- channel tracking --- */
 static int       at_channel = AT_CH_UART;
 
-/* --- arg parsing --- */
-static char *at_argv[8];
+/* --- arg parsing ---
+   66 entries: cmd name + delay + 9 reports x 7 values — one report more
+   than SEQ_MAX_REPORTS=8, so over-limit KEY_SEQ reaches the handler and
+   gets a precise "max N reports" error instead of a parse truncation.
+   (Still bounded by AT_LINE_MAX=256 at ~4 chars per value.) */
+#define AT_ARGV_MAX  66
+static char *at_argv[AT_ARGV_MAX];
 static char  at_token_buf[AT_LINE_MAX];
 
 /* --- TMOS --- */
@@ -126,7 +131,7 @@ static void at_process_line(void)
         if (save && *save) {
             char *args_save;
             char *arg = strtok_r(save, ",", &args_save);
-            while (arg && argc < 8) {
+            while (arg && argc < AT_ARGV_MAX) {
                 at_argv[argc++] = arg;
                 arg = strtok_r(NULL, ",", &args_save);
             }

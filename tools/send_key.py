@@ -10,8 +10,9 @@ Single key mode: script builds raw HID report, sends down then up.
   send_key.py 0xE1 0x04                # Shift+a (capital A)
 
 Sequence mode (--seq): batch HID playback via AT+KEY_SEQ.
-  Script translates text to HID reports, firmware plays back at delay_ms.
-  Much faster than per-key AT commands — whole string in one serial round-trip.
+  Script translates text to HID reports, firmware plays back at delay_ms
+  via TMOS timer (async). Text is chunked to 8 reports per command —
+  firmware limit SEQ_MAX_REPORTS=8.
 
 HID key codes (hex):
   Letters:    a=0x04 b=0x05 .. z=0x1D
@@ -100,11 +101,19 @@ def send_hid(ser, mods, keys):
     return cmd(ser, at)
 
 
+# Firmware plays reports back asynchronously via TMOS timer and accepts
+# at most SEQ_MAX_REPORTS=8 per command (AT_LINE_MAX=256 bound). Longer
+# text is chunked here; between chunks we must wait for playback to
+# finish — a new AT+KEY_SEQ replaces the running queue.
+MAX_REPORTS_PER_CMD = 8
+
+
 def send_sequence(ser, text, delay_ms=5):
     """Send text via AT+KEY_SEQ — batch HID report playback.
 
     Converts each character to a press+release HID report pair,
-    packs into one AT+KEY_SEQ command for efficient firmware playback.
+    packs into chunked AT+KEY_SEQ commands (<=8 reports each) and
+    paces chunks to the firmware's async playback.
     """
     reports = []
     for ch in text:
@@ -120,16 +129,24 @@ def send_sequence(ser, text, delay_ms=5):
     if not reports:
         return "ERR: no mappable characters"
 
-    # Build AT+KEY_SEQ command
-    parts = [f"AT+KEY_SEQ={delay_ms}"]
-    for mods, keys in reports:
-        parts.append(str(mods))
-        for k in keys:
-            parts.append(str(k))
-    at = ",".join(parts).encode() + b"\n"
+    print(f"  SEQ: {len(reports)} reports, "
+          f"{(len(reports) + MAX_REPORTS_PER_CMD - 1) // MAX_REPORTS_PER_CMD} chunk(s)")
+    for i in range(0, len(reports), MAX_REPORTS_PER_CMD):
+        chunk = reports[i:i + MAX_REPORTS_PER_CMD]
+        parts = [f"AT+KEY_SEQ={delay_ms}"]
+        for mods, keys in chunk:
+            parts.append(str(mods))
+            for k in keys:
+                parts.append(str(k))
+        at = ",".join(parts).encode() + b"\n"
 
-    print(f"  SEQ: {len(reports)} reports, {len(at)} bytes")
-    return cmd(ser, at)
+        resp = cmd(ser, at)
+        if "OK" not in resp:
+            return f"ERR chunk {i // MAX_REPORTS_PER_CMD}: {resp}"
+        # Wait for async playback of this chunk before sending the next,
+        # otherwise the new command replaces the running queue.
+        time.sleep(len(chunk) * delay_ms / 1000 + 0.05)
+    return f"OK {len(reports)} reports"
 
 
 def main():
