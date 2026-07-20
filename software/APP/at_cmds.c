@@ -115,7 +115,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+HELP  - this help\r\n"
         "  AT+ECHO  - echo <text>\r\n"
         "  AT+STATUS - device status [stub]\r\n"
-        "  AT+RST   - software reset (AT+RESET)\r\n"
+        "  AT+RST   - software reset\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
@@ -309,7 +309,6 @@ const at_cmd_t cmd_table[] = {
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
     { "AT+STATUS",  "[stub] device status",           at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
-    { "AT+RESET",   "software reset (alias)",         at_cmd_RST },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
