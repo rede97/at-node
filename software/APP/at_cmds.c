@@ -116,6 +116,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ECHO  - echo <text>\r\n"
         "  AT+STATUS - device status [stub]\r\n"
         "  AT+RST   - software reset\r\n"
+        "  AT+ISP   - enter ISP bootloader (erases app!)\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
@@ -246,6 +247,49 @@ static int at_cmd_RST(int argc, char *argv[])     {
     return 0;   /* unreachable */
 }
 
+/* AT+ISP — erase app page 0 and reset into the ROM ISP bootloader.
+   Chip re-enumerates as WCH ISP (VID:PID 1a86:8010) for wchisp flashing —
+   no BOOT button or WCH-Link needed.
+
+   With page 0 erased the chip looks blank, so EVERY reset re-enters ISP
+   (10 s window each boot) until reflashed. Recovery if flashing fails:
+   power-cycle re-enters ISP; wlink (debug wire) works regardless of
+   flash contents. */
+
+/* app_jump_boot — must run from RAM (__HIGH_CODE): page 0 is erased
+   under our feet, executing this from flash would crash mid-erase.
+   Sequence from the WCH EVT IAP example. After the erase begins, only
+   ROM routines (FLASH_ROM_*) and inline SFR writes execute — no
+   flash-resident code may be called. */
+__HIGH_CODE
+static void app_jump_boot(void)
+{
+    uint32_t irqv;
+    SYS_DisableAllIrq(&irqv);     /* IRQ handlers live in the flash being erased */
+    while (FLASH_ROM_ERASE(0, EEPROM_BLOCK_SIZE)) {
+        ;                         /* ROM erases in 4K units from address 0 */
+    }
+    FLASH_ROM_SW_RESET();
+    R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG1;
+    R8_SAFE_ACCESS_SIG = SAFE_ACCESS_SIG2;
+    SAFEOPERATE;
+    R16_INT32K_TUNE = 0xFFFF;
+    R8_RST_WDOG_CTRL |= RB_SOFTWARE_RESET;
+    R8_SAFE_ACCESS_SIG = 0;       /* power-on-type reset: boot ROM sees blank app */
+    while (1) ;                   /* never reached — reset fires first */
+}
+
+static int at_cmd_ISP(int argc, char *argv[])     {
+    (void)argc; (void)argv;
+    AT_Response("entering ISP — app flash erased, reflash via wchisp (1a86:8010)");
+#ifdef DEBUG
+    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();   /* flush UART1 */
+#endif
+    for (volatile uint32_t d = 0; d < 60000; d++) __nop();     /* ~5ms for CDC DMA */
+    app_jump_boot();
+    return 0;   /* unreachable */
+}
+
 /* Keyboard */
 /* GPIO */
 static int at_cmd_GPIO_W(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
@@ -299,7 +343,6 @@ static int at_cmd_IR_RAW(int argc, char *argv[])  { (void)argc; (void)argv; retu
  *     AT+KEY_DOWN — redundant, hold semantics via repeated AT+KEY reports
  *     AT+KEY_UP   — redundant, release = AT+KEY with zeroed report
  *     AT+WOL      — CH582F has no Ethernet MAC, not feasible
- *     AT+ISP      — not supported (no IAP bootloader planned)
  */
 const at_cmd_t cmd_table[] = {
     /* Core */
@@ -309,6 +352,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
     { "AT+STATUS",  "[stub] device status",           at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
+    { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },

@@ -120,7 +120,15 @@ wlink flash -e firmware.hex        # 可选:先整片擦除
 wchisp flash software/obj/at-node.hex
 ```
 
-板子进 ISP:按住 BOOT 键上电(具体按键见硬件手册),ISP 设备 VID:PID = `1a86:8010`。
+板子进 ISP 的三种方式:
+1. **按住 BOOT 键上电**(硬件方式,具体按键见硬件手册);
+2. **`AT+ISP` 命令**(固件已实现,**未实测**):擦除 page0 + 软复位成"空片",
+   免按键;但 boot ROM 的 ISP 等待窗口仅 ~10s,超时后跳入已擦除的 app 而死机,
+   需复位/重新上电才会再给 10s 窗口 — 主机脚本必须在发送 AT+ISP 后**立刻**启动
+   wchisp,或用 `wlink reset` 重新武装窗口;
+3. 空片状态下任何复位/上电都会自动进 ISP。
+
+ISP 设备 VID:PID = `1a86:8010`(与 WCH-Link 同 PID,注意区分)。
 
 ### ⚠️ 烧录纪律
 
@@ -182,6 +190,7 @@ CLAUDE.md 中 "PID=0x8040" 的表述与固件不符,以固件为准)。
 | 串口权限 | `PermissionError: /dev/ttyACM0` | §4 udev 规则 |
 | `sed */subdir.mk` 漏层 | APP/BLE、APP/HWS 是两层深 | 必须加 `APP/*/subdir.mk` |
 | ttyS0–31 噪音 | pyserial 列出 32 个主板串口 | 按 VID 过滤,工具脚本已处理 |
+| **VMware USB 仲裁** | 设备复位/重枚举后从 VM 消失(被 Windows 主机抢走);WCH-Link/ISP 设备"掉线" | VM 设置 → USB 控制器:勾选"自动连接新 USB 设备" + "显示所有 USB 输入设备"(at-node 是 HID 键盘,默认被当输入设备隐藏) |
 
 ## 8. 下一步(PLAN.md M3)
 
