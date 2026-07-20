@@ -1,0 +1,8 @@
+[project]
+name = "at-node-tools"
+version = "0.1.0"
+description = "Host-side test and automation tools for at-node firmware (pyserial)"
+requires-python = ">=3.9"
+dependencies = [
+    "pyserial>=3.5",
+]

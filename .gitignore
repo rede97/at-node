@@ -51,3 +51,7 @@ hardware/*.BackupOf.*
 Thumbs.db
 desktop.ini
 software/.mrs/
+
+# === Python (uv) ===
+.venv/
+__pycache__/
