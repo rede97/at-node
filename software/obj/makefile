@@ -56,7 +56,7 @@ main-build: at-node.elf secondary-outputs
 
 # Tool invocations
 at-node.elf: $(OBJS) $(USER_OBJS_ESCAPE)
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "e:\Projects\at_node\software\Ld\Link.ld" -nostartfiles -Xlinker --gc-sections -L"e:\Projects\at_node\software" -L"e:\Projects\at_node\software\LIB" -L"e:\Projects\at_node\software\StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"at-node.map" --specs=nano.specs --specs=nosys.specs -o "at-node.elf" $(OBJS) $(LIBS) -lprintf
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "../Ld/Link.ld" -nostartfiles -Xlinker --gc-sections -L".." -L"../LIB" -L"../StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"at-node.map" --specs=nano.specs --specs=nosys.specs -o "at-node.elf" $(OBJS) $(LIBS) -lprintf
 at-node.hex: at-node.elf
 	@	riscv-none-embed-objcopy -O ihex "at-node.elf" "at-node.hex"
 at-node.lst: at-node.elf
