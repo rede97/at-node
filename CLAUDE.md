@@ -82,7 +82,7 @@ Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
 - **Channels**: UART1 (ring buffer, 512B) + CDC (`USB_CDC_Read()`) — both feed same line parser
 - **Response**: routed back to originating channel; CDC responses echo input line first
 - **Format**: `AT+CMD=arg1,arg2\n` → `\r\nOK\r\n` or `\r\nERROR\r\n` (parser uses `\n` line terminator; `\r\n` also accepted)
-- **Implemented commands**: `AT`, `AT+VER`, `AT+HELP`, `AT+KB`, `AT+KEY` (raw HID report: `<mods>,<k1>,..,<k6>`), `AT+KEY_SEQ` (batch HID playback, TMOS timer paced), `AT+MOD`, `AT+ECHO`
+- **Implemented commands**: `AT`, `AT+VER`, `AT+HELP`, `AT+KB`, `AT+KEY` (raw HID report: `<mods>,<k1>,..,<k6>`), `AT+KEY_SEQ` (batch HID playback, TMOS timer paced), `AT+MOD`, `AT+ECHO`, `AT+BT_DISC` (drop host link, re-advertise), `AT+BT_PAIR` (drop link + erase bonds)
 - **Max line**: 256 chars (`AT_LINE_MAX`); will need 1024 for RAW IR
 
 ### USB endpoint allocation

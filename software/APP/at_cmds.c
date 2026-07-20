@@ -124,7 +124,9 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  [Power]\r\n"
         "  AT+SLEEP    - sleep <mode> [stub]\r\n"
         "  [Wireless]\r\n"
-        "  AT+BT_SCAN  - BLE scan [stub]\r\n"
+        "  AT+BT_SCAN  - BLE scan [dongle]\r\n"
+        "  AT+BT_DISC  - drop host link, re-advertise\r\n"
+        "  AT+BT_PAIR  - drop link + erase bonds\r\n"
         "  [Infrared]\r\n"
         "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
         "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
@@ -240,7 +242,27 @@ static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; retu
 static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
 
 /* Wireless */
-static int at_cmd_BT_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
+static int at_cmd_BT_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1; }
+/* AT+BT_DISC — actively drop the host link. Bond is kept and
+   advertising restarts automatically, like a real keyboard's
+   host-switch key: the same or a new host can reconnect. */
+static int at_cmd_BT_DISC(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    if (kb_ble_disconnect() < 0) {
+        AT_Response("ERROR: not connected");
+        return -1;
+    }
+    return 0;
+}
+/* AT+BT_PAIR — drop the link AND erase all bonds: back to a clean
+   pairing mode, like long-pressing a real keyboard's pairing key. */
+static int at_cmd_BT_PAIR(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    kb_ble_disconnect();      /* fine if not connected */
+    kb_ble_forget_bonds();
+    AT_Response("bonds erased — pairing mode");
+    return 0;
+}
 
 /* Infrared */
 static int at_cmd_IR_NEC(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
@@ -284,7 +306,9 @@ const at_cmd_t cmd_table[] = {
     /* Power */
     { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
     /* Wireless */
-    { "AT+BT_SCAN", "[stub] BLE scan",               at_cmd_BT_SCAN },
+    { "AT+BT_SCAN", "[dongle] BLE scan",             at_cmd_BT_SCAN },
+    { "AT+BT_DISC", "drop host link, re-advertise",  at_cmd_BT_DISC },
+    { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
     /* Infrared */
     { "AT+IR",      "[stub] IR=NEC|SIRC|RAW,...",    at_cmd_IR_NEC },  /* sub-cmd parsed as arg1 */
 };

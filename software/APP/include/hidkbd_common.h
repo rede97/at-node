@@ -20,6 +20,8 @@ int  kb_press(uint8_t keycode);
 int  kb_release(void);
 int  kb_set_mods(uint8_t mods);
 uint8_t kb_ble_connected(void);
+int  kb_ble_disconnect(void);
+void kb_ble_forget_bonds(void);
 
 #ifdef __cplusplus
 }

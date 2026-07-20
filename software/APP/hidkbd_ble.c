@@ -152,6 +152,23 @@ uint16_t ble_hid_emu_conn_handle = GAP_CONNHANDLE_INIT;
 
 uint8_t kb_ble_connected(void)  { return (ble_hid_emu_conn_handle != GAP_CONNHANDLE_INIT) ? 1 : 0; }
 
+/* Actively drop the host link (like a real keyboard's host-switch key).
+   Advertising restarts automatically via the GAP_LINK_TERMINATED_EVENT
+   path; the bond is kept, so the same host (or a new one) can reconnect. */
+int kb_ble_disconnect(void)
+{
+    if (!kb_ble_connected()) return -1;
+    GAPRole_TerminateLink(ble_hid_emu_conn_handle);
+    return 0;
+}
+
+/* Erase all stored bonds (like a real keyboard's long-press pairing key).
+   Next connection pairs from scratch. Best called while disconnected. */
+void kb_ble_forget_bonds(void)
+{
+    GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
+}
+
 void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
 {
     uint8_t buf[8];
