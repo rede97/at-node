@@ -97,7 +97,15 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
 
 /* ===== AT command handlers — implemented ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
-static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 BLE: %s", VER_LIB); return 0; }
+/* Role tag for firmware identification — two identical boards are easy
+   to mix up; AT+VER tells which role is flashed (compile-time). */
+#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+#define AT_ROLE_TAG  "dongle"
+#else
+#define AT_ROLE_TAG  "kbd"
+#endif
+
+static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 [%s] BLE: %s", AT_ROLE_TAG, VER_LIB); return 0; }
 static int at_cmd_HELP(int argc, char *argv[])  {
     (void)argc; (void)argv;
     AT_Response("AT-Node Commands:\r\n"
