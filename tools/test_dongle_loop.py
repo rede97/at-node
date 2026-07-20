@@ -70,6 +70,12 @@ def main():
     # kbd: BLE only, so injected keys don't also type on this PC over USB
     print(cmd(kbd, b"AT+KB=BLE"))
 
+    # clean slate: drop any stale link from a previous run — a connected
+    # peripheral stops advertising and is invisible to the next scan
+    cmd(dgl, b"AT+BT_DISC")
+    cmd(kbd, b"AT+BT_DISC")
+    time.sleep(1.5)
+
     # dongle: scan for the kbd board advertising as "AT-Node"
     cmd(dgl, b"AT+BT_SCAN=5", 0.2)
     text = listen(dgl, 8)

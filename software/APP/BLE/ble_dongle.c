@@ -31,7 +31,9 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
 /* ===== Configuration ===== */
 
-#define DGL_MAX_SCAN_RES     8       /* scan list size */
+#define DGL_MAX_SCAN_RES     16      /* scan list size — RPA devices (rotating
+                                        addresses) defeat dedupe and flood the
+                                        list, so this must be generous */
 #define DGL_NAME_LEN         20      /* captured device name (truncated) */
 #define DGL_SCAN_SECONDS     5       /* default when AT+BT_SCAN has no arg */
 #define DGL_LINK_TIMEOUT_MS  5000    /* establish-link watchdog */
@@ -211,8 +213,29 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
             return;
         }
     }
-    if (dgl_scan_count >= DGL_MAX_SCAN_RES)
+    if (dgl_scan_count >= DGL_MAX_SCAN_RES) {
+        /* List full (RPA spam defeats dedupe): evict the weakest entry if
+           the new one is stronger — keeps the nearby keyboard discoverable
+           in noisy RF environments. */
+        uint8_t weak = 0;
+        for (uint8_t i = 1; i < dgl_scan_count; i++)
+            if (dgl_scan_list[i].rssi < dgl_scan_list[weak].rssi)
+                weak = i;
+        if (info->rssi <= dgl_scan_list[weak].rssi)
+            return;
+        dgl_scan_rec_t *rec = &dgl_scan_list[weak];
+        tmos_memcpy(rec->addr, info->addr, B_ADDR_LEN);
+        rec->addr_type = info->addrType;
+        rec->rssi = info->rssi;
+        tmos_memcpy(rec->name, name, sizeof(rec->name));
+        AT_Response("+BT_SCAN:%d,%02X%02X%02X%02X%02X%02X,%d,%s%s (evict)",
+                weak,
+                rec->addr[5], rec->addr[4], rec->addr[3],
+                rec->addr[2], rec->addr[1], rec->addr[0],
+                rec->rssi, rec->name[0] ? rec->name : "?",
+                is_hid ? " [HID]" : "");
         return;
+    }
 
     dgl_scan_rec_t *rec = &dgl_scan_list[dgl_scan_count];
     tmos_memcpy(rec->addr, info->addr, B_ADDR_LEN);
@@ -297,6 +320,39 @@ static void dgl_write_handle(uint16_t handle, uint16_t value, uint8_t len)
         GATT_bm_free((gattMsg_t *)&req, ATT_WRITE_REQ);
 }
 
+/* DIAG: dump a raw Read-By-Type response — handle parsing is suspect,
+   ground truth needed for stride/offset analysis. tag identifies the
+   discovery state: B=boot P=proto R=report C=cccd. */
+static void dgl_dump_rbt_rsp(char tag, attReadByTypeRsp_t *r)
+{
+    char hex[14 * 2 + 1];
+    static const char nib[] = "0123456789ABCDEF";
+    uint16_t n = (uint16_t)r->len * r->numPairs;
+    if (n > 14) n = 14;
+    for (uint16_t i = 0; i < n; i++) {
+        hex[i * 2]     = nib[r->pDataList[i] >> 4];
+        hex[i * 2 + 1] = nib[r->pDataList[i] & 0xF];
+    }
+    hex[n * 2] = '\0';
+    AT_Response("+BT_DISC: %c plen=%d np=%d raw %s", tag, r->len, r->numPairs, hex);
+}
+
+/* Extract a value handle from item <idx> of a Read-By-Type response.
+
+   WCH's GATT_ReadUsingCharUUID requests by characteristic VALUE uuid,
+   so each response item is [valueHandle(2)][currentValue(...)] — the
+   handle is ALWAYS at offset 0. (TI docs show the DECLARATION layout —
+   handle(2)+props(1)+valueHandle(2)+uuid(2), value handle at offset 3 —
+   which only applies when requesting by declaration UUID 0x2803. The
+   offset-3 assumption produced garbage handles like 0x23A8.)
+
+   Handles are sanity-checked against the service range by callers. */
+static uint16_t dgl_rbt_vhandle(attReadByTypeRsp_t *r, uint8_t idx)
+{
+    uint8_t *p = &r->pDataList[idx * r->len];
+    return BUILD_UINT16(p[0], p[1]);
+}
+
 /* Advance the discovery state machine on each GATT response */
 static void dgl_discovery_event(gattMsgEvent_t *pMsg)
 {
@@ -338,9 +394,13 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
     case DISC_BOOT_CHAR:
         if (pMsg->method == ATT_READ_BY_TYPE_RSP &&
             pMsg->msg.readByTypeRsp.numPairs > 0) {
-            /* pair: handle(2) + properties(1) + valueHandle(2) + uuid(2) */
-            dgl_boot_hdl = BUILD_UINT16(pMsg->msg.readByTypeRsp.pDataList[3],
-                                        pMsg->msg.readByTypeRsp.pDataList[4]);
+            dgl_dump_rbt_rsp('B', &pMsg->msg.readByTypeRsp);
+            uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, 0);
+            if (h > dgl_svc_start && h <= dgl_svc_end) {
+                dgl_boot_hdl = h;
+            } else {
+                AT_Response("+BT_DISC: B bad hdl %04X", h);
+            }
         }
         if (complete) {
             if (dgl_boot_hdl) {
@@ -357,23 +417,23 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
 
     case DISC_RPT_CHAR:
         if (pMsg->method == ATT_READ_BY_TYPE_RSP) {
-            /* DIAG: dump raw response — handle parsing is suspect */
-            uint16_t pair_len = pMsg->msg.readByTypeRsp.len;
-            uint8_t *p = pMsg->msg.readByTypeRsp.pDataList;
-            AT_Response("+BT_DISC: plen=%d np=%d raw %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X",
-                        pair_len, pMsg->msg.readByTypeRsp.numPairs,
-                        p[0],p[1],p[2],p[3],p[4],p[5],p[6],p[7],p[8],p[9],p[10],p[11],p[12],p[13]);
+            dgl_dump_rbt_rsp('R', &pMsg->msg.readByTypeRsp);
             /* collect value handles across ALL response packets */
             for (uint16_t i = 0; i < pMsg->msg.readByTypeRsp.numPairs &&
                                    dgl_rpt_count < DGL_MAX_REPORTS; i++) {
-                dgl_rpt_hdls[dgl_rpt_count++] =
-                    BUILD_UINT16(pMsg->msg.readByTypeRsp.pDataList[i * pair_len + 3],
-                                 pMsg->msg.readByTypeRsp.pDataList[i * pair_len + 4]);
+                uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, i);
+                if (h > dgl_svc_start && h <= dgl_svc_end) {
+                    dgl_rpt_hdls[dgl_rpt_count++] = h;
+                } else {
+                    AT_Response("+BT_DISC: R bad hdl %04X", h);
+                }
             }
         }
         if (complete) {
             if (dgl_rpt_count) {
                 dgl_cccd_count = 0;
+                dgl_cccd_list[0] = 0;   /* clear stale pick — boot-mode
+                                           "keep smallest" compares against it */
                 dgl_find_char(GATT_CLIENT_CHAR_CFG_UUID, DISC_CCCD);
             } else {
                 dgl_discovery_failed("no HID reports");
@@ -384,29 +444,41 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
     case DISC_PROTO_CHAR:
         if (pMsg->method == ATT_READ_BY_TYPE_RSP &&
             pMsg->msg.readByTypeRsp.numPairs > 0) {
-            dgl_proto_hdl = BUILD_UINT16(pMsg->msg.readByTypeRsp.pDataList[3],
-                                         pMsg->msg.readByTypeRsp.pDataList[4]);
+            dgl_dump_rbt_rsp('P', &pMsg->msg.readByTypeRsp);
+            uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, 0);
+            if (h > dgl_svc_start && h <= dgl_svc_end) {
+                dgl_proto_hdl = h;
+            } else {
+                AT_Response("+BT_DISC: P bad hdl %04X", h);
+            }
         }
         if (complete) {
             /* Protocol Mode is optional — proceed to CCCD either way */
             dgl_cccd_count = 0;
+            dgl_cccd_list[0] = 0;   /* clear stale pick — boot-mode
+                                       "keep smallest" compares against it */
             dgl_find_char(GATT_CLIENT_CHAR_CFG_UUID, DISC_CCCD);
         }
         break;
 
     case DISC_CCCD:
         if (pMsg->method == ATT_READ_BY_TYPE_RSP) {
+            dgl_dump_rbt_rsp('C', &pMsg->msg.readByTypeRsp);
             /* collect CCCDs (all in svc range; each report char has one) */
-            uint16_t pair_len = pMsg->msg.readByTypeRsp.len;
             for (uint16_t i = 0; i < pMsg->msg.readByTypeRsp.numPairs &&
                                    dgl_cccd_count < DGL_MAX_CCCD; i++) {
-                uint16_t h = BUILD_UINT16(pMsg->msg.readByTypeRsp.pDataList[i * pair_len],
-                                          pMsg->msg.readByTypeRsp.pDataList[i * pair_len + 1]);
+                uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, i);
+                if (h <= dgl_svc_start || h > dgl_svc_end) {
+                    AT_Response("+BT_DISC: C bad hdl %04X", h);
+                    continue;
+                }
                 if (dgl_boot_hdl) {
                     /* boot mode: single CCCD, first after boot char */
                     if (h > dgl_boot_hdl && (dgl_cccd_list[0] == 0 || h < dgl_cccd_list[0])) {
                         dgl_cccd_list[0] = h;
                         dgl_cccd_count = 1;
+                    } else {
+                        AT_Response("+BT_DISC: C skip %04X (boot=%04X)", h, dgl_boot_hdl);
                     }
                 } else {
                     dgl_cccd_list[dgl_cccd_count++] = h;
@@ -414,6 +486,8 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
             }
         }
         if (complete) {
+            AT_Response("+BT_DISC: C done m=%02X cnt=%d boot=%04X proto=%04X",
+                        pMsg->method, dgl_cccd_count, dgl_boot_hdl, dgl_proto_hdl);
             if (dgl_cccd_count) {
                 dgl_cccd_wr = 0;
                 if (dgl_boot_hdl && dgl_proto_hdl) {
@@ -425,8 +499,10 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
                     dgl_write_handle(dgl_cccd_list[0], GATT_CLIENT_CFG_NOTIFY, 2);
                 }
             } else {
-                AT_Response("+BT_CONN: err no CCCD");
-                dgl_disc_state = DISC_IDLE;
+                /* Transient races (encryption not up yet, error-rsp before
+                   data) can zero the CCCD count — retry like other
+                   discovery failures instead of giving up. */
+                dgl_discovery_failed("no CCCD");
             }
         }
         break;

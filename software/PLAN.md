@@ -10,26 +10,25 @@
 
 | 项 | 状态 |
 |----|------|
-| main 分支 | 键盘固件生产态：AT 命令全通、BT_DISC/BT_PAIR、VER 角色标签、RAM 58% |
-| dongle-wip 分支 | 接收器 v1：扫描/连接/配对(Just Works+MITM)/绑定/GATT 发现/报告 fallback 全通 |
-| **卡点** | **报告句柄解析产生垃圾值**（0x23A8 等，真实范围 0x0008–0x0034）→ CCCD 写错句柄 → 键盘零通知。raw dump 打印已编码（`+BT_DISC: plen= np= raw ...`），未捕获 |
+| main 分支 | 键盘固件生产态：AT 命令全通、BT_DISC/BT_PAIR、VER 角色标签、RAM 58%；**dongle-wip 已合并（2026-07-21)**，`BLE_DONGLE` 编译期切换 |
+| dongle-wip 分支 | 已合并进 main。接收器 v1：扫描/连接/配对(Just Works+MITM)/绑定/GATT 发现/boot 订阅全通 |
+| ~~卡点~~ | **已修复（2026-07-21,Linux 双板调试）**：① Read By Type 按 value UUID 请求时响应对项 = `[值句柄(2)][当前值]`，句柄在偏移 0（原代码按 TI declaration 布局取偏移 3 → 0x23A8 垃圾）;② `dgl_cccd_list[0]` 陈旧值导致重连后 keep-smallest 过滤误判 → 重连必现 no CCCD;③ RPA 设备（midea 刷屏）撑爆 8 槽扫描列表 → 键盘被挤出 |
+| 验证 | `test_dongle_loop.py` **连续 3 次全 PASS(M1 达成）** |
 | 参考对照 | ESP32-C3 probe 已验证 AT-Node 键盘端全流程（连接→订阅→8 字节报告流） |
 
 ---
 
-## 1. 阶段一：句柄解析修复（预计 1 个工作日）
+## 1. 阶段一：句柄解析修复（✅ 已完成 2026-07-21)
 
 **假设**：`attReadByTypeRsp_t.len` 不是"每对字节数"或 `pDataList` 布局与
 TI 文档不符（WCH 实现差异），导致按 `i*len+3` 取 value handle 错位。
 
-1. 双板就位：B 板烧 main（键盘），A 板烧 dongle-wip。
-2. 跑 `tools/test_dongle_loop.py`，捕获 `+BT_DISC: plen=N np=M raw <14B>`。
-3. 对照 ATT 规范（char declaration = handle(2)+props(1)+vhandle(2)+uuid(2)=7B/对）
-   定位真实 stride/offset，修 `DISC_RPT_CHAR`/`DISC_BOOT_CHAR`/`DISC_PROTO_CHAR`
-   三处解析（共用同一 helper 函数 `dgl_parse_char_vhandle()`）。
-4. 循环测试通过：A 板收到 `+BT_NTF` 且字节与注入一致；PC 收到 USB 回打按键。
-
-**完成判据**：`test_dongle_loop.py` 全 PASS（连续 3 次）。
+**结论（实证）**：假设方向正确但更本质——`GATT_ReadUsingCharUUID` 按
+**value UUID** 请求时，WCH 响应对项 = `[值句柄(2)][当前值(...)]`，句柄恒在
+**偏移 0**;TI 文档的 declaration 布局（偏移 3）只在按 0x2803 请求时成立。
+修复：统一 helper `dgl_rbt_vhandle()` 取偏移 0 + svc 范围校验，覆盖
+B/P/R/C 四处。另修复两个连带 bug:CCCD 列表陈旧值（重连必现 no CCCD)、
+RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 
 ## 2. 阶段二：dongle 硬化（2–3 天）
 
@@ -100,7 +99,7 @@ tools/ci/loop_test.sh    # flash 两板 → test_dongle_loop.py → 输出报告
 
 | # | 内容 | 判据 |
 |---|------|------|
-| M1 | 句柄解析修复 | loop test 3 连过（§1） |
+| M1 | 句柄解析修复 | ✅ 2026-07-21 达成：loop test 3 连过（§1） |
 | M2 | dongle 硬化 | 自动重连 + DIAG 门控 + RK 回测通过（§2/§3） |
 | M3 | Linux CI 闭环 | `loop_test.sh` 一键全绿（§5） |
 | M4 | 角色切换 + 合并 main | F1.16–1.21 全量实现，dongle-wip 合并（§4） |
