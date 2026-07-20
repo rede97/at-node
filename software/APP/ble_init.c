@@ -13,6 +13,7 @@
 
 #include "config.h"
 #include "ble_hid_dev.h"
+#include "ble_dongle.h"
 #include "hidkbd.h"
 
 /*******************************************************************************
@@ -35,6 +36,12 @@
  */
 void ble_peripheral_init(void)
 {
+#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+    /* Dongle mode (BLE_DONGLE=TRUE): Central role — scan for a BLE
+       keyboard, connect as HID host, forward boot reports to USB.
+       Replaces ALL Peripheral services in this build. */
+    ble_dongle_init();
+#else
     /* GAP role — must be first: sets device name, advertising data,
        bonding parameters, connect/disconnect callbacks */
     GAPRole_PeripheralInit();
@@ -46,4 +53,5 @@ void ble_peripheral_init(void)
     /* HID keyboard emulation — registers TMOS task, starts advertising,
        configures GAP bond manager, battery level, device info services */
     ble_hid_emu_init();
+#endif
 }

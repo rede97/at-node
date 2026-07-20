@@ -67,11 +67,27 @@
 #endif
 
 /*********************************************************************
+ * USB_ENABLE — USB composite device (CDC ACM + HID keyboard).
+ *
+ *   TRUE:  USB enabled. AT commands over CDC, keyboard over USB HID.
+ *   FALSE: USB disabled at compile time. Required for HWS_SLEEP
+ *          (sleep gates the PLL, USB PHY loses its 48 MHz clock).
+ *
+ *   Default: TRUE.
+ *   Constraint: USB_ENABLE and HWS_SLEEP are mutually exclusive
+ *   (enforced by #error at the end of this file).
+ *   BLE_DONGLE=TRUE requires USB_ENABLE=TRUE (reports forward to USB).
+ */
+#ifndef USB_ENABLE
+#define USB_ENABLE  TRUE
+#endif
+
+/*********************************************************************
  * HWS_SLEEP — BLE-controlled low-power sleep mode.
  *
  *   TRUE:  Device enters RTC-timed sleep between BLE connection events.
  *          Wakes on RTC trigger, services BLE, goes back to sleep.
- *          USB is COMPLETELY DISABLED — sleep stops USB clock, Windows
+ *          Requires USB_ENABLE=FALSE — sleep stops USB clock, Windows
  *          loses enumeration (code 43 on device manager).
  *   FALSE: Device runs continuously. USB available. Higher power draw.
  *
@@ -79,10 +95,11 @@
  *   USB PHY needs a running 48 MHz clock derived from PLL, but sleep
  *   gates PLL to save power. Waking for each SOF (every 1 ms on USB FS)
  *   would be slower than just staying awake — sleep is not useful with
- *   USB active. Consequently: HWS_SLEEP=TRUE disables USB at compile time.
+ *   USB active. The conflict is caught at compile time (#error below),
+ *   NOT silently resolved — pick your feature set explicitly.
  *
  *   Default: FALSE (development with USB debug/AT commands).
- *   Set TRUE for battery-powered BLE-only deployment.
+ *   Set TRUE (with USB_ENABLE=FALSE) for battery BLE-only deployment.
  */
 #ifndef HWS_SLEEP
 #define HWS_SLEEP  FALSE
@@ -511,6 +528,30 @@
  * 9. GLOBALS — declared here, defined in main.c
  * ====================================================================
  */
+
+/* ====================================================================
+ * CONFIGURATION VALIDATION — feature conflicts caught at compile time.
+ *
+ *   Features are declared first-class (USB_ENABLE, BLE_DONGLE,
+ *   HWS_SLEEP); invalid combinations are hard errors, not silent
+ *   side effects.
+ * ====================================================================
+ */
+
+/* USB and sleep are mutually exclusive: sleep gates the PLL, the USB
+   PHY loses its 48 MHz clock and the host drops enumeration. */
+#if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE) && \
+    (defined(USB_ENABLE)) && (USB_ENABLE == TRUE)
+#error "config conflict: HWS_SLEEP requires USB_ENABLE=FALSE (USB clock stops in sleep)"
+#endif
+
+/* Dongle (BLE HID receiver) forwards reports over USB HID — USB is
+   not optional in that mode. */
+#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE) && \
+    (!defined(USB_ENABLE) || (USB_ENABLE != TRUE))
+#error "config conflict: BLE_DONGLE requires USB_ENABLE=TRUE (reports forward over USB HID)"
+#endif
+
 
 /* BLE protocol stack heap. Allocated in main.c at file scope.
    Must be 4-byte aligned and sized to match BLE_MEMHEAP_SIZE.

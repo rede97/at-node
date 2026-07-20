@@ -9,6 +9,7 @@
 #include "hidkbd_common.h"
 #include "usb_dev.h"
 #include "at_parser.h"
+#include "ble_dongle.h"
 #include <stdlib.h>
 
 /* ===== Keyboard router ===== */
@@ -133,9 +134,12 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  [Power]\r\n"
         "  AT+SLEEP    - sleep <mode> [stub]\r\n"
         "  [Wireless]\r\n"
-        "  AT+BT_SCAN  - BLE scan [dongle]\r\n"
-        "  AT+BT_DISC  - drop host link, re-advertise\r\n"
-        "  AT+BT_PAIR  - drop link + erase bonds\r\n"
+        "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
+        "  AT+BT_CONN  - connect <idx> (dongle)\r\n"
+        "  AT+BT_DISC  - drop BLE link, re-advertise\r\n"
+        "  AT+BT_PAIR  - drop link + erase bonds (kbd)\r\n"
+        "  AT+BT_STATE - diag dongle state (dongle)\r\n"
+        "  AT+BT_PASSKEY - SMP passkey <6digits> (dongle)\r\n"
         "  [Infrared]\r\n"
         "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
         "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
@@ -305,8 +309,47 @@ static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; retu
 static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
 
 /* Wireless */
+#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+/* ---- dongle role: Central, connects TO a BLE keyboard ---- */
+extern uint8_t ble_dongle_state_debug(void);   /* DIAG: current dgl_state */
+/* AT+BT_SCAN[=<sec>] — scan for HID-advertising devices.
+   Results arrive asynchronously as +BT_SCAN lines over this channel. */
+static int at_cmd_BT_SCAN(int argc, char *argv[]) {
+    int sec = (argc > 1) ? atoi(argv[1]) : 5;
+    if (sec < 1)  sec = 1;
+    if (sec > 30) sec = 30;
+    if (ble_dongle_scan((uint8_t)sec) < 0) {
+        AT_Response("ERROR: busy state=%d", ble_dongle_state_debug());
+        return -1;
+    }
+    AT_Response("scanning %ds...", sec);
+    return 0;
+}
+/* AT+BT_CONN=<idx> — connect scan result <idx>. Outcome is async:
+   +BT_CONN: connected / armed (boot mode) / err ... */
+static int at_cmd_BT_CONN(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+BT_CONN=<idx>"); return -1; }
+    if (ble_dongle_connect((uint8_t)atoi(argv[1])) < 0) {
+        AT_Response("ERROR: bad index or busy — run AT+BT_SCAN first");
+        return -1;
+    }
+    AT_Response("connecting...");
+    return 0;
+}
+/* AT+BT_DISC (dongle) — drop the link to the keyboard. */
+static int at_cmd_BT_DISC(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    if (ble_dongle_disconnect() < 0) {
+        AT_Response("ERROR: not connected");
+        return -1;
+    }
+    return 0;
+}
+#else
+/* ---- kbd role: Peripheral, IS the keyboard ---- */
 static int at_cmd_BT_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1; }
-/* AT+BT_DISC — actively drop the host link. Bond is kept and
+static int at_cmd_BT_CONN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1; }
+/* AT+BT_DISC (kbd) — actively drop the host link. Bond is kept and
    advertising restarts automatically, like a real keyboard's
    host-switch key: the same or a new host can reconnect. */
 static int at_cmd_BT_DISC(int argc, char *argv[]) {
@@ -317,6 +360,29 @@ static int at_cmd_BT_DISC(int argc, char *argv[]) {
     }
     return 0;
 }
+#endif
+#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+/* AT+BT_PASSKEY=<6digits> — answer live SMP request, or preset the
+   passkey used for the NEXT pairing attempt (default 123456) */
+static int at_cmd_BT_PASSKEY(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+BT_PASSKEY=<6digits>"); return -1; }
+    ble_dongle_passkey((uint32_t)atol(argv[1]));
+    AT_Response("passkey set");
+    return 0;
+}
+/* DIAG: AT+BT_STATE — dongle state, StartDevice status, task id */
+extern uint8_t ble_dongle_start_status_debug(void);
+static int at_cmd_BT_STATE(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    AT_Response("state=%d startDev=%d (0=ok,24=badTask,0xFF=never)",
+                ble_dongle_state_debug(), ble_dongle_start_status_debug());
+    return 0;
+}
+/* BT_PAIR manages host bonds — kbd-role command, N/A on dongle */
+static int at_cmd_BT_PAIR(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: kbd-mode command"); return -1; }
+#else
+static int at_cmd_BT_STATE(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
+static int at_cmd_BT_PASSKEY(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
 /* AT+BT_PAIR — drop the link AND erase all bonds: back to a clean
    pairing mode, like long-pressing a real keyboard's pairing key. */
 static int at_cmd_BT_PAIR(int argc, char *argv[]) {
@@ -326,6 +392,7 @@ static int at_cmd_BT_PAIR(int argc, char *argv[]) {
     AT_Response("bonds erased — pairing mode");
     return 0;
 }
+#endif
 
 /* Infrared */
 static int at_cmd_IR_NEC(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
@@ -369,9 +436,12 @@ const at_cmd_t cmd_table[] = {
     /* Power */
     { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
     /* Wireless */
-    { "AT+BT_SCAN", "[dongle] BLE scan",             at_cmd_BT_SCAN },
-    { "AT+BT_DISC", "drop host link, re-advertise",  at_cmd_BT_DISC },
-    { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
+    { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
+    { "AT+BT_CONN", "connect <idx> (dongle)",        at_cmd_BT_CONN },
+    { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
+    { "AT+BT_PAIR", "drop link + erase bonds (kbd)", at_cmd_BT_PAIR },
+    { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
+    { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
     /* Infrared */
     { "AT+IR",      "[stub] IR=NEC|SIRC|RAW,...",    at_cmd_IR_NEC },  /* sub-cmd parsed as arg1 */
 };

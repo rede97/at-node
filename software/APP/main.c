@@ -20,9 +20,10 @@
  *   which requires TMOS to be running. Stages can't be reordered
  *   without breaking dependencies (documented in each init function).
  *
- *   USB vs Sleep: mutually exclusive on CH582F. HWS_SLEEP=TRUE
- *   disables USB at compile time (USB clock stops in sleep).
- *   Controlled by config.h HWS_SLEEP macro.
+ *   USB vs Sleep: mutually exclusive on CH582F. Features are
+ *   first-class config (USB_ENABLE, HWS_SLEEP, BLE_DONGLE);
+ *   conflicting combinations are #error'd at compile time
+ *   (see config.h CONFIGURATION VALIDATION).
  ********************************************************************************/
 
 #include "config.h"
@@ -122,23 +123,16 @@ static void key_press(uint8_t key)
  *               hws_init()          — sleep config must be ready if HWS_SLEEP=TRUE.
  *
  *   Branch:
- *     HWS_SLEEP=TRUE:  USB disabled. Device enters low-power sleep
- *                       under BLE stack control (sleepCB callback).
- *                       USB clock stops in sleep → enumeration lost.
- *     HWS_SLEEP=FALSE: USB CDC ACM (EP1 BULK) + HID Keyboard (EP2 INT)
+ *     USB_ENABLE=TRUE:  USB CDC ACM (EP1 BULK) + HID Keyboard (EP2 INT)
  *                       composite device enabled. PFIC USB interrupt
  *                       handles setup/IN/OUT transfers.
- *
- *   Side effects when USB enabled:
- *     - Pulls D+ high via internal 1.5k pull-up (signals host).
- *     - Responds to USB reset/setup/IN/OUT via USB_IRQn handler.
- *     - CDC receives AT commands; HID sends keyboard reports to host.
- */
+ *     USB_ENABLE=FALSE: USB off (e.g. HWS_SLEEP build). Device enters
+ *                       low-power sleep under BLE stack control
+ *                       (sleepCB callback). Conflicts are caught by
+ *                       #error in config.h — never silently wrong. */
 static void usb_init(void)
 {
-#if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE)
-    PRINT("HWS_SLEEP enabled - USB disabled\n");
-#else
+#if(defined(USB_ENABLE)) && (USB_ENABLE == TRUE)
     /* USB device setup: configures endpoints EP0–EP3, sets D+ pull-up,
        starts enumeration. Must be called once. */
     USB_Device_Setup();
