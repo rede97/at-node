@@ -1,10 +1,10 @@
 version = 1
 revision = 3
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [[package]]
-name = "at-node-tools"
-version = "0.1.0"
+name = "at-node"
+version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pyserial" },

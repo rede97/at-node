@@ -43,6 +43,9 @@ hardware/*.PcbDocPreview
 hardware/*.bak
 hardware/*.BackupOf.*
 
+# === Python (uv) ===
+.venv/
+
 # === OS ===
 *.swp
 *.swo
