@@ -30,9 +30,34 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 uv run python tools/test_at.py
 
 # Send HID keys (general-purpose, parameterized keycodes)
-uv run python tools/send_key.py --mode BLE --key 0x39   # CapsLock via BLE
-uv run python tools/send_key.py --mode USB --mod 0x02 --key 0x04  # Shift+A via USB
+uv run python tools/send_key.py 0x39 --mode BLE          # CapsLock via BLE
+uv run python tools/send_key.py 0x04 --mode USB --seq "Hi"  # 'a' / text via KEY_SEQ
+
+# Two-board dongle loop test (kbd board + dongle board, roles auto-detected
+# via AT+VER tag [kbd]/[dongle])
+uv run python tools/test_dongle_loop.py
+
+# ESP32-C3 reference host probe (arduino-cli at C:\tools\arduino-cli,
+# core esp32:esp32 3.3.10; CDCOnBoot=cdc REQUIRED for serial over native USB)
+C:/tools/arduino-cli/arduino-cli.exe compile --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc tools/esp32c3_probe
+C:/tools/arduino-cli/arduino-cli.exe upload -p COM3 --fqbn esp32:esp32:esp32c3:CDCOnBoot=cdc tools/esp32c3_probe
+
+# ESP32 core/tool downloads: GitHub is unusably slow from this network.
+# Stage zips from Espressif's official CDN instead:
+#   https://dl.espressif.com/github_assets/<org>/<repo>/releases/download/<tag>/<file>
+#   → %LOCALAPPDATA%/Arduino15/staging/packages/  (arduino-cli reuses staged files)
 ```
+
+## Firmware variants & branches
+
+| Branch | Role | Notes |
+|--------|------|-------|
+| `main` | Keyboard firmware (Peripheral) | Production. `BLE_DONGLE=FALSE` (macro exists, receiver code not present) |
+| `dongle-wip` | BLE HID receiver (Central) | WIP: scan/connect/pair/bond/GATT discovery work; report-handle parsing bug blocks keystream (raw dump coded, not yet captured). Also carries `USB_ENABLE` macro + `#error` config validation (not on main) |
+
+- **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` — distinguishes identical boards.
+- **RAM budget**: 18996/32768 B (58%) after trims (BLE heap 5KB, CENTRAL=0, AT buffers shrunk). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
+- **Two-board dev rig**: board B = main (test keyboard, inject keys via AT+KEY), board A = dongle-wip (receiver). `test_dongle_loop.py` drives both from one script.
 
 ## Architecture
 
@@ -79,11 +104,12 @@ Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
 ### AT command system
 
 - **Parser**: TMOS task polling at 10ms (`AT_EVENT`) — registered in `AT_Init()`
-- **Channels**: UART1 (ring buffer, 512B) + CDC (`USB_CDC_Read()`) — both feed same line parser
+- **Channels**: UART1 (ring buffer, 256B) + CDC (`USB_CDC_Read()`, 256B ring) — both feed same line parser
 - **Response**: routed back to originating channel; CDC responses echo input line first
 - **Format**: `AT+CMD=arg1,arg2\n` → `\r\nOK\r\n` or `\r\nERROR\r\n` (parser uses `\n` line terminator; `\r\n` also accepted)
 - **Implemented commands**: `AT`, `AT+VER`, `AT+HELP`, `AT+KB`, `AT+KEY` (raw HID report: `<mods>,<k1>,..,<k6>`), `AT+KEY_SEQ` (batch HID playback, TMOS timer paced), `AT+MOD`, `AT+ECHO`, `AT+BT_DISC` (drop host link, re-advertise), `AT+BT_PAIR` (drop link + erase bonds)
 - **Max line**: 256 chars (`AT_LINE_MAX`); will need 1024 for RAW IR
+- **Max args**: 66 (`AT_ARGV_MAX` in at_parser.c) — sized for KEY_SEQ (delay + 9 reports x 7 values)
 
 ### USB endpoint allocation
 
@@ -118,10 +144,15 @@ USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
 | AT task | `at_init()` → `AT_Init()` | `APP/at_parser.c` |
 | HID Dev task | `ble_hid_dev_init()` | `APP/BLE/ble_hid_dev.c` |
 | HID Emu task | `ble_hid_emu_init()` | `APP/hidkbd_ble.c` |
+| Dongle task | `ble_dongle_init()` (dongle-wip branch only) | `APP/BLE/ble_dongle.c` |
+
+HWS periodic tasks (KEY poll, BLE calibration) are table-driven via
+`hws_tasks[]` in hws_core.c — adding one is a one-line table entry;
+LED self-schedules blink timing outside the table.
 
 ## Critical constraints
 
-- **USB + sleep mutually exclusive**: `HWS_SLEEP=TRUE` → USB disabled at compile time (`#if` in main.c). USB clock stops in sleep → enumeration lost (code 43).
+- **USB + sleep mutually exclusive**: `HWS_SLEEP=TRUE` requires USB off (`#if` in main.c gates on `USB_ENABLE` on dongle-wip; main gates on HWS_SLEEP). USB clock stops in sleep → enumeration lost (code 43).
 - **`usb_dev.c` is WCH EVT copy**: `USB_DevTransProcess` is based on official `HID_CompliantDev/src/Main.c`. Don't rewrite it.
 - **Key scanning in `main()`**, not BLE callback — works on USB without BLE paired.
 - **GPIO_Pin_All init does NOT interfere with USB D+/D-** (PB10/11) on CH582F — confirmed.
