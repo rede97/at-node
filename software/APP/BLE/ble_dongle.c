@@ -177,11 +177,18 @@ static void dgl_reset_link_state(void)
     dgl_passkey_conn = 0xFFFF;
 }
 
-/* Auto-reconnect: establish a link to ANY bonded keyboard via the
-   white list (GAPBOND_AUTO_SYNC_WL/RL keep WL + resolving list synced
-   with SNV bonds, covering RPA keyboards). High duty cycle catches
-   the short directed-advertising window (~1.28 s) a keyboard emits
-   after power-up looking for its bonded host.
+/* Auto-reconnect: establish a link to the bonded keyboard's identity
+   address (bond 0 in SNV). High duty cycle catches the short directed-
+   advertising window (~1.28 s) a keyboard emits after power-up looking
+   for its bonded host.
+
+   NOTE: white-list establish (whiteList=TRUE + GAPBOND_AUTO_SYNC_WL/RL)
+   was tried first and abandoned — on this stack the WL path started
+   but never matched the advertiser (two-board test 2026-07-21: kbd
+   AT+BT_DISC -> establish ran 25 s, no connect). Direct identity-
+   address establish is the same call the manual AT+BT_CONN path uses
+   and is proven. RPA keyboards may need the WL/RL path revisited
+   (PLAN phase 3, RK test).
    MUST run in the dongle task context (GAP procedure — see the
    DGL_SCAN_EVT comment). Callers defer via DGL_AUTO_EVT. */
 static void dgl_auto_kick(void)
@@ -190,8 +197,18 @@ static void dgl_auto_kick(void)
     GAPBondMgr_GetParameter(GAPBOND_BOND_COUNT, &bonds);
     if (!dgl_auto || dgl_auto_hold || bonds == 0 || dgl_state != DGL_IDLE)
         return;
+
+    gapBondRec_t rec;
+    if (tmos_snv_read(calcNvID(0, GAP_BOND_REC_ID_OFFSET),
+                      sizeof(rec), &rec) != SUCCESS) {
+        DGL_DBG("+BT_AUTO: snv read err, retry");
+        tmos_start_task(dgl_task_id, DGL_AUTO_EVT, MS1_TO_SYSTEM_TIME(DGL_AUTO_RETRY_MS));
+        return;
+    }
     bStatus_t st = GAPRole_CentralEstablishLink(TRUE /*highDutyCycle*/,
-                                                TRUE /*whiteList*/, 0, NULL);
+                                                FALSE /*direct*/,
+                                                rec.publicAddrType,
+                                                rec.publicAddr);
     if (st == SUCCESS) {
         dgl_state = DGL_AUTOCONN;
         AT_Response("+BT_AUTO: reconnecting (%d bonded)", bonds);
@@ -951,17 +968,11 @@ void ble_dongle_init(void)
         uint8_t  mitm = TRUE;
         uint8_t  ioCap = GAPBOND_IO_CAP_KEYBOARD_ONLY;
         uint8_t  bonding = TRUE;
-        uint8_t  syncWL = TRUE;   /* white list tracks SNV bonds — the
-                                     auto-reconnect establish filter */
-        uint8_t  syncRL = TRUE;   /* resolving list tracks bond IRKs —
-                                     RPA keyboards stay recognizable */
         GAPBondMgr_SetParameter(GAPBOND_CENT_DEFAULT_PASSCODE, sizeof(uint32_t), &passkey);
         GAPBondMgr_SetParameter(GAPBOND_CENT_PAIRING_MODE, sizeof(uint8_t), &pairMode);
         GAPBondMgr_SetParameter(GAPBOND_CENT_MITM_PROTECTION, sizeof(uint8_t), &mitm);
         GAPBondMgr_SetParameter(GAPBOND_CENT_IO_CAPABILITIES, sizeof(uint8_t), &ioCap);
         GAPBondMgr_SetParameter(GAPBOND_CENT_BONDING_ENABLED, sizeof(uint8_t), &bonding);
-        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_WL, sizeof(uint8_t), &syncWL);
-        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_RL, sizeof(uint8_t), &syncRL);
     }
 
     GATT_InitClient();

@@ -171,6 +171,7 @@ print(s.read(s.in_waiting or 1).decode())
 ```bash
 uv run python tools/test_at.py            # AT 回归(自动找第一块 at-node 板)
 uv run python tools/test_dongle_loop.py   # 双板闭环(AT+VER 自动识别 kbd/dongle 角色)
+uv run python tools/test_dongle_hardening.py  # 阶段二:回连/BT_LIST/hold(需已绑定)
 uv run python tools/send_key.py 0x04 --mode BLE
 ```
 

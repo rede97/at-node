@@ -32,20 +32,21 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 
 ## 2. 阶段二：dongle 硬化（2–3 天） 🚧 进行中（2026-07-21 起）
 
-- **自动重连** 🚧 已实现待实测：开机/断链后自动回连（`DGL_AUTOCONN` 态 +
-  `GAPBOND_AUTO_SYNC_WL/RL` 白名单同步 + `EstablishLink(highDutyCycle=TRUE,
-  whiteList=TRUE)` 高占空比直连，覆盖定向广播 ~1.28s 窗口与 RPA)。
-  `AT+BT_AUTO[=0|1]` 开关（默认 1),`AT+BT_DISC` 单次抑制（hold)。
+- **自动重连** ✅ 双板实测（2026-07-21)：开机/断链后自动回连，按键转发恢复
+  （`test_dongle_hardening.py` 全 PASS)。**实现改为直连绑定地址**（从 SNV bond 0
+  读 identity 地址 + addrType,`EstablishLink(highDutyCycle=TRUE, whiteList=FALSE)`)——
+  白名单路径（`AUTO_SYNC_WL/RL`）实测不可靠：establish 启动但 25s 无匹配。
+  RPA 键盘（RK）可能需重回 WL/RL 路径 → 阶段三验证。
+  `AT+BT_AUTO[=0|1]` 开关（默认 1),`AT+BT_DISC` 单次抑制（hold)✅ 实测。
 - **清理 DIAG** ✅（门控）:`+BT_ADV`/`+BT_GATT`/`+BT_DISC` raw/`+BT_RD`/`+BT_NTF`
   全部由 `BLE_DONGLE_DEBUG` 宏门控（默认 TRUE，量产翻 FALSE)。
 - **解析固化**：boot 或任一 report 句柄 + len≥8 过滤已在代码；按 Report Map
   识别键盘输入报告 → 移至阶段三（需 RK 真机数据）。
 - **断链清理** ✅:`dgl_reset_link_state()` 在 LINK_ESTABLISHED(成功/失败)/
   LINK_TERMINATED 三处调用，句柄表/CCCD 队列/passkey 挂起全复位。
-- **AT+BT_LIST** 🚧 已实现待实测：SNV 查询（`GAPBOND_BOND_COUNT` +
-  `tmos_snv_read(calcNvID(i,...))`)。
-- **待验证（下次 loop test)**：自动回连连环（断→回连→按键转发）、BT_LIST
-  地址与绑定设备一致、AUTO_SYNC_WL/RL 在 WCH 库的实际行为。
+- **AT+BT_LIST** ✅ 双板实测：SNV 查询正确（地址 = 扫描到的 kbd 板地址）。
+- **已验证（2026-07-21 双板）**：自动回连连环（断→回连→转发）✅、BT_LIST 地址 ✅、
+  hold/恢复 ✅、开机自动回连 ✅。测试固化：`tools/test_dongle_hardening.py`。
 
 ## 3. 阶段三：RK 真机验证（1 天）
 
