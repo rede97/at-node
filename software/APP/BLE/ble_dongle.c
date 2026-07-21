@@ -1034,6 +1034,14 @@ int ble_dongle_auto(int mode)
     return dgl_auto;
 }
 
+void ble_dongle_forget_bonds(void)
+{
+    /* Single-keyboard model: replacing the keyboard = erase the old
+       bond, then scan+conn the new one. Call ble_dongle_disconnect()
+       first so auto-reconnect can't re-grab the keyboard being erased. */
+    GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
+}
+
 uint8_t ble_dongle_connected(void)
 {
     return (dgl_conn_handle != GAP_CONNHANDLE_INIT) ? 1 : 0;

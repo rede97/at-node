@@ -134,7 +134,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
         "  AT+BT_CONN  - connect <idx> (dongle)\r\n"
         "  AT+BT_DISC  - drop BLE link, re-advertise\r\n"
-        "  AT+BT_PAIR  - drop link + erase bonds (kbd)\r\n"
+        "  AT+BT_PAIR  - drop link + erase bonds\r\n"
         "  AT+BT_STATE - diag dongle state (dongle)\r\n"
         "  AT+BT_PASSKEY - SMP passkey <6digits> (dongle)\r\n"
         "  AT+BT_LIST  - bonded devices (dongle)\r\n"
@@ -382,6 +382,17 @@ static int bt_state_dgl(int argc, char *argv[]) {
                 ble_dongle_state_debug(), ble_dongle_start_status_debug());
     return 0;
 }
+/* AT+BT_PAIR (dongle) — drop the link AND erase the bonded keyboard.
+   The dongle auto-reconnects to its single bond, so replacing the
+   keyboard requires erasing the old bond first, then scan+conn the
+   new one. */
+static int bt_pair_dgl(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    ble_dongle_disconnect();      /* fine if idle; holds auto-reconnect */
+    ble_dongle_forget_bonds();
+    AT_Response("bonds erased — scan+conn to pair a new keyboard");
+    return 0;
+}
 #endif /* BLE_HAS_DONGLE */
 
 #if BLE_HAS_KBD
@@ -484,12 +495,13 @@ static int at_cmd_BT_STATE(int argc, char *argv[]) {
 #endif
 }
 static int at_cmd_BT_PAIR(int argc, char *argv[]) {
-#if BLE_HAS_KBD
-    ROLE_GUARD_KBD;
-    return bt_pair_kbd(argc, argv);
+#if BLE_MODE == BLE_MODE_DUAL
+    return (role_current() == ROLE_DONGLE) ? bt_pair_dgl(argc, argv)
+                                           : bt_pair_kbd(argc, argv);
+#elif BLE_HAS_DONGLE
+    return bt_pair_dgl(argc, argv);
 #else
-    (void)argc; (void)argv;
-    AT_Response("ERROR: kbd-mode command"); return -1;
+    return bt_pair_kbd(argc, argv);
 #endif
 }
 
@@ -577,7 +589,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
     { "AT+BT_CONN", "connect <idx> (dongle)",        at_cmd_BT_CONN },
     { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
-    { "AT+BT_PAIR", "drop link + erase bonds (kbd)", at_cmd_BT_PAIR },
+    { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },

@@ -75,6 +75,13 @@ int     ble_dongle_disconnect(void);
 int     ble_dongle_auto(int mode);
 
 /*********************************************************************
+ * ble_dongle_forget_bonds — erase the bonded keyboard from SNV
+ *   (single-keyboard model: replacing the keyboard = erase old bond,
+ *   then scan+conn the new one). Call ble_dongle_disconnect() first.
+ */
+void    ble_dongle_forget_bonds(void);
+
+/*********************************************************************
  * ble_dongle_connected — 1 when a keyboard link is up, else 0.
  */
 uint8_t ble_dongle_connected(void);
