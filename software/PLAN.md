@@ -57,6 +57,51 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 - MITM/Just Works 两种配对路径
 - 长时间连接稳定性（LSI 时钟，评估是否需要 `-DCLK_OSC32K=0` 外晶振）
 
+### 3.0 RK-S75RGB 问题复盘与收获（2026-07-22，ESP32-C3 对照实验）
+
+**现象链**：配对绑定全过 → 订阅"成功" → 键盘零通知 → 早期版本数秒后被
+0x13 踢下；修复版/C3 则保住连接、键盘屏显已配对、电池通知照推，唯独
+无键盘输入报告。
+
+**根因链（三层）**：
+
+1. **解析 bug（已修，M1）**：`readByTypeRsp` 取错偏移 → 垃圾句柄 → CCCD
+   写到无效地址 → 键盘判"非正经 HID 主机"踢人。**被踢 vs 保连接的分水岭
+   是 CCCD 写对，不是读不读 Report Map。**
+2. **订错特征**：RK 的 boot 特征（0x2A22）疑似空壳（订阅无数据）；
+   C3/Bluedroid 按 UUID 字符串去重 map，只能订到**任意一个** 0x2A4D 实例
+   （未必是键盘输入）→ 双路径全空。AT-Node dongle 按句柄订阅全部 CCCD，
+   不受此限。
+3. **Report ID 盲区**：RK Report Map（331B，已 dump 解析）显示——
+   `ID1`=NKRO 位图键盘（8 修饰位 + 104 键位图，16B）、`ID2`=标准 8 字节
+   boot 布局、`ID3`=厂商、`ID4`=消费控制 16bit、`ID5`=系统控制。
+   通知格式 `[ID][数据]`，原转发逻辑把 r[0] 当修饰键 → 撞上 ID 字节
+   （0x02=左 Shift），键值全错位。
+
+**收获（沉淀为规则）**：
+
+- Windows 能用的原因 = 全量 HOGP：读 Report Map → 按图订阅 → 按 ID 分派，
+  NKRO 位图由 HID 类驱动原生解析。**地图驱动，绝不猜布局。**
+- 简单键盘（我们的 AT-Node 键盘板）Just Works + boot 特征 + 单报告无 ID，
+  所以"蒙"也能通；复杂键盘（RK 类多功能）必须走规范路径。
+- Bluedroid Arduino 封装（`getCharacteristics` 按 UUID 去重）无法枚举
+  同 UUID 多实例 — C3 probe 定位为侦察工具（GATT dump / Report Map），
+  不做按键验证主机。
+- RK 绑定后广播变脸（名字/HID UUID 消失，甚至定向）— 测试循环必须先
+  清绑定再进配对模式；C3 端"永久扫描"消除 5 秒窗口竞态。
+
+**规范化实施方案（新增阶段三.5，取代"盲转"；⏸ 暂缓实施，记录备查）**：
+
+```
+发现：读 Report Map 0x2A4B → 迷你解析器 → 报告表
+       {report_id, 布局=boot8/NKRO/16bit/其他, 句柄↔ID 经 0x2908 绑定}
+订阅：句柄级全 input report CCCD（已有）
+分发：[ID2] 直接转 USB · [ID1] NKRO 位图→6 键报告 · [ID4/5] 暂丢弃
+```
+
+新文件 `APP/BLE/ble_hid_map.c/h`（迷你 HID 描述符解析器，~150 行，
+与 ble_dongle.c 解耦）。验证：双板回归（无 ID 前缀兼容）+ RK 实机。
+
 ## 4. 阶段四：角色切换（需求 F1.16–1.21) 🚧 已编码（2026-07-21)，待双板实测
 
 - ✅ `BLE_MODE` 三态宏（KBD/DONGLE/DUAL）接入 config.h，派生
