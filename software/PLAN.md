@@ -172,7 +172,7 @@ dongle 走 wlink——dongle 板 ISP 握手实测不稳（kbd 板每次都成，
 | M2 | dongle 硬化 | 自动重连 + DIAG 门控 + RK 回测通过（§2/§3） |
 | M3 | Linux CI 闭环 | ✅ 2026-07-21 `loop_test.sh` 一键全绿（混合模式：kbd 走 ISP,dongle 走 wlink） |
 | M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4),dongle-wip 早已合并 |
-| M5 | 外设驱动落地 | GPIO/ADC/I²C/IR 在 HWS 实现，宏可配，AT 命令实测（§7） |
+| M5 | 外设驱动落地 | 🚧 GPIO/ADC/I2C/IR 已在 HWS 实现（宏可配），冒烟已验，待完整硬件实测（§7） |
 
 ## 7. 阶段五：外设驱动（需求 F6/F7/F8/F11,2026-07-22 启动）
 
@@ -188,5 +188,8 @@ AT 命令处理只做参数解析，调用 `hws_*` API。
 | I²C | `HWS_I2C` | `AT+I2C_SCAN` / `AT+I2C_R` / `AT+I2C_W` | 主机模式 100k/400k，扫 0x00–0x7F |
 | IR | `HWS_IR` | `AT+IR=NEC\|SIRC\|RAW,...` | PWM4 38kHz 载波 + TMR1 门控状态机（需求 §3.10)，busy 时阻止 BLE 休眠 |
 
-验证策略：GPIO 回环（输出→输入互读）、ADC 浮空/定压读数、I²C 挂 EEPROM
-或传感器实测、IR 用示波器/空调实测；每完成一项跑 AT 回归确认无破坏。
+实现状态（2026-07-22）：四子系统均已落地（`hws_gpio/adc/i2c/ir.c`），三变体构建
+通过（dual FLASH 44.68% / RAM 64.59%），冒烟验证：GPIO 写读、ADC 浮空读数、
+I²C 扫描不挂死、IR 命令受理；AT 回归 + 双板 loop/hardening 全 PASS。
+待完整实测：GPIO 回环、ADC 定压、I²C 挂 EEPROM/传感器、IR 示波器/空调验证。
+已知设计点：GPIO 读固定切上拉输入（读输出引脚会读到上拉电平，非回读驱动态）。

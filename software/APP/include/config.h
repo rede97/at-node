@@ -105,6 +105,49 @@
 #define HWS_SLEEP  FALSE
 #endif
 
+/* ====================================================================
+ * 5.1 PERIPHERAL DRIVERS — HWS layer, macro-gated (PLAN.md M5)
+ * ====================================================================
+ * Each subsystem lives in APP/HWS/hws_<sub>.c (pure register work) and
+ * is compiled only when its macro is TRUE; the AT commands degrade to
+ * "disabled" error stubs otherwise. All default TRUE on the desktop
+ * build; trim for flash-constrained or pin-conflicting deployments.
+ */
+
+/* HWS_GPIO — AT+GPIO_W / AT+GPIO_R. Linear pin model: 0-15 = PA0-15,
+   16-39 = PB0-23. Write sets push-pull out, read sets pull-up in. */
+#ifndef HWS_GPIO
+#define HWS_GPIO  TRUE
+#endif
+
+/* HWS_ADC — AT+ADC=<ch>, external single-ended channels 0-13,
+   returns mV (raw * HWS_ADC_FULLSCALE_MV / 4095, PGA 0dB). */
+#ifndef HWS_ADC
+#define HWS_ADC  TRUE
+#endif
+#ifndef HWS_ADC_FULLSCALE_MV
+#define HWS_ADC_FULLSCALE_MV  3300   /* 3.3 V reference, PGA 0dB */
+#endif
+
+/* HWS_I2C — AT+I2C_SCAN / AT+I2C_R / AT+I2C_W. Master mode, polling.
+   Default pins: SCL=PB13, SDA=PB12 (RB_PIN_I2C=0 layout). */
+#ifndef HWS_I2C
+#define HWS_I2C  TRUE
+#endif
+#ifndef HWS_I2C_SPEED_HZ
+#define HWS_I2C_SPEED_HZ  100000     /* 100 kHz standard; 400 kHz ok */
+#endif
+
+/* HWS_IR — AT+IR=NEC|SIRC|RAW. PWM4 38 kHz carrier on PA12 (bPWM4),
+   TMR1 interrupt drives the mark/space segment engine. Busy flag
+   while a frame is on air. */
+#ifndef HWS_IR
+#define HWS_IR  TRUE
+#endif
+#ifndef HWS_IR_CARRIER_HZ
+#define HWS_IR_CARRIER_HZ  37500     /* 60MHz/25/64 = 37.5 kHz */
+#endif
+
 /*********************************************************************
  * SLEEP_RTC_MIN_TIME — minimum sleep duration in RTC ticks.
  *

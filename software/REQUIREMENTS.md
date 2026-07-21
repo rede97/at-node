@@ -229,12 +229,12 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 | `AT+MOD=<mask>` | 设置修饰键（Ctrl/Alt/Shift/Win） | mask: 8 位位掩码 | P0 | ✅ |
 | `AT+ISP` | 进入 ROM ISP bootloader（擦 page0 软复位，wchisp 烧录） | 无 | P2 | ✅（配合 `tools/ci/isp_flash.py` 高频重试） |
 | `AT+ROLE[=KBD\|DONGLE]` | 查询/切换 BLE 角色（DUAL 构建：写标志 + 软复位） | 无 | P3 | ✅ 双板实测 |
-| `AT+GPIO_W=<pin>,<level>` | 设置 GPIO 输出电平 | pin: 引脚号, level: 0/1 | P1 | 🚧 stub |
-| `AT+GPIO_R=<pin>` | 读取 GPIO 输入电平 | pin: 引脚号 | P1 | 🚧 stub |
-| `AT+ADC=<ch>` | 读取指定通道 ADC 值 | ch: ADC 通道号 | P1 | 🚧 stub |
-| `AT+I2C_SCAN` | 扫描 I²C 总线上的设备 | 无 | P1 | 🚧 stub |
-| `AT+I2C_R=<addr>,<reg>,<len>` | 读取 I²C 设备寄存器 | addr: 7 位地址, reg: 寄存器, len: 字节数 | P1 | 🚧 stub |
-| `AT+I2C_W=<addr>,<reg>,<data>` | 写入 I²C 设备寄存器 | addr, reg, data: 十六进制 | P1 | 🚧 stub |
+| `AT+GPIO_W=<pin>,<level>` | 设置 GPIO 输出电平（推挽 5mA） | pin: 0-15=PA,16-39=PB; level: 0/1 | P1 | ✅ 冒烟已验（HWS_GPIO 宏可配） |
+| `AT+GPIO_R=<pin>` | 读取 GPIO 输入电平（上拉输入模式） | pin: 同左 | P1 | ✅ 冒烟已验 |
+| `AT+ADC=<ch>` | 读取外部单端 ADC 通道，返回 mV | ch: 0-13 | P1 | ✅ 冒烟已验（HWS_ADC 宏可配） |
+| `AT+I2C_SCAN` | 扫描 I²C 总线上的设备（SCL=PB13/SDA=PB12） | 无 | P1 | ✅ 冒烟已验（HWS_I2C 宏可配） |
+| `AT+I2C_R=<addr>,<reg>,<len>` | 读取 I²C 设备寄存器（hex 参数，len≤32） | addr: 7 位地址, reg: 寄存器, len: 字节数 | P1 | ✅ 冒烟已验 |
+| `AT+I2C_W=<addr>,<reg>,<data>` | 写入 I²C 设备寄存器（hex，≤16 字节） | addr, reg, data: 十六进制 | P1 | ✅ 冒烟已验 |
 | `AT+SLEEP=<mode>` | 进入指定休眠模式 | mode: 0=空闲, 1=睡眠, 2=下电 | P2 | 🚧 stub |
 | `AT+STATUS` | 查询设备状态（连接、电量、信号等） | 无 | P2 | 🚧 stub |
 | `AT+BT_SCAN[=<sec>]` | 扫描 BLE 设备（dongle） | sec: 1–30，默认 5 | P3 | ✅ |
@@ -245,7 +245,7 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 | `AT+BT_PASSKEY=<6digits>` | 应答/预设 SMP 配对码（dongle） | 默认 123456 | P3 | ✅ |
 | `AT+BT_AUTO[=0\|1]` | 自动回连绑定键盘；开机/断链即回连，AT+BT_DISC 单次抑制 | 默认 1 | P3 | ✅ |
 | `AT+BT_LIST` | 已绑定设备列表（SNV） | 无 | P3 | ✅ |
-| `AT+IR=<sub>,<args>` | 红外发射（sub=NEC\|SIRC\|RAW） | 见 §3.10 | P2 | 🚧 stub |
+| `AT+IR=<sub>,<args>` | 红外发射（sub=NEC\|SIRC\|RAW，PWM4/PA12 37.5kHz 载波，中断驱动非阻塞） | 见 §3.10 | P2 | ✅ 冒烟已验（HWS_IR 宏可配，波形待示波器/实机验证） |
 
 #### 3.3.4 帮助文档（AT+HELP 输出）
 
@@ -331,17 +331,17 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 
 | 编号 | 需求 | 优先级 |
 |------|------|--------|
-| F6.1 | 通过 AT 命令配置引脚为推挽输出 / 浮空输入 / 上拉输入 | P1 |
-| F6.2 | 通过 AT 命令读取引脚数字电平 | P1 |
-| F6.3 | 通过 AT 命令设置引脚输出高/低 | P1 |
+| F6.1 | 通过 AT 命令配置引脚为推挽输出 / 浮空输入 / 上拉输入（当前：写=推挽、读=上拉，模式参数待补） | P1 |
+| F6.2 | 通过 AT 命令读取引脚数字电平 | P1 | ✅ |
+| F6.3 | 通过 AT 命令设置引脚输出高/低 | P1 | ✅ |
 | F6.4 | 支持引脚变化中断，自动上报 | P2 |
 
 ### 3.7 ADC 采样（🚧 计划中）
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
-| F7.1 | 支持外部单通道 ADC 采样（当前已实现内部温度采样） | P1 | 🚧 |
-| F7.2 | 通过 AT 命令指定通道并返回 mV 值 | P1 | 🚧 |
+| F7.1 | 支持外部单通道 ADC 采样（当前已实现内部温度采样） | P1 | ✅ |
+| F7.2 | 通过 AT 命令指定通道并返回 mV 值 | P1 | ✅ |
 | F7.3 | 支持电池电压采样（`hws_batt` 经 `ADC_InterBATSampInit` 实现） | P2 | ✅ | ✅ |
 
 ### 3.8 I²C 传感器扫描（🚧 计划中）

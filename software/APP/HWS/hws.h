@@ -28,6 +28,10 @@ extern "C" {
 #include "hws_led.h"
 #include "hws_key.h"
 #include "hws_batt.h"
+#include "hws_gpio.h"   /* AT+GPIO_W/R (HWS_GPIO) */
+#include "hws_adc.h"    /* AT+ADC external channels (HWS_ADC) */
+#include "hws_i2c.h"    /* AT+I2C_SCAN/R/W (HWS_I2C) */
+#include "hws_ir.h"     /* AT+IR=NEC/SIRC/RAW (HWS_IR) */
 
 /* HWS task events — bitmask flags for TMOS event dispatch.
    Each subsystem uses one event bit. Bits must not overlap

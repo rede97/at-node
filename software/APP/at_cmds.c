@@ -126,14 +126,14 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+KEY_SEQ  - batch HID <delay>,<mods>,<k1>..<k6>,...");
     AT_Response(
         "  [GPIO]\r\n"
-        "  AT+GPIO_W   - write <pin>,<level> [stub]\r\n"
-        "  AT+GPIO_R   - read <pin> [stub]\r\n"
+        "  AT+GPIO_W   - write <pin>,<level> (PA0-15,PB16-39)\r\n"
+        "  AT+GPIO_R   - read <pin>\r\n"
         "  [Sensor]\r\n"
-        "  AT+ADC      - read <ch> [stub]\r\n"
-        "  AT+I2C_SCAN - scan bus [stub]");
+        "  AT+ADC      - read <ch 0-13> -> mV\r\n"
+        "  AT+I2C_SCAN - scan bus");
     AT_Response(
-        "  AT+I2C_R    - read <addr>,<reg>,<len> [stub]\r\n"
-        "  AT+I2C_W    - write <addr>,<reg>,<data> [stub]\r\n"
+        "  AT+I2C_R    - read <addr>,<reg>,<len> (hex)\r\n"
+        "  AT+I2C_W    - write <addr>,<reg>,<data> (hex)\r\n"
         "  [Power]\r\n"
         "  AT+SLEEP    - sleep <mode> [stub]");
     AT_Response(
@@ -149,9 +149,9 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+BT_AUTO  - auto-reconnect [0|1] (dongle)");
     AT_Response(
         "  [Infrared]\r\n"
-        "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
-        "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
-        "  AT+IR=RAW   - send raw <t1>,<t2>,... [stub]");
+        "  AT+IR=NEC   - send NEC <hex>\r\n"
+        "  AT+IR=SIRC  - send SIRC <hex>,<bits>\r\n"
+        "  AT+IR=RAW   - send raw <t1>,<t2>,...");
     return 0;
 }
 static int at_cmd_ECHO(int argc, char *argv[])  {
@@ -210,7 +210,7 @@ static int at_cmd_TAP(int argc, char *argv[])
     if (hold_ms < 10)   hold_ms = 10;
     if (hold_ms > 1000) hold_ms = 1000;
 
-    for (int i = 0; i < 7 * 2; i++) seq_buf[0][i] = 0;
+    for (int i = 0; i < 7; i++) { seq_buf[0][i] = 0; seq_buf[1][i] = 0; }
     for (int i = 2; i < argc && i <= 8; i++)
         seq_buf[0][i - 2] = (uint8_t)atoi(argv[i]);
     /* seq_buf[1] stays all-zero = release report */
@@ -330,14 +330,99 @@ static int at_cmd_ISP(int argc, char *argv[])     {
 
 /* Keyboard */
 /* GPIO */
-static int at_cmd_GPIO_W(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
-static int at_cmd_GPIO_R(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+#if(defined(HWS_GPIO)) && (HWS_GPIO == TRUE)
+static int at_cmd_GPIO_W(int argc, char *argv[]) {
+    if (argc < 3) { AT_Response("usage: AT+GPIO_W=<pin>,<level>"); return -1; }
+    if (hws_gpio_write((uint8_t)atoi(argv[1]), (uint8_t)atoi(argv[2])) < 0) {
+        AT_Response("ERROR: bad pin (0-15=PA, 16-39=PB)");
+        return -1;
+    }
+    return 0;
+}
+static int at_cmd_GPIO_R(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+GPIO_R=<pin>"); return -1; }
+    int v = hws_gpio_read((uint8_t)atoi(argv[1]));
+    if (v < 0) { AT_Response("ERROR: bad pin (0-15=PA, 16-39=PB)"); return -1; }
+    AT_Response("%d", v);
+    return 0;
+}
+#else
+static int at_cmd_GPIO_W(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_GPIO=FALSE)"); return -1; }
+static int at_cmd_GPIO_R(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_GPIO=FALSE)"); return -1; }
+#endif
 
 /* Sensor */
-static int at_cmd_ADC(int argc, char *argv[])     { (void)argc; (void)argv; return 0; }
-static int at_cmd_I2C_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
-static int at_cmd_I2C_R(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
-static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
+#if(defined(HWS_ADC)) && (HWS_ADC == TRUE)
+static int at_cmd_ADC(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+ADC=<ch 0-13>"); return -1; }
+    uint16_t mv = hws_adc_read_mv((uint8_t)atoi(argv[1]));
+    if (mv == 0xFFFF) { AT_Response("ERROR: bad channel (0-13)"); return -1; }
+    AT_Response("%u mV", mv);
+    return 0;
+}
+#else
+static int at_cmd_ADC(int argc, char *argv[])     { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_ADC=FALSE)"); return -1; }
+#endif
+#if(defined(HWS_I2C)) && (HWS_I2C == TRUE)
+static uint8_t i2c_inited = 0;
+static void i2c_lazy_init(void) { if (!i2c_inited) { hws_i2c_init(); i2c_inited = 1; } }
+static int at_cmd_I2C_SCAN(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    i2c_lazy_init();
+    int found = 0;
+    for (uint8_t a = 0x03; a < 0x78; a++) {
+        if (hws_i2c_probe(a) == 0) {
+            AT_Response("+I2C: 0x%02X", a);
+            found++;
+        }
+    }
+    if (!found) AT_Response("no devices");
+    return 0;
+}
+static int at_cmd_I2C_R(int argc, char *argv[]) {
+    if (argc < 4) { AT_Response("usage: AT+I2C_R=<addr>,<reg>,<len> (hex)"); return -1; }
+    uint8_t addr = (uint8_t)strtoul(argv[1], NULL, 0);
+    uint8_t reg  = (uint8_t)strtoul(argv[2], NULL, 0);
+    int     len  = atoi(argv[3]);
+    if (len < 1 || len > 32) { AT_Response("ERROR: len 1-32"); return -1; }
+    uint8_t buf[32];
+    i2c_lazy_init();
+    if (hws_i2c_read(addr, reg, buf, (uint8_t)len) < 0) {
+        AT_Response("ERROR: i2c read failed");
+        return -1;
+    }
+    char hex[32 * 3 + 1];
+    static const char nib[] = "0123456789ABCDEF";
+    for (int i = 0; i < len; i++) {
+        hex[i * 3]     = nib[buf[i] >> 4];
+        hex[i * 3 + 1] = nib[buf[i] & 0xF];
+        hex[i * 3 + 2] = (i + 1 < len) ? ' ' : '\0';
+    }
+    hex[len * 3] = '\0';
+    AT_Response("%s", hex);
+    return 0;
+}
+static int at_cmd_I2C_W(int argc, char *argv[]) {
+    if (argc < 4) { AT_Response("usage: AT+I2C_W=<addr>,<reg>,<d0>[,<d1>,...] (hex)"); return -1; }
+    uint8_t addr = (uint8_t)strtoul(argv[1], NULL, 0);
+    uint8_t reg  = (uint8_t)strtoul(argv[2], NULL, 0);
+    uint8_t data[16];
+    int     n = argc - 3;
+    if (n > 16) n = 16;
+    for (int i = 0; i < n; i++)
+        data[i] = (uint8_t)strtoul(argv[3 + i], NULL, 0);
+    i2c_lazy_init();
+    if (hws_i2c_write(addr, reg, data, (uint8_t)n) < 0) {
+        AT_Response("ERROR: i2c write failed");
+        return -1;
+    }
+    return 0;
+}
+#else
+static int at_cmd_I2C_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
+static int at_cmd_I2C_R(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
+static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
+#endif
 
 /* Power */
 static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
@@ -581,10 +666,39 @@ static int at_cmd_ROLE(int argc, char *argv[]) {
 #endif
 }
 
-/* Infrared */
-static int at_cmd_IR_NEC(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
-static int at_cmd_IR_SIRC(int argc, char *argv[]) { (void)argc; (void)argv; return 0; }
-static int at_cmd_IR_RAW(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+/* Infrared — AT+IR=<sub>,<args>... (sub parsed as argv[1]) */
+#if(defined(HWS_IR)) && (HWS_IR == TRUE)
+static uint8_t ir_inited = 0;
+static int at_cmd_IR(int argc, char *argv[]) {
+    if (argc < 3) { AT_Response("usage: AT+IR=NEC,<hex> | SIRC,<hex>,<bits> | RAW,<t1>,<t2>,..."); return -1; }
+    if (!ir_inited) { hws_ir_init(); ir_inited = 1; }
+    if (hws_ir_busy()) { AT_Response("ERROR: busy"); return -1; }
+    const char *sub = argv[1];
+    char c0 = sub[0] & ~0x20;   /* case-insensitive first letter */
+    if (c0 == 'N') {            /* NEC,<hex> */
+        if (hws_ir_nec((uint32_t)strtoul(argv[2], NULL, 0)) < 0) goto err;
+    } else if (c0 == 'S') {     /* SIRC,<hex>,<bits> */
+        if (argc < 4) { AT_Response("usage: AT+IR=SIRC,<hex>,<bits>"); return -1; }
+        if (hws_ir_sirc((uint32_t)strtoul(argv[2], NULL, 0), (uint8_t)atoi(argv[3])) < 0) goto err;
+    } else if (c0 == 'R') {     /* RAW,<t1>,<t2>,... */
+        uint16_t us[64];
+        int n = argc - 2;
+        if (n > 64) n = 64;
+        for (int i = 0; i < n; i++)
+            us[i] = (uint16_t)strtoul(argv[2 + i], NULL, 0);
+        if (hws_ir_raw(us, (uint8_t)n) < 0) goto err;
+    } else {
+        AT_Response("usage: AT+IR=NEC|SIRC|RAW,...");
+        return -1;
+    }
+    return 0;
+err:
+    AT_Response("ERROR: ir send failed");
+    return -1;
+}
+#else
+static int at_cmd_IR(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_IR=FALSE)"); return -1; }
+#endif
 
 /* ===== Command table =====
  *
@@ -615,13 +729,13 @@ const at_cmd_t cmd_table[] = {
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     /* GPIO */
-    { "AT+GPIO_W",  "[stub] write <pin>,<level>",    at_cmd_GPIO_W },
-    { "AT+GPIO_R",  "[stub] read <pin>",             at_cmd_GPIO_R },
+    { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
+    { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },
     /* Sensor */
-    { "AT+ADC",     "[stub] read ADC <ch>",          at_cmd_ADC },
-    { "AT+I2C_SCAN","[stub] scan I2C bus",           at_cmd_I2C_SCAN },
-    { "AT+I2C_R",   "[stub] I2C read <addr>,<reg>,<len>", at_cmd_I2C_R },
-    { "AT+I2C_W",   "[stub] I2C write <addr>,<reg>,<data>", at_cmd_I2C_W },
+    { "AT+ADC",     "read ADC <ch 0-13> -> mV",    at_cmd_ADC },
+    { "AT+I2C_SCAN", "scan I2C bus",                at_cmd_I2C_SCAN },
+    { "AT+I2C_R",   "I2C read <addr>,<reg>,<len> (hex)", at_cmd_I2C_R },
+    { "AT+I2C_W",   "I2C write <addr>,<reg>,<data> (hex)", at_cmd_I2C_W },
     /* Power */
     { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
     /* Wireless */
@@ -634,6 +748,6 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },
     { "AT+BT_AUTO", "auto-reconnect [0|1] (dongle)", at_cmd_BT_AUTO },
     /* Infrared */
-    { "AT+IR",      "[stub] IR=NEC|SIRC|RAW,...",    at_cmd_IR_NEC },  /* sub-cmd parsed as arg1 */
+    { "AT+IR",      "IR=NEC|SIRC|RAW,...",         at_cmd_IR },
 };
 const int cmd_table_count = sizeof(cmd_table) / sizeof(cmd_table[0]);
