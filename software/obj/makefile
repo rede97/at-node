@@ -54,11 +54,14 @@ all:
 
 # Firmware variant: default = keyboard (Peripheral) firmware.
 #   make main-build DONGLE=1   → BLE HID receiver (dongle) firmware
+#   make main-build MODE=DUAL  → both roles, AT+ROLE runtime switch
 # CFG_DEFS is referenced by every */subdir.mk compile rule.
 # NOTE: make does not track flag changes — always `make clean` when
 # switching variants (tools/ci/build_all.sh handles this for you).
 ifeq ($(DONGLE),1)
 CFG_DEFS := -DBLE_DONGLE=TRUE
+else ifeq ($(MODE),DUAL)
+CFG_DEFS := -DBLE_MODE=2
 else
 CFG_DEFS :=
 endif

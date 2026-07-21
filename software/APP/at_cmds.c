@@ -10,6 +10,7 @@
 #include "usb_dev.h"
 #include "at_parser.h"
 #include "ble_dongle.h"
+#include "role.h"
 #include <stdlib.h>
 
 /* ===== Keyboard router ===== */
@@ -99,14 +100,9 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
 /* ===== AT command handlers — implemented ===== */
 static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return 0; }
 /* Role tag for firmware identification — two identical boards are easy
-   to mix up; AT+VER tells which role is flashed (compile-time). */
-#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
-#define AT_ROLE_TAG  "dongle"
-#else
-#define AT_ROLE_TAG  "kbd"
-#endif
-
-static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 [%s] BLE: %s", AT_ROLE_TAG, VER_LIB); return 0; }
+   to mix up; AT+VER tells which role is flashed (DUAL builds report
+   the RUNTIME role from the DataFlash flag). */
+static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 [%s] BLE: %s", role_name(role_current()), VER_LIB); return 0; }
 static int at_cmd_HELP(int argc, char *argv[])  {
     (void)argc; (void)argv;
     AT_Response("AT-Node Commands:\r\n"
@@ -118,6 +114,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+STATUS - device status [stub]\r\n"
         "  AT+RST   - software reset\r\n"
         "  AT+ISP   - enter ISP bootloader (erases app!)\r\n"
+        "  AT+ROLE  - query/switch role KBD|DONGLE (DUAL build)\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
@@ -310,13 +307,19 @@ static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; retu
 /* Power */
 static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
 
-/* Wireless */
-#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+/* Wireless — role dispatch.
+   Dongle-role bodies compile when BLE_HAS_DONGLE, kbd-role bodies when
+   BLE_HAS_KBD. DUAL builds have both: commands check the RUNTIME role
+   (role_current()) and dispatch or reject with a switch hint.
+   Single-role builds fold to a constant branch. */
+
+#if BLE_HAS_DONGLE
 /* ---- dongle role: Central, connects TO a BLE keyboard ---- */
 extern uint8_t ble_dongle_state_debug(void);   /* DIAG: current dgl_state */
+extern uint8_t ble_dongle_start_status_debug(void);
 /* AT+BT_SCAN[=<sec>] — scan for HID-advertising devices.
    Results arrive asynchronously as +BT_SCAN lines over this channel. */
-static int at_cmd_BT_SCAN(int argc, char *argv[]) {
+static int bt_scan_dgl(int argc, char *argv[]) {
     int sec = (argc > 1) ? atoi(argv[1]) : 5;
     if (sec < 1)  sec = 1;
     if (sec > 30) sec = 30;
@@ -329,7 +332,7 @@ static int at_cmd_BT_SCAN(int argc, char *argv[]) {
 }
 /* AT+BT_CONN=<idx> — connect scan result <idx>. Outcome is async:
    +BT_CONN: connected / armed (boot mode) / err ... */
-static int at_cmd_BT_CONN(int argc, char *argv[]) {
+static int bt_conn_dgl(int argc, char *argv[]) {
     if (argc < 2) { AT_Response("usage: AT+BT_CONN=<idx>"); return -1; }
     if (ble_dongle_connect((uint8_t)atoi(argv[1])) < 0) {
         AT_Response("ERROR: bad index or busy — run AT+BT_SCAN first");
@@ -338,8 +341,9 @@ static int at_cmd_BT_CONN(int argc, char *argv[]) {
     AT_Response("connecting...");
     return 0;
 }
-/* AT+BT_DISC (dongle) — drop the link to the keyboard. */
-static int at_cmd_BT_DISC(int argc, char *argv[]) {
+/* AT+BT_DISC (dongle) — drop the link to the keyboard (holds auto-
+   reconnect once). */
+static int bt_disc_dgl(int argc, char *argv[]) {
     (void)argc; (void)argv;
     if (ble_dongle_disconnect() < 0) {
         AT_Response("ERROR: not connected");
@@ -347,40 +351,23 @@ static int at_cmd_BT_DISC(int argc, char *argv[]) {
     }
     return 0;
 }
-#else
-/* ---- kbd role: Peripheral, IS the keyboard ---- */
-static int at_cmd_BT_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1; }
-static int at_cmd_BT_CONN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1; }
-/* AT+BT_DISC (kbd) — actively drop the host link. Bond is kept and
-   advertising restarts automatically, like a real keyboard's
-   host-switch key: the same or a new host can reconnect. */
-static int at_cmd_BT_DISC(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    if (kb_ble_disconnect() < 0) {
-        AT_Response("ERROR: not connected");
-        return -1;
-    }
-    return 0;
-}
-#endif
-#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
 /* AT+BT_PASSKEY=<6digits> — answer live SMP request, or preset the
    passkey used for the NEXT pairing attempt (default 123456) */
-static int at_cmd_BT_PASSKEY(int argc, char *argv[]) {
+static int bt_passkey_dgl(int argc, char *argv[]) {
     if (argc < 2) { AT_Response("usage: AT+BT_PASSKEY=<6digits>"); return -1; }
     ble_dongle_passkey((uint32_t)atol(argv[1]));
     AT_Response("passkey set");
     return 0;
 }
 /* AT+BT_LIST — bonded keyboards stored in SNV */
-static int at_cmd_BT_LIST(int argc, char *argv[]) {
+static int bt_list_dgl(int argc, char *argv[]) {
     (void)argc; (void)argv;
     ble_dongle_list_bonds();
     return 0;
 }
 /* AT+BT_AUTO[=0|1] — auto-reconnect to bonded keyboards. No arg: query
    (auto=<0|1> state=<dgl_state>). Manual AT+BT_DISC holds it once. */
-static int at_cmd_BT_AUTO(int argc, char *argv[]) {
+static int bt_auto_dgl(int argc, char *argv[]) {
     if (argc < 2) {
         AT_Response("auto=%d state=%d", ble_dongle_auto(-1), ble_dongle_state_debug());
         return 0;
@@ -388,31 +375,161 @@ static int at_cmd_BT_AUTO(int argc, char *argv[]) {
     AT_Response("auto=%d", ble_dongle_auto(atoi(argv[1]) != 0));
     return 0;
 }
-/* DIAG: AT+BT_STATE — dongle state, StartDevice status, task id */
-extern uint8_t ble_dongle_start_status_debug(void);
-static int at_cmd_BT_STATE(int argc, char *argv[]) {
+/* DIAG: AT+BT_STATE — dongle state, StartDevice status */
+static int bt_state_dgl(int argc, char *argv[]) {
     (void)argc; (void)argv;
     AT_Response("state=%d startDev=%d (0=ok,24=badTask,0xFF=never)",
                 ble_dongle_state_debug(), ble_dongle_start_status_debug());
     return 0;
 }
-/* BT_PAIR manages host bonds — kbd-role command, N/A on dongle */
-static int at_cmd_BT_PAIR(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: kbd-mode command"); return -1; }
-#else
-static int at_cmd_BT_STATE(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
-static int at_cmd_BT_PASSKEY(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
-static int at_cmd_BT_LIST(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
-static int at_cmd_BT_AUTO(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
+#endif /* BLE_HAS_DONGLE */
+
+#if BLE_HAS_KBD
+/* ---- kbd role: Peripheral, IS the keyboard ---- */
+/* AT+BT_DISC (kbd) — actively drop the host link. Bond is kept and
+   advertising restarts automatically, like a real keyboard's
+   host-switch key: the same or a new host can reconnect. */
+static int bt_disc_kbd(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    if (kb_ble_disconnect() < 0) {
+        AT_Response("ERROR: not connected");
+        return -1;
+    }
+    return 0;
+}
 /* AT+BT_PAIR — drop the link AND erase all bonds: back to a clean
    pairing mode, like long-pressing a real keyboard's pairing key. */
-static int at_cmd_BT_PAIR(int argc, char *argv[]) {
+static int bt_pair_kbd(int argc, char *argv[]) {
     (void)argc; (void)argv;
     kb_ble_disconnect();      /* fine if not connected */
     kb_ble_forget_bonds();
     AT_Response("bonds erased — pairing mode");
     return 0;
 }
+#endif /* BLE_HAS_KBD */
+
+/* Runtime-role guards — no-ops in single-role builds */
+#if BLE_MODE == BLE_MODE_DUAL
+#define ROLE_GUARD_DGL  if (role_current() != ROLE_DONGLE) { \
+    AT_Response("ERROR: dongle-role command (AT+ROLE=DONGLE to switch)"); return -1; }
+#define ROLE_GUARD_KBD  if (role_current() != ROLE_KBD) { \
+    AT_Response("ERROR: kbd-role command (AT+ROLE=KBD to switch)"); return -1; }
+#else
+#define ROLE_GUARD_DGL
+#define ROLE_GUARD_KBD
 #endif
+
+static int at_cmd_BT_SCAN(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_scan_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1;
+#endif
+}
+static int at_cmd_BT_CONN(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_conn_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: scan needs dongle mode (BLE_DONGLE)"); return -1;
+#endif
+}
+static int at_cmd_BT_DISC(int argc, char *argv[]) {
+#if BLE_MODE == BLE_MODE_DUAL
+    return (role_current() == ROLE_DONGLE) ? bt_disc_dgl(argc, argv)
+                                           : bt_disc_kbd(argc, argv);
+#elif BLE_HAS_DONGLE
+    return bt_disc_dgl(argc, argv);
+#else
+    return bt_disc_kbd(argc, argv);
+#endif
+}
+static int at_cmd_BT_PASSKEY(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_passkey_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1;
+#endif
+}
+static int at_cmd_BT_LIST(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_list_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1;
+#endif
+}
+static int at_cmd_BT_AUTO(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_auto_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1;
+#endif
+}
+static int at_cmd_BT_STATE(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    return bt_state_dgl(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1;
+#endif
+}
+static int at_cmd_BT_PAIR(int argc, char *argv[]) {
+#if BLE_HAS_KBD
+    ROLE_GUARD_KBD;
+    return bt_pair_kbd(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: kbd-mode command"); return -1;
+#endif
+}
+
+/* AT+ROLE[=KBD|DONGLE] — query the runtime role; DUAL builds switch it
+   (DataFlash flag + soft reset, <1 s). Single-role builds are query-only. */
+static int at_cmd_ROLE(int argc, char *argv[]) {
+    if (argc < 2) {
+#if BLE_MODE == BLE_MODE_DUAL
+        AT_Response("role=%s mode=DUAL", role_name(role_current()));
+#elif BLE_HAS_DONGLE
+        AT_Response("role=dongle mode=DONGLE");
+#else
+        AT_Response("role=kbd mode=KBD");
+#endif
+        return 0;
+    }
+    int r = role_parse(argv[1]);
+    if (r < 0) { AT_Response("usage: AT+ROLE=KBD|DONGLE"); return -1; }
+#if BLE_MODE == BLE_MODE_DUAL
+    if (r == (int)role_current()) {
+        AT_Response("role=%s (unchanged)", role_name((uint8_t)r));
+        return 0;
+    }
+    if (role_request((uint8_t)r) != 0) {
+        AT_Response("ERROR: role flag write failed");
+        return -1;
+    }
+    AT_Response("switching to %s — resetting...", role_name((uint8_t)r));
+    /* flush UART/CDC, then reset (same sequence as AT+RST) */
+#ifdef DEBUG
+    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();
+#endif
+    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
+    SYS_ResetExecute();
+    return 0;   /* unreachable */
+#else
+    AT_Response("ERROR: single-role build (role=%s)", role_name(role_current()));
+    return -1;
+#endif
+}
 
 /* Infrared */
 static int at_cmd_IR_NEC(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
@@ -440,6 +557,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+STATUS",  "[stub] device status",           at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
+    { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },

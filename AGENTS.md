@@ -17,7 +17,8 @@ Build:
 ```bash
 cd software/obj && make --no-print-directory main-build          # kbd (default)
 cd software/obj && make --no-print-directory main-build DONGLE=1 # dongle (after make clean)
-tools/ci/build_all.sh                                            # both -> tools/ci/out/
+cd software/obj && make --no-print-directory main-build MODE=DUAL # dual: AT+ROLE runtime switch
+tools/ci/build_all.sh                                            # all three -> tools/ci/out/
 ```
 Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first.
 

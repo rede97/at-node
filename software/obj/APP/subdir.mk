@@ -11,6 +11,7 @@ C_SRCS += \
 ../APP/hidkbd_ble.c \
 ../APP/hidkbd_usb.c \
 ../APP/main.c \
+../APP/role.c \
 ../APP/usb_dev.c 
 
 C_DEPS += \
@@ -20,6 +21,7 @@ C_DEPS += \
 ./APP/hidkbd_ble.d \
 ./APP/hidkbd_usb.d \
 ./APP/main.d \
+./APP/role.d \
 ./APP/usb_dev.d 
 
 OBJS += \
@@ -29,6 +31,7 @@ OBJS += \
 ./APP/hidkbd_ble.o \
 ./APP/hidkbd_usb.o \
 ./APP/main.o \
+./APP/role.o \
 ./APP/usb_dev.o 
 
 DIR_OBJS += \

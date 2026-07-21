@@ -319,28 +319,63 @@
  */
 
 /*********************************************************************
- * BLE_DONGLE — BLE HID Host (receiver/dongle) mode. FUTURE, not yet
- * implemented. Compile-time role switch:
+ * BLE_MODE — compile-time role selection (REQUIREMENTS.md §3.1.2).
  *
- *   FALSE (default): Keyboard mode. Pure Peripheral role — AT-Node is
- *                    the keyboard. CENTRAL_MAX_CONNECTION defaults to
- *                    0 (no heap wasted on unused Central contexts).
- *   TRUE:  Dongle mode. AT-Node acts as Central, connects TO a BLE
- *          keyboard, forwards its HID reports over USB. Sets
- *          CENTRAL_MAX_CONNECTION=1 and raises the heap default.
- *          NOTE: not implemented — enabling today only reserves
- *          resources, no receiver logic exists.
+ *   BLE_MODE_KBD (0, default): pure keyboard. Peripheral role only.
+ *   BLE_MODE_DONGLE (1):       pure receiver. Central role only,
+ *                              replaces ALL Peripheral services.
+ *   BLE_MODE_DUAL (2):         both roles compiled in; the RUNTIME
+ *                              role is picked at boot from a DataFlash
+ *                              flag (AT+ROLE=KBD|DONGLE writes the flag
+ *                              and soft-resets — switch time ≈ one
+ *                              reboot, <1 s).
  *
- *   Roadmap (REQUIREMENTS.md §3.1.2): this boolean will be replaced by
- *   a tri-state BLE_MODE = KBD / DONGLE / DUAL. DUAL builds both roles
- *   in and switches at runtime via AT+ROLE (flash flag + soft reset).
+ *   Legacy: -DBLE_DONGLE=TRUE (make DONGLE=1) maps to BLE_MODE_DONGLE.
  *
- *   The roles are compile-time exclusive because GATT service tables
- *   and connection contexts are statically allocated — a runtime
- *   switch pays for both configurations simultaneously.
+ *   Derived gates for #if:
+ *     BLE_HAS_KBD    — kbd role compiled in
+ *     BLE_HAS_DONGLE — dongle role compiled in
+ *     BLE_DONGLE     — normalized legacy alias of BLE_HAS_DONGLE
  */
-#ifndef BLE_DONGLE
-#define BLE_DONGLE  FALSE
+#define BLE_MODE_KBD     0
+#define BLE_MODE_DONGLE  1
+#define BLE_MODE_DUAL    2
+
+#ifndef BLE_MODE
+  #if defined(BLE_DONGLE) && (BLE_DONGLE == TRUE)
+#define BLE_MODE  BLE_MODE_DONGLE
+  #else
+#define BLE_MODE  BLE_MODE_KBD
+  #endif
+#endif
+
+#if (BLE_MODE == BLE_MODE_KBD) || (BLE_MODE == BLE_MODE_DUAL)
+#define BLE_HAS_KBD     TRUE
+#else
+#define BLE_HAS_KBD     FALSE
+#endif
+
+#if (BLE_MODE == BLE_MODE_DONGLE) || (BLE_MODE == BLE_MODE_DUAL)
+#define BLE_HAS_DONGLE  TRUE
+#else
+#define BLE_HAS_DONGLE  FALSE
+#endif
+
+#undef BLE_DONGLE
+#define BLE_DONGLE  BLE_HAS_DONGLE
+
+/*********************************************************************
+ * APP_ROLE_FLASH_ADDR — DataFlash offset of the runtime-role flag
+ * (DUAL builds only; see APP/role.c).
+ *
+ *   Data-Flash-relative offset (0x0000-0x7FFF maps to absolute
+ *   0x70000-0x77FFF). Default 0x7C00: one 256-byte page, just below
+ *   the SNV bond store at 0x7E00. A 4-byte record (magic + role +
+ *   inverse) is erase+written on AT+ROLE — erased flash reads 0xFF
+ *   which fails validation and falls back to ROLE_KBD.
+ */
+#ifndef APP_ROLE_FLASH_ADDR
+#define APP_ROLE_FLASH_ADDR  0x7C00
 #endif
 
 /*********************************************************************

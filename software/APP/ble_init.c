@@ -15,6 +15,25 @@
 #include "ble_hid_dev.h"
 #include "ble_dongle.h"
 #include "hidkbd.h"
+#include "role.h"
+
+#if BLE_HAS_KBD
+/* Keyboard role: GAP Peripheral + HID GATT services + advertising. */
+static void ble_kbd_init(void)
+{
+    /* GAP role — must be first: sets device name, advertising data,
+       bonding parameters, connect/disconnect callbacks */
+    GAPRole_PeripheralInit();
+
+    /* HID Device GATT service — registers HID report characteristic,
+       keyboard report descriptor, input/output/feature reports */
+    ble_hid_dev_init();
+
+    /* HID keyboard emulation — registers TMOS task, starts advertising,
+       configures GAP bond manager, battery level, device info services */
+    ble_hid_emu_init();
+}
+#endif
 
 /*******************************************************************************
  * @fn      ble_peripheral_init
@@ -36,22 +55,19 @@
  */
 void ble_peripheral_init(void)
 {
-#if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
-    /* Dongle mode (BLE_DONGLE=TRUE): Central role — scan for a BLE
-       keyboard, connect as HID host, forward boot reports to USB.
-       Replaces ALL Peripheral services in this build. */
+#if BLE_MODE == BLE_MODE_DUAL
+    /* DUAL build: both roles compiled in; the DataFlash flag picks the
+       runtime role (AT+ROLE + soft reset, see role.c). */
+    if (role_current() == ROLE_DONGLE)
+        ble_dongle_init();
+    else
+        ble_kbd_init();
+#elif BLE_HAS_DONGLE
+    /* Dongle mode: Central role — scan for a BLE keyboard, connect as
+       HID host, forward boot reports to USB. Replaces ALL Peripheral
+       services in this build. */
     ble_dongle_init();
 #else
-    /* GAP role — must be first: sets device name, advertising data,
-       bonding parameters, connect/disconnect callbacks */
-    GAPRole_PeripheralInit();
-
-    /* HID Device GATT service — registers HID report characteristic,
-       keyboard report descriptor, input/output/feature reports */
-    ble_hid_dev_init();
-
-    /* HID keyboard emulation — registers TMOS task, starts advertising,
-       configures GAP bond manager, battery level, device info services */
-    ble_hid_emu_init();
+    ble_kbd_init();
 #endif
 }
