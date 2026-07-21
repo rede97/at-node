@@ -71,10 +71,13 @@ def main():
     print(cmd(kbd, b"AT+KB=BLE"))
 
     # clean slate: drop any stale link from a previous run — a connected
-    # peripheral stops advertising and is invisible to the next scan
+    # peripheral stops advertising and is invisible to the next scan.
+    # NOTE: after the drop the kbd first DIRECT-advertises to its bonded
+    # host for ~1.28 s (address only, no name) before falling back to
+    # general advertising — wait it out or the scan misses the name.
     cmd(dgl, b"AT+BT_DISC")
     cmd(kbd, b"AT+BT_DISC")
-    time.sleep(1.5)
+    time.sleep(2.5)
 
     # dongle: scan for the kbd board advertising as "AT-Node"
     cmd(dgl, b"AT+BT_SCAN=5", 0.2)
@@ -85,6 +88,14 @@ def main():
         if m:
             idx = m.group(1)
             print(line)
+    if idx is None:
+        # fallback: bonded kbd caught in its directed-adv window — the
+        # entry has no name, but on this rig a directed advertiser IS
+        # the kbd trying to reach its host
+        m = re.search(r"\+BT_SCAN:(\d+),.*\(directed\)", text)
+        if m:
+            idx = m.group(1)
+            print(f"(directed fallback) idx={idx}")
     if idx is None:
         print("FAIL: AT-Node keyboard not found in scan")
         return 1

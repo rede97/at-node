@@ -50,12 +50,17 @@ def ensure_armed(dgl, kbd):
     if "state=5" in resp:          # AUTOCONN in flight — let it finish
         return wait_armed(dgl, 20)
     # idle — manual scan + connect (hold from a prior BT_DISC is fine,
-    # a successful connection clears it)
+    # a successful connection clears it). The kbd may sit in its ~1.28 s
+    # directed-adv window (nameless); accept "(directed)" as fallback.
     cmd(dgl, b"AT+BT_SCAN=5", 0.2)
     text = listen(dgl, 8)
     idx = None
     for line in text.splitlines():
         m = re.search(r"\+BT_SCAN:(\d+),.*AT-Node", line)
+        if m:
+            idx = m.group(1)
+    if idx is None:
+        m = re.search(r"\+BT_SCAN:(\d+),.*\(directed\)", text)
         if m:
             idx = m.group(1)
     if idx is None:
