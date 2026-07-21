@@ -57,15 +57,18 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 - MITM/Just Works 两种配对路径
 - 长时间连接稳定性（LSI 时钟，评估是否需要 `-DCLK_OSC32K=0` 外晶振）
 
-## 4. 阶段四：角色切换（需求 F1.16–1.21) 🚧 已编码（2026-07-21)，待双板实测
+## 4. 阶段四：角色切换（需求 F1.16–1.21) ✅ 双板实测通过（2026-07-21)
 
 - ✅ `BLE_MODE` 三态宏（KBD/DONGLE/DUAL）接入 config.h，派生
   `BLE_HAS_KBD/BLE_HAS_DONGLE` 门控，旧 `BLE_DONGLE` 归一化别名（向后兼容）
 - ✅ DUAL 构建（`make MODE=DUAL`):`AT+ROLE=KBD|DONGLE` → DataFlash 标志
   （偏移 0x7C00,magic+role+反码校验，擦除态回退 KBD)→ 软复位 → 按标志启动
 - ✅ BT 命令运行期角色分发（`ROLE_GUARD_*`),`AT+VER` 角色标签改为运行期
-- 构建产物：dual FLASH 43.51% / RAM 63.61%（双角色同编，预算内）
-- 待实测：AT+ROLE 切换后角色正确、标志掉电保持、测试脚本识别运行期标签
+- ✅ 实测:dual 板 KBD↔DONGLE 双向切换、角色标志掉电/刷机保持（wchisp 只擦
+  code flash)、dongle 角色 BT_SCAN/BT_STATE 可用、跨角色命令正确拒绝并提示
+- 构建产物：dual FLASH 43.52% / RAM 63.61%（双角色同编，预算内）
+- 附产:ISP 升级链路同日打通（`tools/ci/isp_flash.py`,wchisp 0.3.0,
+  设备 4348:55e0，高频重试抓 10s 窗口）
 
 ---
 
@@ -115,4 +118,4 @@ tools/ci/loop_test.sh    # ✅ build → 提示挪调试线 → 烧双板 → te
 | M1 | 句柄解析修复 | ✅ 2026-07-21 达成：loop test 3 连过（§1） |
 | M2 | dongle 硬化 | 自动重连 + DIAG 门控 + RK 回测通过（§2/§3） |
 | M3 | Linux CI 闭环 | `loop_test.sh` 一键全绿（§5） |
-| M4 | 角色切换 + 合并 main | 🚧 代码全量实现（§4),dongle-wip 早已合并；剩 AT+ROLE 双板实测 |
+| M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4),dongle-wip 早已合并 |

@@ -120,21 +120,35 @@ wlink flash -e firmware.hex        # 可选:先整片擦除
 烧的是 WCH-Link **调试线物理连接**的那块板(与 ttyACM 端口号无关),
 双板台切换目标板 = 重插调试线。
 
-### 方案 B:wchisp(USB ISP,备选,未验证)
+### 方案 B:wchisp(USB ISP,✅ 已验证 2026-07-21)
+
+**关键事实（实测修正）**:
+- CH582 ISP bootloader 枚举为 **`4348:55e0`**(不是 1a86:8010——那是 WCH-Link;
+  两者同总线共存互不干扰，wchisp 能正确区分)
+- wchisp 0.3.0 实测识别 CH582[0x8216] 并完成 擦除→写入→校验→复位 全流程
+- boot ROM ISP 窗口 ~10s，且 **USB 握手极不稳定**——probe 到设备不代表能连上，
+  必须**高频重试 `wchisp flash` 抓时机**(实测第 4 次尝试才成功;
+  单次 probe→分析→flash 的串行流程必错过窗口)
+
+**标准用法——`tools/ci/isp_flash.py`(双线程：一个死循环锤 flash，一个发 AT+ISP):**
 
 ```bash
-wchisp flash software/obj/at-node.hex
+# 板子跑的是新固件(有 AT+ISP):一条命令完成
+uv run python tools/ci/isp_flash.py tools/ci/out/kbd.hex --port /dev/ttyACM0
+
+# 空片/手动 BOOT 键:先启脚本,再插线或按 BOOT 上电
+uv run python tools/ci/isp_flash.py tools/ci/out/kbd.hex
 ```
 
-板子进 ISP 的三种方式:
-1. **按住 BOOT 键上电**(硬件方式,具体按键见硬件手册);
-2. **`AT+ISP` 命令**(固件已实现,**未实测**):擦除 page0 + 软复位成"空片",
-   免按键;但 boot ROM 的 ISP 等待窗口仅 ~10s,超时后跳入已擦除的 app 而死机,
-   需复位/重新上电才会再给 10s 窗口 — 主机脚本必须在发送 AT+ISP 后**立刻**启动
-   wchisp,或用 `wlink reset` 重新武装窗口;
-3. 空片状态下任何复位/上电都会自动进 ISP。
+板子进 ISP 的方式:
+1. **`AT+ISP` 命令**(✅ 已实测):擦 page0 + 软复位，免按键;窗口 ~10s
+2. **按住 BOOT 键上电**(硬件方式,✅ 已实测);app 完好,窗口过期自动回 app
+3. 空片每次复位/上电自动进 ISP
 
-ISP 设备 VID:PID = `1a86:8010`(与 WCH-Link 同 PID,注意区分)。
+⚠️ AT+ISP 会擦 page0：若 10s 窗口内没刷上，芯片跳进空 app 挂死——
+复位/重插再给一次窗口，wlink 调试线永远可救。
+⚠️ wchisp flash 只擦 code flash,DataFlash(SNV 绑定、角色标志)不动——
+刷机后绑定和 AT+ROLE 角色保持。
 
 ### ⚠️ 烧录纪律
 
