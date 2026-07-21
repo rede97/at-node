@@ -51,6 +51,9 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 #define DGL_LINK_TIMEOUT_MS  5000    /* establish-link watchdog */
 #define DGL_AUTO_RETRY_MS    2000    /* auto-reconnect re-kick after a
                                         failed establish (stack busy) */
+#define DGL_AUTO_MAX_FAILS   5       /* consecutive failed link cycles
+                                        before auto-reconnect gives up
+                                        (stale-bond guard) */
 
 /* TMOS task events */
 #define DGL_START_DEVICE_EVT   0x0001
@@ -98,6 +101,25 @@ static uint8_t  dgl_auto = 1;
 static uint8_t  dgl_auto = 0;
 #endif
 static uint8_t  dgl_auto_hold = 0;
+
+/* Consecutive failed auto-reconnect link cycles. A link that dies
+   before reaching ARMED counts as a failure — the classic cause is a
+   stale bond (the peer erased its side): connect, encryption fails,
+   terminate, retry... which floods the AT channel and never recovers
+   (field 2026-07-21: the flood even starved AT command processing).
+   After DGL_AUTO_MAX_FAILS the dongle holds auto-reconnect and asks
+   for a re-pair instead of looping forever. */
+static uint8_t  dgl_auto_fails = 0;
+
+static void dgl_auto_fail_count(void)
+{
+    if (++dgl_auto_fails >= DGL_AUTO_MAX_FAILS) {
+        dgl_auto_fails = 0;
+        dgl_auto_hold = 1;
+        AT_Response("+BT_AUTO: giving up after %d fails — bond mismatch? "
+                    "AT+BT_PAIR then AT+BT_AUTO=1", DGL_AUTO_MAX_FAILS);
+    }
+}
 
 /* DIAG: StartDevice result, queryable via AT+BT_STATE */
 static bStatus_t dgl_start_status = 0xFF;
@@ -622,6 +644,7 @@ static void dgl_cccd_write_next(void)
         dgl_disc_state = DISC_IDLE;
         AT_Response("+BT_CONN: armed (%s mode, %d rpt, %d cccd)",
                     dgl_boot_hdl ? "boot" : "report", dgl_rpt_count, dgl_cccd_count);
+        dgl_auto_fails = 0;   /* a healthy link resets the fail counter */
 #if DGL_DBG_ON
         /* DIAG: kick report-char reads to verify accessibility */
         dgl_rd_idx = 0;
@@ -786,15 +809,23 @@ static void dgl_event_cb(gapRoleEvent_t *pEvent)
             AT_Response("+BT_CONN: failed %X", pEvent->gap.hdr.status);
             dgl_reset_link_state();
             dgl_state = DGL_IDLE;
+            dgl_auto_fail_count();
             /* link attempt failed — re-arm auto-reconnect with backoff */
             tmos_start_task(dgl_task_id, DGL_AUTO_EVT, MS1_TO_SYSTEM_TIME(DGL_AUTO_RETRY_MS));
         }
         break;
 
     case GAP_LINK_TERMINATED_EVENT:
-        dgl_reset_link_state();
-        dgl_state = DGL_IDLE;
-        AT_Response("+BT_DISC: reason %X", pEvent->linkTerminate.reason);
+        {
+            /* dying before ARMED counts as a failed cycle (stale bond:
+               encryption fails right after connect, never discovers) */
+            uint8_t was_armed = (dgl_state == DGL_ARMED);
+            dgl_reset_link_state();
+            dgl_state = DGL_IDLE;
+            AT_Response("+BT_DISC: reason %X", pEvent->linkTerminate.reason);
+            if (!was_armed)
+                dgl_auto_fail_count();
+        }
         /* spontaneous drop — reconnect immediately: a keyboard re-looking
            for its host only directs-advertises for ~1.28 s */
         tmos_set_event(dgl_task_id, DGL_AUTO_EVT);
@@ -1039,6 +1070,7 @@ void ble_dongle_forget_bonds(void)
     /* Single-keyboard model: replacing the keyboard = erase the old
        bond, then scan+conn the new one. Call ble_dongle_disconnect()
        first so auto-reconnect can't re-grab the keyboard being erased. */
+    dgl_auto_fails = 0;
     GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
 }
 

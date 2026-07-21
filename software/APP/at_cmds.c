@@ -105,6 +105,8 @@ static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return
 static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 [%s] BLE: %s", role_name(role_current()), VER_LIB); return 0; }
 static int at_cmd_HELP(int argc, char *argv[])  {
     (void)argc; (void)argv;
+    /* Chunked: AT_Response buffer is 256 B — one giant call would be
+       truncated (and used to leak stack garbage before the clamp fix) */
     AT_Response("AT-Node Commands:\r\n"
         "  [Core]\r\n"
         "  AT       - handshake\r\n"
@@ -113,32 +115,39 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ECHO  - echo <text>\r\n"
         "  AT+STATUS - device status [stub]\r\n"
         "  AT+RST   - software reset\r\n"
-        "  AT+ISP   - enter ISP bootloader (erases app!)\r\n"
-        "  AT+ROLE  - query/switch role KBD|DONGLE (DUAL build)\r\n"
+        "  AT+ISP   - enter ISP bootloader (erases app!)");
+    AT_Response(
+        "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
+        "  AT+TAP   - press+release <ms>,<mods>,<k1>..<k6>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
-        "  AT+KEY_SEQ  - batch HID <delay>,<mods>,<k1>..<k6>,...\r\n"
+        "  AT+KEY_SEQ  - batch HID <delay>,<mods>,<k1>..<k6>,...");
+    AT_Response(
         "  [GPIO]\r\n"
         "  AT+GPIO_W   - write <pin>,<level> [stub]\r\n"
         "  AT+GPIO_R   - read <pin> [stub]\r\n"
         "  [Sensor]\r\n"
         "  AT+ADC      - read <ch> [stub]\r\n"
-        "  AT+I2C_SCAN - scan bus [stub]\r\n"
+        "  AT+I2C_SCAN - scan bus [stub]");
+    AT_Response(
         "  AT+I2C_R    - read <addr>,<reg>,<len> [stub]\r\n"
         "  AT+I2C_W    - write <addr>,<reg>,<data> [stub]\r\n"
         "  [Power]\r\n"
-        "  AT+SLEEP    - sleep <mode> [stub]\r\n"
+        "  AT+SLEEP    - sleep <mode> [stub]");
+    AT_Response(
         "  [Wireless]\r\n"
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
         "  AT+BT_CONN  - connect <idx> (dongle)\r\n"
         "  AT+BT_DISC  - drop BLE link, re-advertise\r\n"
-        "  AT+BT_PAIR  - drop link + erase bonds\r\n"
+        "  AT+BT_PAIR  - drop link + erase bonds");
+    AT_Response(
         "  AT+BT_STATE - diag dongle state (dongle)\r\n"
         "  AT+BT_PASSKEY - SMP passkey <6digits> (dongle)\r\n"
         "  AT+BT_LIST  - bonded devices (dongle)\r\n"
-        "  AT+BT_AUTO  - auto-reconnect [0|1] (dongle)\r\n"
+        "  AT+BT_AUTO  - auto-reconnect [0|1] (dongle)");
+    AT_Response(
         "  [Infrared]\r\n"
         "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
         "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
@@ -186,6 +195,32 @@ static int at_cmd_MOD(int argc, char *argv[])  {
         AT_Response("ERROR: no active output — check AT+KB status");
         return -1;
     }
+    return 0;
+}
+/* AT+TAP=<ms>,<mods>,<k1>,..,<k6> — press-and-release in ONE command:
+   the report is queued followed by an all-zero release after <ms> on
+   the KEY_SEQ timer (non-blocking). This is the everyday "type a key"
+   command; AT+KEY (manual press / manual release) is for special cases
+   like held modifiers. ms: 0 = 50 default, clamped 10..1000. */
+static int at_cmd_TAP(int argc, char *argv[])
+{
+    if (argc < 3) { AT_Response("usage: AT+TAP=<ms>,<mods>,<k1>,..,<k6>"); return -1; }
+    int hold_ms = atoi(argv[1]);
+    if (hold_ms == 0)   hold_ms = 50;
+    if (hold_ms < 10)   hold_ms = 10;
+    if (hold_ms > 1000) hold_ms = 1000;
+
+    for (int i = 0; i < 7 * 2; i++) seq_buf[0][i] = 0;
+    for (int i = 2; i < argc && i <= 8; i++)
+        seq_buf[0][i - 2] = (uint8_t)atoi(argv[i]);
+    /* seq_buf[1] stays all-zero = release report */
+
+    if (seq_task_id == INVALID_TASK_ID)
+        seq_task_id = TMOS_ProcessEventRegister(kb_seq_process_event);
+    seq_count    = 2;
+    seq_idx      = 0;
+    seq_delay_ms = (uint16_t)hold_ms;
+    tmos_start_task(seq_task_id, SEQ_EVENT, 0);  /* press next tick */
     return 0;
 }
 
@@ -573,6 +608,7 @@ const at_cmd_t cmd_table[] = {
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
+    { "AT+TAP",     "press+release <ms>,<mods>,<k1>..<k6>", at_cmd_TAP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     /* GPIO */

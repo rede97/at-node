@@ -102,6 +102,11 @@ void AT_Response(const char *fmt, ...)
     int len = vsnprintf(buf, sizeof(buf), fmt, va);
     va_end(va);
 
+    /* vsnprintf returns the WOULD-BE length — clamp or we'd transmit
+       stack garbage past the buffer (seen: AT+HELP > 255 B) */
+    if (len >= (int)sizeof(buf))
+        len = sizeof(buf) - 1;
+
     if (len < (int)sizeof(buf) - 2) {
         buf[len++] = '\r';
         buf[len++] = '\n';
