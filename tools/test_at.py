@@ -10,15 +10,22 @@ def find_port():
 
 def test(ser, cmd, expect=None):
     ser.write(cmd)
-    parts = []
-    for _ in range(4):  # read in 4 passes to capture multi-packet response
-        time.sleep(0.2)
-        b = ser.read(256)
+    buf = b""
+    deadline = time.time() + 3.0   # long responses (AT+HELP ~900 B) need
+    quiet = 0                      # headroom; stop at the closing OK/ERROR
+    while time.time() < deadline:  # or after 0.4 s of silence
+        b = ser.read(512)
         if b:
-            parts.append(b.decode(errors="replace"))
+            buf += b
+            quiet = 0
+            if b"\r\nOK\r\n" in buf or buf.startswith(b"OK\r\n") or b"ERROR" in buf:
+                break
         else:
-            break
-    text = "".join(parts)
+            quiet += 1
+            if quiet >= 8 and buf:
+                break
+            time.sleep(0.05)
+    text = buf.decode(errors="replace")
     ok = "OK" in text
     match = expect is None or expect in text
     s = "PASS" if (ok and match) else "FAIL"

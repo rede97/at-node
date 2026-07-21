@@ -180,18 +180,40 @@ print(s.read(s.in_waiting or 1).decode())
 双板场景:取出全部 `2107` 端口后,逐板发 `AT+VER` 读角色标签(`[kbd]`/`[dongle]`)
 确定身份,之后固定操作对应端口。AI agent 操作串口时同样遵守此流程。
 
-### 6.2 测试命令
+### 6.2 工具脚本一览
+
+**测试:**
 
 ```bash
-uv run python tools/test_at.py            # AT 回归(自动找第一块 at-node 板)
-uv run python tools/test_dongle_loop.py   # 双板闭环(AT+VER 自动识别 kbd/dongle 角色)
+uv run python tools/test_at.py [port]     # AT 回归 6 项(自动找第一块板,可指定端口)
+uv run python tools/test_dongle_loop.py   # 双板闭环:扫描→配对→订阅→按键转发
 uv run python tools/test_dongle_hardening.py  # 阶段二:回连/BT_LIST/hold(需已绑定)
 uv run python tools/send_key.py 0x04 --mode BLE
 ```
 
-端口识别约定:VID `0x1A86` 且 PID ≠ `0x8010`(排除 ISP/WCH-Link)。
-at-node 板实际 PID = **`0x2107`**(见 `usb_dev.c` 设备描述符;
-CLAUDE.md 中 "PID=0x8040" 的表述与固件不符,以固件为准)。
+**日常操作:**
+
+```bash
+# at_cli.py — 按角色/端口发 AT 命令(最常用)
+uv run python tools/at_cli.py --role kbd "AT+VER"
+uv run python tools/at_cli.py --role dongle "AT+BT_AUTO=0" "AT+BT_PAIR"
+uv run python tools/at_cli.py --role dongle --listen 6 "AT+BT_SCAN=3"
+
+uv run python tools/ci/board_roles.py     # 列出全部板子 端口→角色(--wait/--require)
+```
+
+**构建与烧录:**
+
+```bash
+tools/ci/build_all.sh                     # 三变体构建 → tools/ci/out/{kbd,dongle,dual}.hex
+tools/ci/flash.sh <hex> [role]            # wlink 烧调试线连着的那块 + 烧后角色校验
+uv run python tools/ci/isp_flash.py <hex> --port /dev/ttyACMx  # ISP 免挪线烧录(§5 方案 B)
+tools/ci/loop_test.sh                     # M3 一键:构建→ISP 烧双板→闭环测试(--wlink 走旧流程)
+```
+
+端口识别约定:VID `0x1A86` 且 PID ≠ `0x8010`(排除 WCH-Link;
+ISP bootloader 是 `4348:55e0`,VID 不同,天然不干扰)。
+at-node 板实际 PID = **`0x2107`**(见 `usb_dev.c` 设备描述符)。
 
 典型双板测试台(lser 输出):
 
@@ -211,6 +233,7 @@ CLAUDE.md 中 "PID=0x8040" 的表述与固件不符,以固件为准)。
 | 串口权限 | `PermissionError: /dev/ttyACM0` | §4 udev 规则 |
 | `sed */subdir.mk` 漏层 | APP/BLE、APP/HWS 是两层深 | 必须加 `APP/*/subdir.mk` |
 | ttyS0–31 噪音 | pyserial 列出 32 个主板串口 | 按 VID 过滤,工具脚本已处理 |
+| **绑定失配回连环** | 一侧擦了绑定另一侧没擦 → dongle 拿着旧 LTK 回连 → 加密失败 → 断 → 立即再连,`+BT_*` 刷屏淹没 AT 响应,板子最终失去响应 | 预防:换绑时**两侧都擦**(kbd 和 dongle 的 `AT+BT_PAIR` 各管各的);恢复:刷屏间隙 spam `AT+BT_AUTO=0` 止环 → `AT+BT_PAIR` 清绑 → 重配对;不行就 wlink `flash -e` 全擦重刷 |
 | **VMware USB 仲裁** | 设备复位/重枚举后从 VM 消失(被 Windows 主机抢走);WCH-Link/ISP 设备"掉线" | VM 设置 → USB 控制器:勾选"自动连接新 USB 设备" + "显示所有 USB 输入设备"(at-node 是 HID 键盘,默认被当输入设备隐藏) |
 
 ## 8. 下一步(PLAN.md M3)
