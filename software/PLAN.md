@@ -30,16 +30,22 @@ TI 文档不符（WCH 实现差异），导致按 `i*len+3` 取 value handle 错
 B/P/R/C 四处。另修复两个连带 bug:CCCD 列表陈旧值（重连必现 no CCCD)、
 RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 
-## 2. 阶段二：dongle 硬化（2–3 天）
+## 2. 阶段二：dongle 硬化（2–3 天） 🚧 进行中（2026-07-21 起）
 
-- **自动重连**：记录绑定键盘身份地址，开机/断链后自动回连（无需再 scan+conn）。
-  处理定向广播窗口短（~1.28s）的问题 — 断链后立即进入高占空比扫描。
-- **清理 DIAG**：量产版去掉 `+BT_ADV`/`+BT_GATT`/`+BT_DISC`/`+BT_RD`/`+BT_NTF`
-  诊断打印（宏 `BLE_DONGLE_DEBUG` 门控保留）。
-- **解析固化**：报告特征>1 时按 Report Map 识别键盘输入报告（先 boot，
-  无 boot 再 report；report 模式暂按"首个 input report"策略 + len≥8 过滤）。
-- **断链清理**：conn handle/disc state/队列全复位（已有，补测边界）。
-- **AT+BT_LIST**：列出已绑定设备（SNV 查询）。
+- **自动重连** 🚧 已实现待实测：开机/断链后自动回连（`DGL_AUTOCONN` 态 +
+  `GAPBOND_AUTO_SYNC_WL/RL` 白名单同步 + `EstablishLink(highDutyCycle=TRUE,
+  whiteList=TRUE)` 高占空比直连，覆盖定向广播 ~1.28s 窗口与 RPA)。
+  `AT+BT_AUTO[=0|1]` 开关（默认 1),`AT+BT_DISC` 单次抑制（hold)。
+- **清理 DIAG** ✅（门控）:`+BT_ADV`/`+BT_GATT`/`+BT_DISC` raw/`+BT_RD`/`+BT_NTF`
+  全部由 `BLE_DONGLE_DEBUG` 宏门控（默认 TRUE，量产翻 FALSE)。
+- **解析固化**：boot 或任一 report 句柄 + len≥8 过滤已在代码；按 Report Map
+  识别键盘输入报告 → 移至阶段三（需 RK 真机数据）。
+- **断链清理** ✅:`dgl_reset_link_state()` 在 LINK_ESTABLISHED(成功/失败)/
+  LINK_TERMINATED 三处调用，句柄表/CCCD 队列/passkey 挂起全复位。
+- **AT+BT_LIST** 🚧 已实现待实测：SNV 查询（`GAPBOND_BOND_COUNT` +
+  `tmos_snv_read(calcNvID(i,...))`)。
+- **待验证（下次 loop test)**：自动回连连环（断→回连→按键转发）、BT_LIST
+  地址与绑定设备一致、AUTO_SYNC_WL/RL 在 WCH 库的实际行为。
 
 ## 3. 阶段三：RK 真机验证（1 天）
 

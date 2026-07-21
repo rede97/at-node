@@ -344,6 +344,36 @@
 #endif
 
 /*********************************************************************
+ * BLE_DONGLE_DEBUG — verbose receiver diagnostics over the AT channel.
+ *
+ *   TRUE (default): diag lines +BT_ADV (every advertiser), +BT_DISC
+ *   (raw GATT discovery dumps), +BT_GATT (ATT errors), +BT_RD/+BT_NTF
+ *   (report read/notify dumps) are printed — needed while developing
+ *   and field-debugging the receiver.
+ *   FALSE: only user-facing results remain (+BT_SCAN/+BT_CONN/+BT_BOND
+ *   and link up/down events). Set FALSE for production.
+ *
+ *   Only meaningful when BLE_DONGLE=TRUE.
+ */
+#ifndef BLE_DONGLE_DEBUG
+#define BLE_DONGLE_DEBUG  TRUE
+#endif
+
+/*********************************************************************
+ * BLE_DONGLE_AUTO — auto-reconnect to bonded keyboards (initial value
+ * of the AT+BT_AUTO runtime switch).
+ *
+ *   TRUE (default): on boot and after a spontaneous link drop, the
+ *   dongle immediately starts a high-duty-cycle white-list establish
+ *   to re-attach the bonded keyboard (no AT+BT_SCAN/CONN needed).
+ *   A manual AT+BT_DISC holds it once; AT+BT_AUTO=0 disables.
+ *   FALSE: reconnect only via explicit AT+BT_SCAN + AT+BT_CONN.
+ */
+#ifndef BLE_DONGLE_AUTO
+#define BLE_DONGLE_AUTO  TRUE
+#endif
+
+/*********************************************************************
  * BLE_MEMHEAP_SIZE — BLE protocol stack heap allocation.
  *
  *   Unit: bytes. Must be 4-byte aligned.

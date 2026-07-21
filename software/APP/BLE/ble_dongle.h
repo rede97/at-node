@@ -13,7 +13,9 @@
  *   AT commands (see at_cmds.c):
  *     AT+BT_SCAN=<sec>   scan, lists devices advertising HID service
  *     AT+BT_CONN=<idx>   connect to list entry
- *     AT+BT_DISC         disconnect
+ *     AT+BT_DISC         disconnect / abort auto-reconnect
+ *     AT+BT_LIST         list bonded keyboards (SNV)
+ *     AT+BT_AUTO[=0|1]   auto-reconnect to bonded keyboards
  ********************************************************************************/
 
 #ifndef BLE_DONGLE_H
@@ -52,10 +54,25 @@ int     ble_dongle_scan(uint8_t seconds);
 int     ble_dongle_connect(uint8_t index);
 
 /*********************************************************************
- * ble_dongle_disconnect — terminate the current link. Returns 0 if a
- *   link was active, -1 if idle.
+ * ble_dongle_disconnect — terminate the current link, or abort a
+ *   pending auto-reconnect establish. A manual disconnect HOLDS
+ *   auto-reconnect (one-shot suppress) until AT+BT_AUTO=1 or any
+ *   successful connection. Returns 0 if a link/attempt was active,
+ *   -1 if idle.
  */
 int     ble_dongle_disconnect(void);
+
+/*********************************************************************
+ * ble_dongle_auto — auto-reconnect switch (AT+BT_AUTO).
+ *
+ *   mode < 0: query, returns current setting.
+ *   mode = 0: disable; a pending white-list establish is cancelled.
+ *   mode = 1: enable and re-arm (clears the manual-disconnect hold);
+ *             if bonded keyboards exist and the link is idle, a
+ *             reconnect attempt starts immediately.
+ *   Returns the new setting.
+ */
+int     ble_dongle_auto(int mode);
 
 /*********************************************************************
  * ble_dongle_connected — 1 when a keyboard link is up, else 0.
@@ -69,6 +86,13 @@ uint8_t ble_dongle_connected(void);
  *   AT+BT_PASSKEY=<code>. Returns 0 if a request was pending, -1 else.
  */
 int     ble_dongle_passkey(uint32_t code);
+
+/*********************************************************************
+ * ble_dongle_list_bonds — print bonded devices from SNV over the AT
+ *   channel, one "+BT_LIST:<idx>,<addr>,flags=<stateFlags>" line per
+ *   bond ("+BT_LIST: empty" when none). Returns the bond count.
+ */
+int     ble_dongle_list_bonds(void);
 
 #ifdef __cplusplus
 }

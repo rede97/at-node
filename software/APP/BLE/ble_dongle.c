@@ -26,6 +26,18 @@
 
 #if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
 
+/* Verbose diagnostics gate — see config.h BLE_DONGLE_DEBUG.
+   ON: +BT_ADV/+BT_DISC raw dumps/+BT_GATT/+BT_RD/+BT_NTF over the AT
+   channel (development). OFF: only user-facing results remain
+   (+BT_SCAN/+BT_CONN/+BT_BOND/link-up-down events). */
+#if(defined(BLE_DONGLE_DEBUG)) && (BLE_DONGLE_DEBUG == TRUE)
+#define DGL_DBG(...)  AT_Response(__VA_ARGS__)
+#define DGL_DBG_ON    1
+#else
+#define DGL_DBG(...)  ((void)0)
+#define DGL_DBG_ON    0
+#endif
+
 /* USB keyboard report sender (hidkbd_usb.c) — dongle forwards here */
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
@@ -37,6 +49,8 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 #define DGL_NAME_LEN         20      /* captured device name (truncated) */
 #define DGL_SCAN_SECONDS     5       /* default when AT+BT_SCAN has no arg */
 #define DGL_LINK_TIMEOUT_MS  5000    /* establish-link watchdog */
+#define DGL_AUTO_RETRY_MS    2000    /* auto-reconnect re-kick after a
+                                        failed establish (stack busy) */
 
 /* TMOS task events */
 #define DGL_START_DEVICE_EVT   0x0001
@@ -44,6 +58,7 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 #define DGL_LINK_TIMEOUT_EVT   0x0004
 #define DGL_SCAN_EVT           0x0008   /* deferred scan start (from AT task) */
 #define DGL_CONN_EVT           0x0010   /* deferred connect    (from AT task) */
+#define DGL_AUTO_EVT           0x0020   /* auto-reconnect kick / abort */
 
 /* Pending requests — set by AT task, consumed by dongle task.
    GAP procedures (discovery / link establish) MUST be started from the
@@ -70,7 +85,19 @@ enum {
     DGL_CONNECTING,
     DGL_CONNECTED,   /* link up, GATT discovery in progress */
     DGL_ARMED,       /* boot report notify enabled, forwarding */
+    DGL_AUTOCONN,    /* auto-reconnect: white-list establish pending */
 };
+
+/* Auto-reconnect control (AT+BT_AUTO). dgl_auto is the feature switch
+   (default per config.h BLE_DONGLE_AUTO); dgl_auto_hold is a one-shot
+   suppress set by a manual AT+BT_DISC so the link doesn't bounce back,
+   cleared by AT+BT_AUTO=1 or any successful connection. */
+#if(defined(BLE_DONGLE_AUTO)) && (BLE_DONGLE_AUTO == TRUE)
+static uint8_t  dgl_auto = 1;
+#else
+static uint8_t  dgl_auto = 0;
+#endif
+static uint8_t  dgl_auto_hold = 0;
 
 /* DIAG: StartDevice result, queryable via AT+BT_STATE */
 static bStatus_t dgl_start_status = 0xFF;
@@ -128,6 +155,52 @@ static uint8_t  dgl_proto_pending;   /* protocol-mode write awaiting RSP */
 /* Post-arm DIAG: read each report char once — proves the chars are
    readable (pure notify gating) vs auth-gated (error). */
 static uint8_t  dgl_rd_idx;
+
+/* Reset all per-link state. Called when a link comes UP (stale data
+   from a previous keyboard must never leak into the new discovery)
+   and when it goes DOWN (stale handles would misfire the report
+   fallback on reconnect, and a half-written CCCD queue would skip
+   notify enables). */
+static void dgl_reset_link_state(void)
+{
+    dgl_conn_handle  = GAP_CONNHANDLE_INIT;
+    dgl_disc_state   = DISC_IDLE;
+    dgl_disc_retries = 0;
+    dgl_svc_start = dgl_svc_end = 0;
+    dgl_boot_hdl = dgl_proto_hdl = 0;
+    dgl_rpt_count = 0;
+    dgl_cccd_count = dgl_cccd_wr = 0;
+    dgl_cccd_list[0] = 0;
+    dgl_proto_pending = 0;
+    dgl_rd_idx = 0;
+    dgl_passkey_pending = 0;
+    dgl_passkey_conn = 0xFFFF;
+}
+
+/* Auto-reconnect: establish a link to ANY bonded keyboard via the
+   white list (GAPBOND_AUTO_SYNC_WL/RL keep WL + resolving list synced
+   with SNV bonds, covering RPA keyboards). High duty cycle catches
+   the short directed-advertising window (~1.28 s) a keyboard emits
+   after power-up looking for its bonded host.
+   MUST run in the dongle task context (GAP procedure — see the
+   DGL_SCAN_EVT comment). Callers defer via DGL_AUTO_EVT. */
+static void dgl_auto_kick(void)
+{
+    uint8_t bonds = 0;
+    GAPBondMgr_GetParameter(GAPBOND_BOND_COUNT, &bonds);
+    if (!dgl_auto || dgl_auto_hold || bonds == 0 || dgl_state != DGL_IDLE)
+        return;
+    bStatus_t st = GAPRole_CentralEstablishLink(TRUE /*highDutyCycle*/,
+                                                TRUE /*whiteList*/, 0, NULL);
+    if (st == SUCCESS) {
+        dgl_state = DGL_AUTOCONN;
+        AT_Response("+BT_AUTO: reconnecting (%d bonded)", bonds);
+    } else {
+        /* stack busy — retry shortly (bounded by the flag checks above) */
+        DGL_DBG("+BT_AUTO: establish st=%d, retry", st);
+        tmos_start_task(dgl_task_id, DGL_AUTO_EVT, MS1_TO_SYSTEM_TIME(DGL_AUTO_RETRY_MS));
+    }
+}
 
 /* ===== Forward decls ===== */
 static void dgl_event_cb(gapRoleEvent_t *pEvent);
@@ -270,7 +343,7 @@ static void dgl_start_svc_discovery(void)
     if (st != SUCCESS) {
         /* procedure didn't start (blePending etc.) — no response will
            arrive, count it as a failed attempt right now */
-        AT_Response("+BT_GATT: disc svc start %d", st);
+        DGL_DBG("+BT_GATT: disc svc start %d", st);
         dgl_discovery_failed("svc start busy");
     }
 }
@@ -325,6 +398,7 @@ static void dgl_write_handle(uint16_t handle, uint16_t value, uint8_t len)
    discovery state: B=boot P=proto R=report C=cccd. */
 static void dgl_dump_rbt_rsp(char tag, attReadByTypeRsp_t *r)
 {
+#if DGL_DBG_ON
     char hex[14 * 2 + 1];
     static const char nib[] = "0123456789ABCDEF";
     uint16_t n = (uint16_t)r->len * r->numPairs;
@@ -334,7 +408,10 @@ static void dgl_dump_rbt_rsp(char tag, attReadByTypeRsp_t *r)
         hex[i * 2 + 1] = nib[r->pDataList[i] & 0xF];
     }
     hex[n * 2] = '\0';
-    AT_Response("+BT_DISC: %c plen=%d np=%d raw %s", tag, r->len, r->numPairs, hex);
+    DGL_DBG("+BT_DISC: %c plen=%d np=%d raw %s", tag, r->len, r->numPairs, hex);
+#else
+    (void)tag; (void)r;
+#endif
 }
 
 /* Extract a value handle from item <idx> of a Read-By-Type response.
@@ -362,10 +439,10 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
     /* DIAG: surface ATT errors (e.g. insufficient authentication when
        the keyboard demands an encrypted link before exposing chars) */
     if (pMsg->method == ATT_ERROR_RSP) {
-        AT_Response("+BT_GATT: err %02X hdl=%04X state=%d",
-                    pMsg->msg.errorRsp.errCode,
-                    pMsg->msg.errorRsp.handle,
-                    dgl_disc_state);
+        DGL_DBG("+BT_GATT: err %02X hdl=%04X state=%d",
+                pMsg->msg.errorRsp.errCode,
+                pMsg->msg.errorRsp.handle,
+                dgl_disc_state);
         if (pMsg->msg.errorRsp.errCode == ATT_ERR_INSUFFICIENT_AUTHEN) {
             /* Pairing in progress — park discovery so the pair-complete
                retry restarts it cleanly (guard requires DISC_IDLE). */
@@ -382,7 +459,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
             dgl_svc_end   = ATT_GRP_END_HANDLE(pMsg->msg.findByTypeValueRsp.pHandlesInfo, 0);
         }
         if (complete) {
-            AT_Response("+BT_GATT: svc %04X-%04X hdrst=%d", dgl_svc_start, dgl_svc_end, pMsg->hdr.status);
+            DGL_DBG("+BT_GATT: svc %04X-%04X hdrst=%d", dgl_svc_start, dgl_svc_end, pMsg->hdr.status);
             if (dgl_svc_start) {
                 dgl_find_char(BOOT_KEY_INPUT_UUID, DISC_BOOT_CHAR);
             } else {
@@ -399,7 +476,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
             if (h > dgl_svc_start && h <= dgl_svc_end) {
                 dgl_boot_hdl = h;
             } else {
-                AT_Response("+BT_DISC: B bad hdl %04X", h);
+                DGL_DBG("+BT_DISC: B bad hdl %04X", h);
             }
         }
         if (complete) {
@@ -425,7 +502,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
                 if (h > dgl_svc_start && h <= dgl_svc_end) {
                     dgl_rpt_hdls[dgl_rpt_count++] = h;
                 } else {
-                    AT_Response("+BT_DISC: R bad hdl %04X", h);
+                    DGL_DBG("+BT_DISC: R bad hdl %04X", h);
                 }
             }
         }
@@ -449,7 +526,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
             if (h > dgl_svc_start && h <= dgl_svc_end) {
                 dgl_proto_hdl = h;
             } else {
-                AT_Response("+BT_DISC: P bad hdl %04X", h);
+                DGL_DBG("+BT_DISC: P bad hdl %04X", h);
             }
         }
         if (complete) {
@@ -469,7 +546,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
                                    dgl_cccd_count < DGL_MAX_CCCD; i++) {
                 uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, i);
                 if (h <= dgl_svc_start || h > dgl_svc_end) {
-                    AT_Response("+BT_DISC: C bad hdl %04X", h);
+                    DGL_DBG("+BT_DISC: C bad hdl %04X", h);
                     continue;
                 }
                 if (dgl_boot_hdl) {
@@ -478,7 +555,7 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
                         dgl_cccd_list[0] = h;
                         dgl_cccd_count = 1;
                     } else {
-                        AT_Response("+BT_DISC: C skip %04X (boot=%04X)", h, dgl_boot_hdl);
+                        DGL_DBG("+BT_DISC: C skip %04X (boot=%04X)", h, dgl_boot_hdl);
                     }
                 } else {
                     dgl_cccd_list[dgl_cccd_count++] = h;
@@ -486,8 +563,8 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
             }
         }
         if (complete) {
-            AT_Response("+BT_DISC: C done m=%02X cnt=%d boot=%04X proto=%04X",
-                        pMsg->method, dgl_cccd_count, dgl_boot_hdl, dgl_proto_hdl);
+            DGL_DBG("+BT_DISC: C done m=%02X cnt=%d boot=%04X proto=%04X",
+                    pMsg->method, dgl_cccd_count, dgl_boot_hdl, dgl_proto_hdl);
             if (dgl_cccd_count) {
                 dgl_cccd_wr = 0;
                 if (dgl_boot_hdl && dgl_proto_hdl) {
@@ -528,6 +605,7 @@ static void dgl_cccd_write_next(void)
         dgl_disc_state = DISC_IDLE;
         AT_Response("+BT_CONN: armed (%s mode, %d rpt, %d cccd)",
                     dgl_boot_hdl ? "boot" : "report", dgl_rpt_count, dgl_cccd_count);
+#if DGL_DBG_ON
         /* DIAG: kick report-char reads to verify accessibility */
         dgl_rd_idx = 0;
         if (dgl_rpt_count) {
@@ -535,6 +613,7 @@ static void dgl_cccd_write_next(void)
             rr.handle = dgl_rpt_hdls[0];
             GATT_ReadCharValue(dgl_conn_handle, &rr, dgl_task_id);
         }
+#endif
     }
 }
 
@@ -550,11 +629,11 @@ static void dgl_process_gatt_msg(gattMsgEvent_t *pMsg)
         uint8_t *r = pMsg->msg.handleValueNoti.pValue;
         /* DIAG: dump EVERY notification — the keyboard input report may
            sit on a handle outside our match list (multi-report maps) */
-        AT_Response("+BT_NTF:h=%04X l=%d %02X %02X %02X %02X %02X %02X %02X %02X",
-                    h, l,
-                    l > 0 ? r[0] : 0, l > 1 ? r[1] : 0, l > 2 ? r[2] : 0,
-                    l > 3 ? r[3] : 0, l > 4 ? r[4] : 0, l > 5 ? r[5] : 0,
-                    l > 6 ? r[6] : 0, l > 7 ? r[7] : 0);
+        DGL_DBG("+BT_NTF:h=%04X l=%d %02X %02X %02X %02X %02X %02X %02X %02X",
+                h, l,
+                l > 0 ? r[0] : 0, l > 1 ? r[1] : 0, l > 2 ? r[2] : 0,
+                l > 3 ? r[3] : 0, l > 4 ? r[4] : 0, l > 5 ? r[5] : 0,
+                l > 6 ? r[6] : 0, l > 7 ? r[7] : 0);
         uint8_t match = (h == dgl_boot_hdl);
         for (uint8_t i = 0; !match && i < dgl_rpt_count; i++)
             match = (h == dgl_rpt_hdls[i]);
@@ -570,23 +649,24 @@ static void dgl_process_gatt_msg(gattMsgEvent_t *pMsg)
         /* DIAG: surface write failures (ERROR_RSP would otherwise be
            silently treated as success and falsely report "armed") */
         if (pMsg->method == ATT_ERROR_RSP) {
-            AT_Response("+BT_GATT: wr err %02X hdl=%04X",
-                        pMsg->msg.errorRsp.errCode, pMsg->msg.errorRsp.handle);
+            DGL_DBG("+BT_GATT: wr err %02X hdl=%04X",
+                    pMsg->msg.errorRsp.errCode, pMsg->msg.errorRsp.handle);
         }
         dgl_cccd_write_next();
         GATT_bm_free(&pMsg->msg, pMsg->method);
         return;
     }
 
+#if DGL_DBG_ON
     /* DIAG: report-char read chain after arming */
     if (pMsg->method == ATT_READ_RSP && dgl_state == DGL_ARMED &&
         dgl_rd_idx < dgl_rpt_count) {
-        AT_Response("+BT_RD:h=%04X l=%d %02X %02X %02X %02X %02X %02X %02X %02X",
-                    dgl_rpt_hdls[dgl_rd_idx], pMsg->msg.readRsp.len,
-                    pMsg->msg.readRsp.pValue[0], pMsg->msg.readRsp.pValue[1],
-                    pMsg->msg.readRsp.pValue[2], pMsg->msg.readRsp.pValue[3],
-                    pMsg->msg.readRsp.pValue[4], pMsg->msg.readRsp.pValue[5],
-                    pMsg->msg.readRsp.pValue[6], pMsg->msg.readRsp.pValue[7]);
+        DGL_DBG("+BT_RD:h=%04X l=%d %02X %02X %02X %02X %02X %02X %02X %02X",
+                dgl_rpt_hdls[dgl_rd_idx], pMsg->msg.readRsp.len,
+                pMsg->msg.readRsp.pValue[0], pMsg->msg.readRsp.pValue[1],
+                pMsg->msg.readRsp.pValue[2], pMsg->msg.readRsp.pValue[3],
+                pMsg->msg.readRsp.pValue[4], pMsg->msg.readRsp.pValue[5],
+                pMsg->msg.readRsp.pValue[6], pMsg->msg.readRsp.pValue[7]);
         dgl_rd_idx++;
         if (dgl_rd_idx < dgl_rpt_count) {
             attReadReq_t rr;
@@ -598,8 +678,8 @@ static void dgl_process_gatt_msg(gattMsgEvent_t *pMsg)
     }
     if (pMsg->method == ATT_ERROR_RSP && dgl_state == DGL_ARMED &&
         dgl_rd_idx < dgl_rpt_count) {
-        AT_Response("+BT_RD:h=%04X err %02X",
-                    dgl_rpt_hdls[dgl_rd_idx], pMsg->msg.errorRsp.errCode);
+        DGL_DBG("+BT_RD:h=%04X err %02X",
+                dgl_rpt_hdls[dgl_rd_idx], pMsg->msg.errorRsp.errCode);
         dgl_rd_idx++;
         if (dgl_rd_idx < dgl_rpt_count) {
             attReadReq_t rr;
@@ -609,6 +689,7 @@ static void dgl_process_gatt_msg(gattMsgEvent_t *pMsg)
         GATT_bm_free(&pMsg->msg, pMsg->method);
         return;
     }
+#endif
 
     if (dgl_disc_state != DISC_IDLE)
         dgl_discovery_event(pMsg);
@@ -622,18 +703,20 @@ static void dgl_event_cb(gapRoleEvent_t *pEvent)
 {
     switch (pEvent->gap.opcode) {
     case GAP_DEVICE_INIT_DONE_EVENT:
-        /* Central role ready — stay idle until AT+BT_SCAN/CONN */
+        /* Central role ready — if keyboards are bonded, auto-reconnect
+           (manual AT+BT_SCAN/CONN remains available when idle). */
         AT_Response("+BT: central ready");
+        tmos_start_task(dgl_task_id, DGL_AUTO_EVT, MS1_TO_SYSTEM_TIME(1000));
         break;
 
     case GAP_DEVICE_INFO_EVENT:
         if (dgl_state == DGL_SCANNING) {
             /* DIAG: log every advertiser (pre-filter) to verify scan works */
-            AT_Response("+BT_ADV:%02X%02X%02X%02X%02X%02X,%d,len=%d",
-                        pEvent->deviceInfo.addr[5], pEvent->deviceInfo.addr[4],
-                        pEvent->deviceInfo.addr[3], pEvent->deviceInfo.addr[2],
-                        pEvent->deviceInfo.addr[1], pEvent->deviceInfo.addr[0],
-                        pEvent->deviceInfo.rssi, pEvent->deviceInfo.dataLen);
+            DGL_DBG("+BT_ADV:%02X%02X%02X%02X%02X%02X,%d,len=%d",
+                    pEvent->deviceInfo.addr[5], pEvent->deviceInfo.addr[4],
+                    pEvent->deviceInfo.addr[3], pEvent->deviceInfo.addr[2],
+                    pEvent->deviceInfo.addr[1], pEvent->deviceInfo.addr[0],
+                    pEvent->deviceInfo.rssi, pEvent->deviceInfo.dataLen);
             dgl_add_scan_rec(&pEvent->deviceInfo);
         }
         break;
@@ -673,23 +756,31 @@ static void dgl_event_cb(gapRoleEvent_t *pEvent)
     case GAP_LINK_ESTABLISHED_EVENT:
         tmos_stop_task(dgl_task_id, DGL_LINK_TIMEOUT_EVT);
         if (pEvent->gap.hdr.status == SUCCESS) {
+            uint8_t was_auto = (dgl_state == DGL_AUTOCONN);
+            dgl_reset_link_state();   /* no stale handles from a prior link */
             dgl_conn_handle = pEvent->linkCmpl.connectionHandle;
             dgl_state = DGL_CONNECTED;
+            dgl_auto_hold = 0;        /* a live link proves user intent */
             dgl_disc_retries = 2;
-            AT_Response("+BT_CONN: connected");
+            AT_Response(was_auto ? "+BT_AUTO: connected" : "+BT_CONN: connected");
             /* kick GATT discovery shortly after link up */
             tmos_start_task(dgl_task_id, DGL_SVC_DISC_EVT, MS1_TO_SYSTEM_TIME(500));
         } else {
             AT_Response("+BT_CONN: failed %X", pEvent->gap.hdr.status);
+            dgl_reset_link_state();
             dgl_state = DGL_IDLE;
+            /* link attempt failed — re-arm auto-reconnect with backoff */
+            tmos_start_task(dgl_task_id, DGL_AUTO_EVT, MS1_TO_SYSTEM_TIME(DGL_AUTO_RETRY_MS));
         }
         break;
 
     case GAP_LINK_TERMINATED_EVENT:
-        dgl_conn_handle = GAP_CONNHANDLE_INIT;
+        dgl_reset_link_state();
         dgl_state = DGL_IDLE;
-        dgl_disc_state = DISC_IDLE;
         AT_Response("+BT_DISC: reason %X", pEvent->linkTerminate.reason);
+        /* spontaneous drop — reconnect immediately: a keyboard re-looking
+           for its host only directs-advertises for ~1.28 s */
+        tmos_set_event(dgl_task_id, DGL_AUTO_EVT);
         break;
 
     default:
@@ -774,6 +865,20 @@ static tmosEvents dgl_process_event(tmosTaskID task_id, tmosEvents events)
         return events ^ DGL_SVC_DISC_EVT;
     }
 
+    if (events & DGL_AUTO_EVT) {
+        if (dgl_state == DGL_AUTOCONN && (!dgl_auto || dgl_auto_hold)) {
+            /* aborted via AT+BT_AUTO=0 or AT+BT_DISC — cancel the
+               pending white-list establish (TerminateLink with
+               INVALID_CONNHANDLE cancels the initiating state) */
+            GAPRole_TerminateLink(INVALID_CONNHANDLE);
+            dgl_state = DGL_IDLE;
+            AT_Response("+BT_AUTO: aborted");
+        } else {
+            dgl_auto_kick();
+        }
+        return events ^ DGL_AUTO_EVT;
+    }
+
     if (events & DGL_LINK_TIMEOUT_EVT) {
         if (dgl_state == DGL_CONNECTING) {
             GAPRole_TerminateLink(INVALID_CONNHANDLE);
@@ -846,11 +951,17 @@ void ble_dongle_init(void)
         uint8_t  mitm = TRUE;
         uint8_t  ioCap = GAPBOND_IO_CAP_KEYBOARD_ONLY;
         uint8_t  bonding = TRUE;
+        uint8_t  syncWL = TRUE;   /* white list tracks SNV bonds — the
+                                     auto-reconnect establish filter */
+        uint8_t  syncRL = TRUE;   /* resolving list tracks bond IRKs —
+                                     RPA keyboards stay recognizable */
         GAPBondMgr_SetParameter(GAPBOND_CENT_DEFAULT_PASSCODE, sizeof(uint32_t), &passkey);
         GAPBondMgr_SetParameter(GAPBOND_CENT_PAIRING_MODE, sizeof(uint8_t), &pairMode);
         GAPBondMgr_SetParameter(GAPBOND_CENT_MITM_PROTECTION, sizeof(uint8_t), &mitm);
         GAPBondMgr_SetParameter(GAPBOND_CENT_IO_CAPABILITIES, sizeof(uint8_t), &ioCap);
         GAPBondMgr_SetParameter(GAPBOND_CENT_BONDING_ENABLED, sizeof(uint8_t), &bonding);
+        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_WL, sizeof(uint8_t), &syncWL);
+        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_RL, sizeof(uint8_t), &syncRL);
     }
 
     GATT_InitClient();
@@ -884,10 +995,32 @@ int ble_dongle_connect(uint8_t index)
 
 int ble_dongle_disconnect(void)
 {
+    if (dgl_state == DGL_AUTOCONN) {
+        /* abort the pending white-list establish and hold auto-reconnect
+           (re-arm via AT+BT_AUTO=1 or a successful connection) */
+        dgl_auto_hold = 1;
+        tmos_set_event(dgl_task_id, DGL_AUTO_EVT);
+        return 0;
+    }
     if (dgl_conn_handle == GAP_CONNHANDLE_INIT)
         return -1;
+    /* manual disconnect must not bounce back via auto-reconnect */
+    dgl_auto_hold = 1;
     GAPRole_TerminateLink(dgl_conn_handle);
     return 0;
+}
+
+int ble_dongle_auto(int mode)
+{
+    if (mode < 0)
+        return dgl_auto;   /* query */
+    dgl_auto = (mode != 0);
+    if (dgl_auto)
+        dgl_auto_hold = 0;   /* explicit re-enable also re-arms */
+    /* task context: cancels a pending establish when turning off,
+       kicks a reconnect when turning on */
+    tmos_set_event(dgl_task_id, DGL_AUTO_EVT);
+    return dgl_auto;
 }
 
 uint8_t ble_dongle_connected(void)
@@ -900,5 +1033,31 @@ uint8_t ble_dongle_state_debug(void) { return dgl_state; }
 
 /* DIAG — StartDevice return value (0=SUCCESS, 0xFF=never ran) */
 uint8_t ble_dongle_start_status_debug(void) { return dgl_start_status; }
+
+/* ===== Bond list (AT+BT_LIST) ===== */
+
+int ble_dongle_list_bonds(void)
+{
+    uint8_t count = 0;
+    GAPBondMgr_GetParameter(GAPBOND_BOND_COUNT, &count);
+    if (count == 0) {
+        AT_Response("+BT_LIST: empty");
+        return 0;
+    }
+    for (uint8_t i = 0; i < count; i++) {
+        gapBondRec_t rec;
+        if (tmos_snv_read(calcNvID(i, GAP_BOND_REC_ID_OFFSET),
+                          sizeof(rec), &rec) != SUCCESS) {
+            AT_Response("+BT_LIST:%d <snv read err>", i);
+            continue;
+        }
+        AT_Response("+BT_LIST:%d,%02X%02X%02X%02X%02X%02X,flags=%04X",
+                    i,
+                    rec.publicAddr[5], rec.publicAddr[4], rec.publicAddr[3],
+                    rec.publicAddr[2], rec.publicAddr[1], rec.publicAddr[0],
+                    rec.stateFlags);
+    }
+    return (int)count;
+}
 
 #endif /* BLE_DONGLE == TRUE */

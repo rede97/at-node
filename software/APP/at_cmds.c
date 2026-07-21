@@ -140,6 +140,8 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+BT_PAIR  - drop link + erase bonds (kbd)\r\n"
         "  AT+BT_STATE - diag dongle state (dongle)\r\n"
         "  AT+BT_PASSKEY - SMP passkey <6digits> (dongle)\r\n"
+        "  AT+BT_LIST  - bonded devices (dongle)\r\n"
+        "  AT+BT_AUTO  - auto-reconnect [0|1] (dongle)\r\n"
         "  [Infrared]\r\n"
         "  AT+IR=NEC   - send NEC <hex> [stub]\r\n"
         "  AT+IR=SIRC  - send SIRC <hex>,<bits> [stub]\r\n"
@@ -370,6 +372,22 @@ static int at_cmd_BT_PASSKEY(int argc, char *argv[]) {
     AT_Response("passkey set");
     return 0;
 }
+/* AT+BT_LIST — bonded keyboards stored in SNV */
+static int at_cmd_BT_LIST(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    ble_dongle_list_bonds();
+    return 0;
+}
+/* AT+BT_AUTO[=0|1] — auto-reconnect to bonded keyboards. No arg: query
+   (auto=<0|1> state=<dgl_state>). Manual AT+BT_DISC holds it once. */
+static int at_cmd_BT_AUTO(int argc, char *argv[]) {
+    if (argc < 2) {
+        AT_Response("auto=%d state=%d", ble_dongle_auto(-1), ble_dongle_state_debug());
+        return 0;
+    }
+    AT_Response("auto=%d", ble_dongle_auto(atoi(argv[1]) != 0));
+    return 0;
+}
 /* DIAG: AT+BT_STATE — dongle state, StartDevice status, task id */
 extern uint8_t ble_dongle_start_status_debug(void);
 static int at_cmd_BT_STATE(int argc, char *argv[]) {
@@ -383,6 +401,8 @@ static int at_cmd_BT_PAIR(int argc, char *argv[]) { (void)argc; (void)argv; AT_R
 #else
 static int at_cmd_BT_STATE(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
 static int at_cmd_BT_PASSKEY(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
+static int at_cmd_BT_LIST(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
+static int at_cmd_BT_AUTO(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1; }
 /* AT+BT_PAIR — drop the link AND erase all bonds: back to a clean
    pairing mode, like long-pressing a real keyboard's pairing key. */
 static int at_cmd_BT_PAIR(int argc, char *argv[]) {
@@ -442,6 +462,8 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_PAIR", "drop link + erase bonds (kbd)", at_cmd_BT_PAIR },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
+    { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },
+    { "AT+BT_AUTO", "auto-reconnect [0|1] (dongle)", at_cmd_BT_AUTO },
     /* Infrared */
     { "AT+IR",      "[stub] IR=NEC|SIRC|RAW,...",    at_cmd_IR_NEC },  /* sub-cmd parsed as arg1 */
 };
