@@ -58,3 +58,4 @@ software/.mrs/
 # === Python (uv) ===
 .venv/
 __pycache__/
+tools/ci/out/

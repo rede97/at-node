@@ -50,7 +50,13 @@ source env.sh        # 仓库根,幂等,仅向 PATH 前置两个目录
 ```bash
 source env.sh
 cd software/obj && make --no-print-directory main-build
+# dongle 变体(BLE HID 接收器):make clean 后
+make --no-print-directory main-build DONGLE=1
+# 两个变体一起构建:tools/ci/build_all.sh(产物在 tools/ci/out/)
 ```
+
+⚠️ 变体切换必须先 `make clean`——make 不追踪编译宏变化，不 clean 会把
+上一变体的 .o 链进新固件(build_all.sh 已内置此纪律，且结束后清理 obj 树)。
 
 产物(全部 gitignore):`at-node.elf / .hex / .lst / .map / .siz`
 
@@ -197,6 +203,6 @@ CLAUDE.md 中 "PID=0x8040" 的表述与固件不符,以固件为准)。
 - [x] 烧录工具落地:wlink(WCH-Link,已验证 CH582)/ wchisp(已装,未验证)
 - [x] Linux 构建闭环:env.sh + makefile 相对路径化,产物与 Windows 基线一致
 - [ ] 串口权限:udev 规则待执行(§4,需 sudo)
-- [ ] `tools/ci/build_all.sh / flash.sh / loop_test.sh` 三脚本
+- [x] `tools/ci/build_all.sh / flash.sh / loop_test.sh` 三脚本(待双板实测一键全绿)
 - [ ] OpenOCD + WCH-Link 备选路径验证(只读先行)
 - [ ] `AT+VER` 角色检测 + udev 按角色固定端口名(by-path 或序列号软链)

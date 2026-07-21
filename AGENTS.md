@@ -15,9 +15,11 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite device. Self
 
 Build:
 ```bash
-cd software/obj && make --no-print-directory main-build
+cd software/obj && make --no-print-directory main-build          # kbd (default)
+cd software/obj && make --no-print-directory main-build DONGLE=1 # dongle (after make clean)
+tools/ci/build_all.sh                                            # both -> tools/ci/out/
 ```
-Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`).
+Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first.
 
 Encoding check:
 ```bash

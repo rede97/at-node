@@ -83,10 +83,12 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 ### 5.2 自动化脚本（拟新增 `tools/ci/`）
 
 ```
-tools/ci/build_all.sh    # 两个变体：main(kbd.hex) + dongle-wip(dongle.hex)
-tools/ci/flash.sh <board> <hex>   # wchisp，按序列号/端口区分 A/B 板
-tools/ci/loop_test.sh    # flash 两板 → test_dongle_loop.py → 输出报告
+tools/ci/build_all.sh    # ✅ 两个变体:make DONGLE=1 参数化 → out/kbd.hex + out/dongle.hex
+tools/ci/flash.sh <hex> [role]   # ✅ wlink + 烧后 AT+VER 角色校验(board_roles.py)
+tools/ci/loop_test.sh    # ✅ build → 提示挪调试线 → 烧双板 → test_dongle_loop.py
 ```
+
+(2026-07-21 已实现，待双板一键全绿实测；单 WCH-Link 台架烧双板需挪调试线，脚本有停顿提示，-y 跳过)
 
 目标：`./tools/ci/loop_test.sh` 一条命令完成"改代码→编译→烧双板→闭环测试"。
 
