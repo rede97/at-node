@@ -139,7 +139,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
     AT_Response(
         "  [Wireless]\r\n"
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
-        "  AT+BT_CONN  - connect <idx> (dongle)\r\n"
+        "  AT+BT_CONN  - connect <idx|addr|name> (dongle)\r\n"
         "  AT+BT_DISC  - drop BLE link, re-advertise\r\n"
         "  AT+BT_PAIR  - drop link + erase bonds");
     AT_Response(
@@ -365,15 +365,18 @@ static int bt_scan_dgl(int argc, char *argv[]) {
     AT_Response("scanning %ds...", sec);
     return 0;
 }
-/* AT+BT_CONN=<idx> — connect scan result <idx>. Outcome is async:
+/* AT+BT_CONN=<idx|addr|name> — connect a scan result. Name is a
+   case-insensitive substring (strongest RSSI wins); 12-hex is an
+   address; small decimal is an index. Outcome is async:
    +BT_CONN: connected / armed (boot mode) / err ... */
 static int bt_conn_dgl(int argc, char *argv[]) {
-    if (argc < 2) { AT_Response("usage: AT+BT_CONN=<idx>"); return -1; }
-    if (ble_dongle_connect((uint8_t)atoi(argv[1])) < 0) {
-        AT_Response("ERROR: bad index or busy — run AT+BT_SCAN first");
+    if (argc < 2) { AT_Response("usage: AT+BT_CONN=<idx|addr|name>"); return -1; }
+    int idx = ble_dongle_find(argv[1]);
+    if (idx < 0 || ble_dongle_connect((uint8_t)idx) < 0) {
+        AT_Response("ERROR: no match or busy — run AT+BT_SCAN first");
         return -1;
     }
-    AT_Response("connecting...");
+    AT_Response("connecting #%d...", idx);
     return 0;
 }
 /* AT+BT_DISC (dongle) — drop the link to the keyboard (holds auto-
@@ -623,7 +626,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
     /* Wireless */
     { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
-    { "AT+BT_CONN", "connect <idx> (dongle)",        at_cmd_BT_CONN },
+    { "AT+BT_CONN", "connect <idx|addr|name> (dongle)", at_cmd_BT_CONN },
     { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
     { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },

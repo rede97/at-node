@@ -54,6 +54,14 @@ int     ble_dongle_scan(uint8_t seconds);
 int     ble_dongle_connect(uint8_t index);
 
 /*********************************************************************
+ * ble_dongle_find — resolve a connect target to a scan-list index:
+ *   decimal index ("5"), 12-hex address ("EFFF00011E21"), or name
+ *   substring ("RK-S75RGB", case-insensitive, strongest RSSI wins).
+ *   Returns the index, or -1 for no match.
+ */
+int     ble_dongle_find(const char *s);
+
+/*********************************************************************
  * ble_dongle_disconnect — terminate the current link, or abort a
  *   pending auto-reconnect establish. A manual disconnect HOLDS
  *   auto-reconnect (one-shot suppress) until AT+BT_AUTO=1 or any

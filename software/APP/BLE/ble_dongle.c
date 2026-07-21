@@ -1035,6 +1035,58 @@ int ble_dongle_connect(uint8_t index)
     return 0;
 }
 
+/* Resolve a connect target to a scan-list index (AT+BT_CONN argument):
+     "5"            — decimal index (compat)
+     "EFFF00011E21" — 12-hex address
+     "RK-S75RGB"    — name substring (case-insensitive); when several
+                      entries match, the strongest RSSI wins
+   Index lists churn between scans (eviction, RPA rotation), so agents
+   should prefer name/address over indices. Returns index or -1. */
+int ble_dongle_find(const char *s)
+{
+    if (!s || !*s || dgl_scan_count == 0)
+        return -1;
+
+    int len = 0, digits = 1, hex = 1;
+    for (const char *p = s; *p; p++, len++) {
+        if (*p < '0' || *p > '9') digits = 0;
+        if (!((*p >= '0' && *p <= '9') || (*p >= 'A' && *p <= 'F'))) hex = 0;
+    }
+    if (digits && len <= 3) {
+        int idx = 0;
+        for (const char *p = s; *p; p++) idx = idx * 10 + (*p - '0');
+        return (idx < dgl_scan_count) ? idx : -1;
+    }
+    if (hex && len == 12) {
+        static const char nib[] = "0123456789ABCDEF";
+        for (uint8_t i = 0; i < dgl_scan_count; i++) {
+            uint8_t eq = 1;
+            for (int j = 0; j < 12 && eq; j++) {
+                uint8_t b = dgl_scan_list[i].addr[5 - j / 2];
+                char c = (j & 1) ? nib[b & 0xF] : nib[b >> 4];
+                if (c != s[j]) eq = 0;
+            }
+            if (eq) return i;
+        }
+        return -1;
+    }
+    /* name substring, strongest RSSI wins */
+    int best = -1;
+    for (uint8_t i = 0; i < dgl_scan_count; i++) {
+        const char *name = dgl_scan_list[i].name;
+        if (!name[0]) continue;
+        uint8_t hit = 0;
+        for (const char *np = name; *np && !hit; np++) {
+            const char *a = np, *b = s;
+            while (*b && *a && ((*a | 0x20) == (*b | 0x20))) { a++; b++; }
+            if (*b == '\0') hit = 1;
+        }
+        if (hit && (best < 0 || dgl_scan_list[i].rssi > dgl_scan_list[best].rssi))
+            best = i;
+    }
+    return best;
+}
+
 int ble_dongle_disconnect(void)
 {
     if (dgl_state == DGL_AUTOCONN) {
