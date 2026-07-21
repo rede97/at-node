@@ -50,14 +50,17 @@ C:/tools/arduino-cli/arduino-cli.exe upload -p COM3 --fqbn esp32:esp32:esp32c3:C
 
 ## Firmware variants & branches
 
-| Branch | Role | Notes |
-|--------|------|-------|
-| `main` | Keyboard firmware (Peripheral) | Production. `BLE_DONGLE=FALSE` (macro exists, receiver code not present) |
-| `dongle-wip` | BLE HID receiver (Central) | WIP: scan/connect/pair/bond/GATT discovery work; report-handle parsing bug blocks keystream (raw dump coded, not yet captured). Also carries `USB_ENABLE` macro + `#error` config validation (not on main) |
+| Variant | Build | Notes |
+|---------|------|-------|
+| kbd | `make main-build` (default) | Production keyboard (Peripheral) |
+| dongle | `make main-build DONGLE=1` | BLE HID receiver (Central) — verified on two-board rig |
+| dual | `make main-build MODE=DUAL` | Both roles, `AT+ROLE=KBD\|DONGLE` runtime switch (DataFlash flag + soft reset) |
 
-- **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` — distinguishes identical boards.
-- **RAM budget**: 18996/32768 B (58%) after trims (BLE heap 5KB, CENTRAL=0, AT buffers shrunk). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
-- **Two-board dev rig**: board B = main (test keyboard, inject keys via AT+KEY), board A = dongle-wip (receiver). `test_dongle_loop.py` drives both from one script.
+`BLE_MODE` tri-state in config.h (`BLE_DONGLE` kept as normalized alias). dongle-wip branch merged into main 2026-07-21; milestones M1–M4 done (see `software/PLAN.md`).
+
+- **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` (runtime role in DUAL) — distinguishes identical boards.
+- **RAM budget**: kbd 19076 B (58%) / dongle 19740 B (60%) / dual 20844 B (64%). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
+- **Two-board dev rig**: kbd board (test keyboard, inject keys via AT+KEY) + dongle board (receiver). `tools/test_dongle_loop.py` + `tools/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
 
 ## Architecture
 

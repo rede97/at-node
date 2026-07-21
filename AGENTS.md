@@ -1,12 +1,13 @@
 # at-node — BLE + USB HID Keyboard & CDC Firmware
 
-CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite device. Self-contained SDK.
+CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE HID Host (receiver) role. Self-contained SDK.
 
 ## Project
 
 - **MCU**: CH582F (RISC-V rv32imac, 60 MHz, 448K Flash / 32K RAM)
 - **BLE**: 4.2/5.0 via pre-compiled `libCH58xBLE.a`, TMOS scheduler
 - **USB**: CDC ACM (PID=0x2107) + HID Keyboard composite (IAD)
+- **Roles**: kbd (Peripheral keyboard) / dongle (Central receiver, forwards a BLE keyboard to USB) / dual (`AT+ROLE` runtime switch)
 - **Entry point**: `software/APP/main.c` → `main()`
 - **Device name**: "AT-Node" (BLE advertising, set in `hidkbd_ble.c`)
 - **Design notes**: see `DESIGN.md` for memory layout, BLE bonding, USB constraints
@@ -32,9 +33,9 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 
 | Layer | Path | Role |
 |-------|------|------|
-| APP | `software/APP/` | main, BLE keyboard (`hidkbd_ble.c`), USB keyboard (`hidkbd_usb.c`), USB CDC+HID (`usb_dev.c`), AT parser+cmds |
-| APP/HWS | `software/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. |
-| APP/BLE | `software/APP/BLE/` | BLE stack init (`ble_stack.c`) + GATT services — HID Dev, HID Keyboard, Battery, Device Info |
+| APP | `software/APP/` | main, BLE keyboard (`hidkbd_ble.c`), USB keyboard (`hidkbd_usb.c`), USB CDC+HID (`usb_dev.c`), AT parser+cmds, runtime role (`role.c`), role init dispatch (`ble_init.c`) |
+| APP/HWS | `software/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. Peripheral drivers (GPIO/ADC/I2C/IR) land here, macro-gated. |
+| APP/BLE | `software/APP/BLE/` | BLE stack init (`ble_stack.c`) + GATT services (HID Dev, HID Keyboard, Battery, Device Info) + dongle receiver (`ble_dongle.c`, Central/HID host) |
 | BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
 | RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
@@ -63,5 +64,7 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 ## Notes
 
 - `DESIGN.md` — memory layout, BLE callback registration, USB/low-power exclusion details.
+- `software/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers).
+- `software/SKILL-Linux.md` — Linux build/flash/test ops manual (wlink/ISP, tools catalog, pit list).
 - `EVT/` — WCH CH583 SDK reference code (gitignored, not compiled).
 - `software/REQUIREMENTS.md` — feature requirements (Chinese).

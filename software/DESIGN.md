@@ -267,6 +267,8 @@ CH582F 硬件限制。进入任何休眠模式（Sleep/Shutdown）后 USB 时钟
 ### 4.2 BLE 绑定存储
 
 - SNV 地址：`0x77E00`（Data Flash 最后 512B）
+- 角色标志（DUAL 构建）：Data Flash 偏移 `0x7C00`（绝对 `0x77C00`,SNV 下一页），
+  4 字节记录（magic 'AR' + role + 反码），擦除/损坏回退 KBD;`AT+ROLE` 写入后软复位生效（见 `APP/role.c`)
 - 最多 1 个绑定设备，新配对覆盖旧绑定
 - SNV 读写通过 `EEPROM_READ`/`EEPROM_WRITE`，由 BLE 库通过回调 (`readFlashCB`/`writeFlashCB`) 调用
 
@@ -284,6 +286,8 @@ Flash (448KB)
 ```
 0x00000 ┌──────────────┐
         │ Startup + APP │  ~440KB
+0x77C00 ├──────────────┤
+        │ 角色标志       │  256B (DUAL 构建, AT+ROLE)
 0x77E00 ├──────────────┤
         │ Data Flash    │  2KB (SNV 用最后 512B)
 0x78000 └──────────────┘

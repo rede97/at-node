@@ -172,3 +172,21 @@ dongle 走 wlink——dongle 板 ISP 握手实测不稳（kbd 板每次都成，
 | M2 | dongle 硬化 | 自动重连 + DIAG 门控 + RK 回测通过（§2/§3） |
 | M3 | Linux CI 闭环 | ✅ 2026-07-21 `loop_test.sh` 一键全绿（混合模式：kbd 走 ISP,dongle 走 wlink） |
 | M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4),dongle-wip 早已合并 |
+| M5 | 外设驱动落地 | GPIO/ADC/I²C/IR 在 HWS 实现，宏可配，AT 命令实测（§7） |
+
+## 7. 阶段五：外设驱动（需求 F6/F7/F8/F11,2026-07-22 启动）
+
+按需求文档"AI Agent 的手和脚"定位，补齐基本外设。架构约定：
+驱动一律放 **HWS 层**（`hws_*.c/h`，纯寄存器操作，不含协议栈逻辑）,
+每个子系统一个**编译期宏开关**（`HWS_GPIO` / `HWS_ADC` / `HWS_I2C` / `HWS_IR`),
+AT 命令处理只做参数解析，调用 `hws_*` API。
+
+| 子系统 | 宏 | AT 命令 | 要点 |
+|--------|-----|---------|------|
+| GPIO | `HWS_GPIO` | `AT+GPIO_W=<pin>,<level>` / `AT+GPIO_R=<pin>` | 线性引脚号（PA=0–15, PB=16–39)，模式配置（推挽/上拉/浮空） |
+| ADC | `HWS_ADC` | `AT+ADC=<ch>` | 外部单通道采样，返回 mV（内部温度/电池电压已有） |
+| I²C | `HWS_I2C` | `AT+I2C_SCAN` / `AT+I2C_R` / `AT+I2C_W` | 主机模式 100k/400k，扫 0x00–0x7F |
+| IR | `HWS_IR` | `AT+IR=NEC\|SIRC\|RAW,...` | PWM4 38kHz 载波 + TMR1 门控状态机（需求 §3.10)，busy 时阻止 BLE 休眠 |
+
+验证策略：GPIO 回环（输出→输入互读）、ADC 浮空/定压读数、I²C 挂 EEPROM
+或传感器实测、IR 用示波器/空调实测；每完成一项跑 AT 回归确认无破坏。
