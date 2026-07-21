@@ -99,6 +99,9 @@ tools/ci/loop_test.sh    # ✅ build → 提示挪调试线 → 烧双板 → te
 (2026-07-21 已实现，待双板一键全绿实测；单 WCH-Link 台架烧双板需挪调试线，脚本有停顿提示，-y 跳过)
 
 目标：`./tools/ci/loop_test.sh` 一条命令完成"改代码→编译→烧双板→闭环测试"。
+（2026-07-21 达成。默认混合模式：kbd 走 `isp_flash.py`(AT+ISP 免挪线),
+dongle 走 wlink——dongle 板 ISP 握手实测不稳（kbd 板每次都成，dongle 板从未成功,
+疑似该板 USB 连接临界）,wlink 是可靠路径;`--isp` 双 ISP / `--wlink` 双 wlink 可选）
 
 ### 5.3 验证矩阵（每次 dongle-wip 提交必跑）
 
@@ -117,5 +120,5 @@ tools/ci/loop_test.sh    # ✅ build → 提示挪调试线 → 烧双板 → te
 |---|------|------|
 | M1 | 句柄解析修复 | ✅ 2026-07-21 达成：loop test 3 连过（§1） |
 | M2 | dongle 硬化 | 自动重连 + DIAG 门控 + RK 回测通过（§2/§3） |
-| M3 | Linux CI 闭环 | `loop_test.sh` 一键全绿（§5） |
+| M3 | Linux CI 闭环 | ✅ 2026-07-21 `loop_test.sh` 一键全绿（混合模式：kbd 走 ISP,dongle 走 wlink） |
 | M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4),dongle-wip 早已合并 |

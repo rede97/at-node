@@ -233,7 +233,8 @@ at-node 板实际 PID = **`0x2107`**(见 `usb_dev.c` 设备描述符)。
 | 串口权限 | `PermissionError: /dev/ttyACM0` | §4 udev 规则 |
 | `sed */subdir.mk` 漏层 | APP/BLE、APP/HWS 是两层深 | 必须加 `APP/*/subdir.mk` |
 | ttyS0–31 噪音 | pyserial 列出 32 个主板串口 | 按 VID 过滤,工具脚本已处理 |
-| **绑定失配回连环** | 一侧擦了绑定另一侧没擦 → dongle 拿着旧 LTK 回连 → 加密失败 → 断 → 立即再连,`+BT_*` 刷屏淹没 AT 响应,板子最终失去响应 | 预防:换绑时**两侧都擦**(kbd 和 dongle 的 `AT+BT_PAIR` 各管各的);恢复:刷屏间隙 spam `AT+BT_AUTO=0` 止环 → `AT+BT_PAIR` 清绑 → 重配对;不行就 wlink `flash -e` 全擦重刷 |
+| **绑定失配回连环** | 一侧擦了绑定另一侧没擦 → dongle 拿着旧 LTK 回连 → 加密失败 → 断 → 立即再连,`+BT_*` 刷屏淹没 AT 响应,板子最终失去响应 | 预防:换绑时**两侧都擦**(kbd 和 dongle 的 `AT+BT_PAIR` 各管各的);恢复:刷屏间隙 spam `AT+BT_AUTO=0` 止环 → `AT+BT_PAIR` 清绑 → 重配对;不行就 wlink `flash -e` 全擦重刷。固件已加固:未 armed 即断的连续 5 次失败自动 hold 并提示重配对 |
+| **dongle 板 ISP 握手不稳** | `isp_flash.py` 对 dongle 板反复 handshake miss(kbd 板每次都成) | 该板 USB 连接疑似临界;dongle 用 wlink 烧录(台架调试线常驻 dongle 板),`loop_test.sh` 默认即此混合模式 |
 | **VMware USB 仲裁** | 设备复位/重枚举后从 VM 消失(被 Windows 主机抢走);WCH-Link/ISP 设备"掉线" | VM 设置 → USB 控制器:勾选"自动连接新 USB 设备" + "显示所有 USB 输入设备"(at-node 是 HID 键盘,默认被当输入设备隐藏) |
 
 ## 8. 下一步(PLAN.md M3)

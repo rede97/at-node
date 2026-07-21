@@ -214,6 +214,7 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 | `AT+ECHO=<text>` | 回显文本 | text | P3 | ✅ |
 | `AT+KB[=USB\|BLE\|BOTH]` | 键盘输出路由；无参查询模式+连接状态 | 可选 | P0 | ✅ |
 | `AT+KEY=<mods>,<k1>,..,<k6>` | 发送 raw HID 报告（修饰键 + 最多 6 键值）| mods: 8-bit mask, k1..k6: 十进制 HID Usage ID | P0 | ✅ |
+| `AT+TAP=<ms>,<mods>,<k1>,..,<k6>` | 按下并自动释放（TMOS 定时器，非阻塞）；日常点按首选，AT+KEY 手动模式留给长按等特殊场景 | ms: 0=50 默认，钳位 10–1000 | P0 | ✅ |
 | `AT+KEY_STR=<text>` | 发送字符串（自动转换为按键序列）| text: ASCII 字符串 | P1 | ⬜（可由 `AT+KEY_SEQ` 脚本侧替代） |
 | `AT+KEY_SEQ=<delay>,<mods>,<k1>..<k6>,...` | 批量 HID 报告回放（脚本预翻译序列）| delay: ms间隔, 每7值为一个报告 | P0 | ✅ |
 | `AT+MOD=<mask>` | 设置修饰键（Ctrl/Alt/Shift/Win） | mask: 8 位位掩码 | P0 | ✅ |

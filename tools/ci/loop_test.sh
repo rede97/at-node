@@ -2,17 +2,20 @@
 # loop_test.sh — one-command closed loop (PLAN.md M3):
 #   build -> flash both boards -> run the two-board dongle loop test.
 #
-# Default: ISP flashing (tools/ci/isp_flash.py) — both boards are
-# triggered over their own CDC via AT+ISP, NO debug-wire moves.
-# Requires both boards to already run firmware that has AT+ISP
-# (first-time bring-up still needs wlink: tools/ci/flash.sh).
+# Default flow matches the standard rig wiring (debug wire lives on the
+# DONGLE board): kbd is flashed over ISP (AT+ISP, wireless), dongle via
+# wlink — because the dongle board's ISP USB handshake proved flaky
+# (2026-07-21: kbd ISP succeeds every time, dongle ISP never lands;
+# suspected marginal USB connection, wlink is the reliable path there).
 #
+#   --isp     both boards via ISP (needs AT+ISP firmware on both)
 #   --wlink   legacy interactive flow (prompts to move the debug wire)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 CI="$ROOT/tools/ci"
-MODE=isp
+MODE=mixed
+[ "${1:-}" = "--isp" ]   && MODE=isp
 [ "${1:-}" = "--wlink" ] && MODE=wlink
 cd "$ROOT"
 
@@ -30,16 +33,19 @@ if [ "$MODE" = wlink ]; then
     "$CI/flash.sh" "$CI/out/dongle.hex" dongle
 else
     KBD_PORT="$(port_of kbd)"
-    DGL_PORT="$(port_of dongle)"
-    [ -n "$KBD_PORT" ] && [ -n "$DGL_PORT" ] || {
-        echo "need both boards with [kbd]/[dongle] tags (flash.sh first)" >&2; exit 1; }
+    [ -n "$KBD_PORT" ] || { echo "no [kbd] board found" >&2; exit 1; }
     echo "=== ISP flash kbd ($KBD_PORT) ==="
     uv run python "$CI/isp_flash.py" "$CI/out/kbd.hex" --port "$KBD_PORT"
     sleep 3
-    echo "=== ISP flash dongle ($DGL_PORT) ==="
-    DGL_PORT="$(port_of dongle)"   # ports can renumber after reset
-    [ -n "$DGL_PORT" ] || { echo "dongle board lost after kbd flash" >&2; exit 1; }
-    uv run python "$CI/isp_flash.py" "$CI/out/dongle.hex" --port "$DGL_PORT"
+    if [ "$MODE" = isp ]; then
+        DGL_PORT="$(port_of dongle)"   # ports can renumber after reset
+        [ -n "$DGL_PORT" ] || { echo "no [dongle] board found" >&2; exit 1; }
+        echo "=== ISP flash dongle ($DGL_PORT) ==="
+        uv run python "$CI/isp_flash.py" "$CI/out/dongle.hex" --port "$DGL_PORT"
+    else
+        echo "=== wlink flash dongle (debug wire) ==="
+        "$CI/flash.sh" "$CI/out/dongle.hex" dongle
+    fi
 fi
 
 sleep 3
