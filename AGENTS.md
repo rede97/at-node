@@ -6,7 +6,7 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite device. Self
 
 - **MCU**: CH582F (RISC-V rv32imac, 60 MHz, 448K Flash / 32K RAM)
 - **BLE**: 4.2/5.0 via pre-compiled `libCH58xBLE.a`, TMOS scheduler
-- **USB**: CDC ACM (PID=0x8040) + HID Keyboard composite (IAD)
+- **USB**: CDC ACM (PID=0x2107) + HID Keyboard composite (IAD)
 - **Entry point**: `software/APP/main.c` → `main()`
 - **Device name**: "AT-Node" (BLE advertising, set in `hidkbd_ble.c`)
 - **Design notes**: see `DESIGN.md` for memory layout, BLE bonding, USB constraints
