@@ -133,6 +133,19 @@ static int at_cmd_AT(int argc, char *argv[])    { (void)argc; (void)argv; return
 static int at_cmd_VER(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("AT-Node v1.0 [%s] BLE: %s", role_name(role_current()), VER_LIB); return 0; }
 static int at_cmd_HELP(int argc, char *argv[])  {
     (void)argc; (void)argv;
+    /* AT+HELP=<CMD> — single-command help (F3.10) */
+    if (argc > 1) {
+        extern const at_cmd_t cmd_table[];
+        extern const int cmd_table_count;
+        for (int i = 0; i < cmd_table_count; i++) {
+            if (strcasecmp(argv[1], cmd_table[i].name) == 0) {
+                AT_Response("%s - %s", cmd_table[i].name, cmd_table[i].help);
+                return 0;
+            }
+        }
+        AT_Response("ERROR: unknown command (try AT+HELP)");
+        return -1;
+    }
     /* Chunked: AT_Response buffer is 256 B — one giant call would be
        truncated (and used to leak stack garbage before the clamp fix) */
     AT_Response("AT-Node Commands:\r\n"
@@ -141,7 +154,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+VER   - version\r\n"
         "  AT+HELP  - this help\r\n"
         "  AT+ECHO  - echo <text>\r\n"
-        "  AT+STATUS - device status [stub]\r\n"
+        "  AT+STATUS - role/kb/ble/batt\r\n"
         "  AT+RST   - software reset\r\n"
         "  AT+ISP   - enter ISP bootloader (erases app!)");
     AT_Response(
@@ -373,7 +386,16 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
 
 /* Core */
-static int at_cmd_STATUS(int argc, char *argv[])  { (void)argc; (void)argv; return 0; }
+static int at_cmd_STATUS(int argc, char *argv[])  {
+    (void)argc; (void)argv;
+    const char *mode = (kb_get_mode() == KB_USB) ? "USB" :
+                       (kb_get_mode() == KB_BLE) ? "BLE" : "BOTH";
+    AT_Response("role=%s kb=%s ble=%s batt=%umV",
+                role_name(role_current()), mode,
+                kb_ble_connected() ? "connected" : "disconnected",
+                hws_batt_read_mv());
+    return 0;
+}
 /* AT+RST / AT+RESET — software reset. Reply first, then reset after the
    response has flushed over UART/CDC. */
 static int at_cmd_RST(int argc, char *argv[])     {
