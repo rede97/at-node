@@ -63,6 +63,13 @@ void AT_Init(at_cmd_t *table, int count)
 {
     atCmdTable = table;
     atCmdCount = count;
+#if(defined(WWDG_ENABLE)) && (WWDG_ENABLE == TRUE)
+    /* Arm the window watchdog HERE, not in platform init: the boot path
+       (BLE_LibInit in particular) can exceed the ~0.5 s overflow, and
+       feeding only starts with the AT poll below. Arming earlier caused
+       a boot-time reset loop (field 2026-07-22). */
+    WWDG_ResetCfg(ENABLE);
+#endif
     at_task_id = TMOS_ProcessEventRegister(AT_ProcessEvent);
     tmos_start_task(at_task_id, AT_EVENT, MS1_TO_SYSTEM_TIME(10));
 }

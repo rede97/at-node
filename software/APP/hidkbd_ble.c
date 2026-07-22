@@ -21,6 +21,7 @@
 #include "hidkbd.h"
 #include "usb_dev.h"
 #include "hidkbd_common.h"
+#include "at_parser.h"
 
 /*********************************************************************
  * MACROS
@@ -383,6 +384,7 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
                 // get connection handle
                 ble_hid_emu_conn_handle = event->connectionHandle;
                 tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
+                AT_Response("+BT_CONNECTED");   /* URC (F3.6) */
                 PRINT("Connected..\n");
             }
             break;
@@ -401,6 +403,11 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
             }
             else if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
             {
+                /* Clear the handle — it was previously set-only, so
+                   kb_ble_connected()/AT+KB reported a stale "connected"
+                   forever after any drop (field issue 2026-07-21). */
+                ble_hid_emu_conn_handle = GAP_CONNHANDLE_INIT;
+                AT_Response("+BT_DISCONNECTED reason=%X", pEvent->linkTerminate.reason);
                 PRINT("Disconnected.. Reason:%x\n", pEvent->linkTerminate.reason);
             }
             else if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)

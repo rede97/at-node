@@ -82,10 +82,38 @@ static int        seq_count    = 0;
 static int        seq_idx      = 0;
 static uint16_t   seq_delay_ms = 0;
 
+/* KEY_STR state — full definitions live after at_cmd_KEY_SEQ */
+static char    keystr_buf[];
+static int     keystr_len, keystr_idx;
+static uint8_t keystr_active;
+static int keystr_map(char c, uint8_t *mods, uint8_t *key);
+
 static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
 {
     (void)tid;
     if (evt & SEQ_EVENT) {
+        /* KEY_STR playback interleaves press/release: even idx = press
+           char[idx/2], odd idx = release. */
+        if (keystr_active) {
+            int ci = keystr_idx / 2;
+            if (ci >= keystr_len) {
+                keystr_active = 0;
+                return evt ^ SEQ_EVENT;
+            }
+            if (keystr_idx & 1) {
+                uint8_t zero[6] = { 0 };
+                kb_flush(0, zero, 0);
+            } else {
+                uint8_t mods, key, keys[6] = { 0 };
+                if (keystr_map(keystr_buf[ci], &mods, &key)) {
+                    keys[0] = key;
+                    kb_flush(mods, keys, 1);
+                }
+            }
+            keystr_idx++;
+            tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(15));
+            return evt ^ SEQ_EVENT;
+        }
         if (seq_idx < seq_count) {
             kb_flush(seq_buf[seq_idx][0], &seq_buf[seq_idx][1], 6);
             seq_idx++;
@@ -267,6 +295,80 @@ static int at_cmd_KEY_SEQ(int argc, char *argv[])
     AT_Response("%d reports queued", n);
     return 0;
 }
+
+/* ===== KEY_STR playback — ASCII text via the SEQ timer =====
+ *
+ *   AT+KEY_STR=<text> types a string (US layout). Text is copied into
+ *   keystr_buf and played one char per SEQ_EVENT tick (~15 ms/char,
+ *   non-blocking). Re-issuing replaces the running string.
+ *   Limitations (tokenizer): no ',' or '=' inside the text.
+ */
+#define KEYSTR_MAX  96
+static char    keystr_buf[KEYSTR_MAX + 1];
+static int     keystr_len, keystr_idx;
+static uint8_t keystr_active;
+
+/* US-layout char -> mods(2=Shift), HID key. Returns 1 if mapped. */
+static int keystr_map(char c, uint8_t *mods, uint8_t *key)
+{
+    *mods = 0;
+    if (c >= 'a' && c <= 'z') { *key = (uint8_t)(c - 'a') + 4;  return 1; }
+    if (c >= 'A' && c <= 'Z') { *mods = 2; *key = (uint8_t)(c - 'A') + 4; return 1; }
+    if (c >= '1' && c <= '9') { *key = (uint8_t)(c - '1') + 30; return 1; }
+    if (c == '0') { *key = 39; return 1; }
+    switch (c) {
+        case ' ':  *key = 44; return 1;
+        case '\t': *key = 43; return 1;
+        case '-':  *key = 45; return 1;
+        case '=':  *key = 46; return 1;
+        case '[':  *key = 47; return 1;
+        case ']':  *key = 48; return 1;
+        case '\\': *key = 49; return 1;
+        case ';':  *key = 51; return 1;
+        case '\'': *key = 52; return 1;
+        case '`':  *key = 53; return 1;
+        case ',':  *key = 54; return 1;
+        case '.':  *key = 55; return 1;
+        case '/':  *key = 56; return 1;
+    }
+    {   /* shifted digit row: !@<#>$%^&*() -> Shift+1..0 */
+        static const char sym[] = "!@<#>$%^&*()";
+        for (int i = 0; sym[i]; i++)
+            if (c == sym[i]) { *mods = 2; *key = (i == 9) ? 39 : (uint8_t)(30 + i); return 1; }
+    }
+    *mods = 2;
+    switch (c) {
+        case '_': *key = 45; return 1;
+        case '+': *key = 46; return 1;
+        case '{': *key = 47; return 1;
+        case '}': *key = 48; return 1;
+        case '|': *key = 49; return 1;
+        case ':': *key = 51; return 1;
+        case '"': *key = 52; return 1;
+        case '~': *key = 53; return 1;
+        case '<': *key = 54; return 1;
+        case '>': *key = 55; return 1;
+        case '?': *key = 56; return 1;
+    }
+    return 0;
+}
+
+static int at_cmd_KEY_STR(int argc, char *argv[])
+{
+    if (argc < 2) { AT_Response("usage: AT+KEY_STR=<text> (no ',' or '=')"); return -1; }
+    int n = 0;
+    while (argv[1][n] && n < KEYSTR_MAX) { keystr_buf[n] = argv[1][n]; n++; }
+    keystr_buf[n] = '\0';
+    keystr_len  = n;
+    keystr_idx  = 0;
+    if (seq_task_id == INVALID_TASK_ID)
+        seq_task_id = TMOS_ProcessEventRegister(kb_seq_process_event);
+    keystr_active = 1;
+    tmos_start_task(seq_task_id, SEQ_EVENT, 0);
+    if (argv[1][n]) AT_Response("truncated to %d chars", KEYSTR_MAX);
+    return 0;
+}
+
 
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
 
@@ -718,7 +820,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+VER",     "firmware version",               at_cmd_VER },
     { "AT+HELP",    "command list",                   at_cmd_HELP },
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
-    { "AT+STATUS",  "[stub] device status",           at_cmd_STATUS },
+    { "AT+STATUS",  "device status (role/kb/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
@@ -728,6 +830,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+TAP",     "press+release <ms>,<mods>,<k1>..<k6>", at_cmd_TAP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
+    { "AT+KEY_STR", "type text <string> (US layout)", at_cmd_KEY_STR },
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },

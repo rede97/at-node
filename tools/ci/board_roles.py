@@ -15,6 +15,12 @@ import time
 import serial
 import serial.tools.list_ports
 
+try:
+    import termios
+    _PORT_ERRORS = (OSError, serial.SerialException, termios.error)
+except ImportError:
+    _PORT_ERRORS = (OSError, serial.SerialException)
+
 VID = 0x1A86
 PID_ISP = 0x8010  # ISP bootloader / WCH-Link — never an at-node app
 
@@ -38,7 +44,7 @@ def query_role(port):
         for role in ("kbd", "dongle"):
             if f"[{role}]" in resp:
                 return role
-    except (OSError, serial.SerialException):
+    except _PORT_ERRORS:
         pass
     return "?"
 

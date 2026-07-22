@@ -9,6 +9,7 @@
  ********************************************************************************/
 
 #include "CH58x_common.h"
+#include "config.h"
 #include <string.h>
 
 #define EP0_SIZE 0x40
@@ -409,18 +410,50 @@ void USB_DevTransProcess(void)
 
 /*********************************************************************
  *  CDC data write — sends data up to host via EP1 IN
+ *
+ *  ===== CDC TX queue (TMOS task, non-blocking) =====
+ *
+ *  Producers (AT_Response, CDC echo, async BLE events) enqueue into a
+ *  ring buffer; a dedicated TMOS task drains it at the endpoint's
+ *  pace. The previous implementation busy-waited on the EP1 ACK flag
+ *  inside the caller's context — when the host detaches (VMware USB
+ *  drop) the caller wedged indefinitely, which in turn starved the
+ *  (now removed) watchdog feed and caused a ~0.5 s reset loop.
+ *
+ *  Semantics: if the host is away, data accumulates until the ring is
+ *  full, then new bytes are DROPPED (cdc_tx_drops counts them).
+ *  Everything resumes automatically when the host returns.
  */
-static void cdc_send_packet(const uint8_t *data, uint16_t len)
+#define CDC_TX_BUF_SIZE  2048
+static uint8_t  cdc_tx_buf[CDC_TX_BUF_SIZE];
+static volatile uint16_t cdc_tx_head, cdc_tx_tail;   /* head=write, tail=read */
+static volatile uint16_t cdc_tx_drops;
+static tmosTaskID cdc_tx_task = INVALID_TASK_ID;
+#define CDC_TX_EVT  0x0001
+
+static tmosEvents cdc_tx_process(tmosTaskID tid, tmosEvents evt)
 {
-    while (len > 0) {
-        uint16_t chunk = len > EP1_SIZE ? EP1_SIZE : len;
-        while ((R8_UEP1_CTRL & MASK_UEP_T_RES) == UEP_T_RES_ACK);
-        memcpy(pEP1_IN_DataBuf, data, chunk);
-        R8_UEP1_T_LEN = (uint8_t)chunk;
+    (void)tid;
+    if (evt & CDC_TX_EVT) {
+        if (cdc_tx_tail == cdc_tx_head)
+            return evt ^ CDC_TX_EVT;               /* empty */
+        if ((R8_UEP1_CTRL & MASK_UEP_T_RES) == UEP_T_RES_ACK) {
+            /* endpoint busy — retry shortly (cooperative wait) */
+            tmos_start_task(cdc_tx_task, CDC_TX_EVT, MS1_TO_SYSTEM_TIME(2));
+            return evt ^ CDC_TX_EVT;
+        }
+        uint16_t n = (uint16_t)((cdc_tx_head - cdc_tx_tail) % CDC_TX_BUF_SIZE);
+        if (n > EP1_SIZE) n = EP1_SIZE;
+        for (uint16_t i = 0; i < n; i++)
+            pEP1_IN_DataBuf[i] = cdc_tx_buf[(cdc_tx_tail + i) % CDC_TX_BUF_SIZE];
+        cdc_tx_tail = (cdc_tx_tail + n) % CDC_TX_BUF_SIZE;
+        R8_UEP1_T_LEN = (uint8_t)n;
         R8_UEP1_CTRL = (R8_UEP1_CTRL & ~MASK_UEP_T_RES) | UEP_T_RES_ACK;
-        data += chunk;
-        len -= chunk;
+        if (cdc_tx_tail != cdc_tx_head)
+            tmos_start_task(cdc_tx_task, CDC_TX_EVT, MS1_TO_SYSTEM_TIME(1));
+        return evt ^ CDC_TX_EVT;
     }
+    return 0;
 }
 
 /*********************************************************************
@@ -441,8 +474,20 @@ uint16_t USB_CDC_Read(uint8_t *buf, uint16_t maxlen)
  */
 void USB_CDC_Write(const uint8_t *data, uint16_t len)
 {
-    if (DevConfig && cdcReady)
-        cdc_send_packet(data, len);
+    if (!DevConfig || !cdcReady)
+        return;
+    if (cdc_tx_task == INVALID_TASK_ID)
+        cdc_tx_task = TMOS_ProcessEventRegister(cdc_tx_process);
+    while (len--) {
+        uint16_t next = (cdc_tx_head + 1) % CDC_TX_BUF_SIZE;
+        if (next == cdc_tx_tail) {      /* ring full — drop, keep count */
+            cdc_tx_drops++;
+            break;
+        }
+        cdc_tx_buf[cdc_tx_head] = *data++;
+        cdc_tx_head = next;
+    }
+    tmos_set_event(cdc_tx_task, CDC_TX_EVT);
 }
 
 /*********************************************************************

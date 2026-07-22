@@ -17,7 +17,7 @@ extern "C" {
 #include "usb_dev.h"
 
 /* Max line length */
-#define AT_LINE_MAX     256
+#define AT_LINE_MAX     1024   /* IR RAW frames (F11.6): ~90 µs pairs */
 
 /* Input channel */
 enum { AT_CH_UART, AT_CH_CDC };
