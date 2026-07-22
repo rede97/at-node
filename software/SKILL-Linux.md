@@ -236,8 +236,11 @@ at-node 板实际 PID = **`0x2107`**(见 `usb_dev.c` 设备描述符)。
 | **绑定失配回连环** | 一侧擦了绑定另一侧没擦 → dongle 拿着旧 LTK 回连 → 加密失败 → 断 → 立即再连,`+BT_*` 刷屏淹没 AT 响应,板子最终失去响应 | 预防:换绑时**两侧都擦**(kbd 和 dongle 的 `AT+BT_PAIR` 各管各的);恢复:刷屏间隙 spam `AT+BT_AUTO=0` 止环 → `AT+BT_PAIR` 清绑 → 重配对;不行就 wlink `flash -e` 全擦重刷。固件已加固:未 armed 即断的连续 5 次失败自动 hold 并提示重配对 |
 | **dongle 板 ISP 握手不稳** | `isp_flash.py` 对 dongle 板反复 handshake miss(kbd 板每次都成) | 该板 USB 连接疑似临界;dongle 用 wlink 烧录(台架调试线常驻 dongle 板),`loop_test.sh` 默认即此混合模式 |
 | **扫描时隐时现(定向广播)** | kbd 断链后先做 ~1.28s 定向广播(ADV_DIRECT_IND,无名称)→ 通用扫描看不到 "AT-Node",测试脚本偶发 "not found" | 固件行为(真键盘也这样);测试脚本已修:等 2.5s + 接受 `(directed)` 条目兑底 |
-| **对端硬消失后链路悬挂** | 对端断电/重刷(不发 LL terminate)时,本端 BLE=connected 可挂 8 分钟+,不重新广播;监督超时(5s)似未生效,双向都复现过 | 疑似 LSI 时钟/栈参数问题,列入阶段三排查(与 CLK_OSC32K 评估合并);临时恢复:`AT+BT_DISC` 或复位本端 |
-| **VMware USB 仲裁** | 设备复位/重枚举后从 VM 消失(被 Windows 主机抢走);WCH-Link/ISP 设备"掉线" | VM 设置 → USB 控制器:勾选"自动连接新 USB 设备" + "显示所有 USB 输入设备"(at-node 是 HID 键盘,默认被当输入设备隐藏) |
+| **对端硬消失后链路悬挂** | 对端断电/重刷(不发 LL terminate)时,本端 BLE=connected 可挂 8 分钟+,不重新广播;监督超时(5s)似未生效,双向都复现过 | **已定位**:Central 侧监督超时**正常**(`reason 0x08` <20s 触发,`test_features.py` C1);**Peripheral(kbd)侧 LL 超时不触发**(60s+,C2 开放);应用层 `conn_handle` 清理 bug 已修(曾致 AT+KB 误报),剩余为栈层问题,列阶段三 |
+| **ISP 烧录后两线调试被锁** | wchisp 烧录写入 CFG:`CFG_DEBUG_EN=Disable`,之后 wlink fastprogram/协议错误 | **dongle(常驻调试线)禁走 ISP**,只用 wlink;kbd 同理若需调试;解锁方法待查(WCH 配置工具重写 CFG) |
+| **看门狗复位循环(已修)** | 硬件狗最长 0.56s,主机掉线时 `cdc_send_packet` 死等 EP1 ACK → 喂狗饿死 → 周期 ~0.5s 复位循环 | CDC 发送已改独立 TMOS 任务(2KB 环形队列,生产者零阻塞);`WWDG_ENABLE` 默认 FALSE;UART 发送保持同步(硬件恒速排空,有界 ~22ms,无需队列) |
+| **wlink 协议错误/掉线** | flash 中途 `fastprogram error` / `protocol 0x55` / `not found` | 拔插 WCH-Link USB;检查调试线接触;目标板独立供电(擦除电流尖峰会压垮供电临界板) |
+| **VMware USB 仲裁** | 设备复位/重枚举后从 VM 消失(被 Windows 主机抢走);WCH-Link/ISP 设备"掉线" | VM 设置 → USB 控制器:勾选"自动连接新 USB 设备" + "显示所有 USB 输入设备"(at-node 是 HID 键盘,默认被当输入设备隐藏)。终极方案:usbip 网络串口(树莓派/常开 Linux 挂板子,TCP 透传,彻底绕开 VM 仲裁) |
 
 ## 8. 下一步(PLAN.md M3)
 

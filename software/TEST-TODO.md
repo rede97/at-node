@@ -34,8 +34,8 @@
 
 | # | 测试 | 依赖 | 步骤 | 判据 | 状态 |
 |---|------|------|------|------|------|
-| C1 | 监督超时 | 双板 | dongle 连 kbd 后**断电** kbd 板 | dongle ≤10s 打印 `+BT_DISC: reason`（验证 conn_handle 修复后 LL 超时是否触发） | ⬜ |
-| C2 | 反向监督超时 | 双板 | 断开 dongle USB（或复位） | kbd 板 ≤10s `BLE=disconnected` 且恢复广播 | ⬜ |
+| C1 | 监督超时 | 双板 | dongle 连 kbd 后**断电** kbd 板 | dongle ≤10s 打印 `+BT_DISC: reason`（验证 conn_handle 修复后 LL 超时是否触发） | ✅（reason 0x08,<20s,已固化 `test_features.py`) |
+| C2 | 反向监督超时 | 双板 | 断开 dongle USB（或复位） | kbd 板 ≤10s `BLE=disconnected` 且恢复广播 | 🚧 **开放**:Peripheral 侧 LL 超时 60s+ 不触发（Central 侧正常），疑栈层问题，列阶段三 |
 | C3 | LSI 时钟影响 | 外 32.768k 晶振（如有） | `-DCLK_OSC32K=0` 构建对比 C1/C2 | 外晶振下超时行为 | ⬜ |
 | C4 | 长稳 soak | 双板过夜 | 连接挂 12h+，定时按键转发 | 无掉线/无内存异常 | ⬜ |
 | C5 | 绑定失配退避 | 双板 | kbd `AT+BT_PAIR` 单侧擦除 | dongle 5 次失败自动 hold,AT 不淹没（已验 07-21) | ✅ |
