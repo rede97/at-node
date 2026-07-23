@@ -14,7 +14,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$fqbn = "esp32:esp32:esp32c3:CDCOnBoot=cdc"
+$fqbn = "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app"
 
 Write-Host "Compiling esp32_at_node ..." -ForegroundColor Cyan
 arduino-cli compile --fqbn $fqbn .

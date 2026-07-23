@@ -30,7 +30,7 @@ esp32/
 │   ├── http_server.cpp/h      # HTTP 路由与 JSON 解析
 │   ├── at_parser.cpp/h        # 原生 AT 命令解析与执行
 │   ├── ble_keyboard.cpp/h     # NimBLE HID keyboard 封装
-│   └── build.ps1              # 编译/上传脚本
+│   └── build.ps1              # 编译/上传脚本（PartitionScheme=huge_app）
 ```
 
 ## 3. HTTP 路由设计
