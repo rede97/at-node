@@ -187,4 +187,4 @@ CH582 没有硬件 BLE 状态机和 PPI，所以 CPU 必须在每个连接事件
 - `hws_core.c` — TMOS 任务调度和 BLE 校准
 - `hidkbd_ble.c` — BLE 连接参数（连接间隔、Slave Latency）
 - `DESIGN.md` — 架构设计哲学
-- `REQUIREMENTS.md` §7 — 低功耗测试需求和目标
+- `../REQUIREMENTS.md` §7 — 低功耗测试需求和目标

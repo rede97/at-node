@@ -1,3 +1,8 @@
+---
+name: ch582-linux
+description: CH582F firmware development on Linux. Covers WCH toolchain setup, build/flash workflows (wlink/ISP), serial permission fixes, common pitfalls, and dual-board test procedures. Use when building or flashing at-node CH582 firmware on Linux.
+---
+
 # SKILL-Linux — Linux 开发环境操作手册
 
 > 版本：v0.1 · 2026-07-21

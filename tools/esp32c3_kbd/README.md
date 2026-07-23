@@ -7,7 +7,7 @@
 ## 背景(必读)
 
 - 完整动机与步骤见 `software/PLAN.md` §8 与 §8.1
-- Windows 开发踩坑要点见 `software/SKILL-Windows.md`（必读）
+- Windows 开发踩坑要点见 `.pi/skills/esp32-windows/SKILL.md`（必读）
 - 参照实现(同仓库):
   - `tools/esp32c3_probe/` — C3 BLE HID **主机** probe(验证过 AT-Node kbd 全链路)
 - 被测对象:CH582 dongle(`DONGLE=1` 或 `MODE=DUAL` 固件),

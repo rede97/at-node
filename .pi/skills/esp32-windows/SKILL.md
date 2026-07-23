@@ -1,4 +1,9 @@
-# SKILL-Windows.md — ESP32-C3 开发踩坑要点（Windows 环境）
+---
+name: esp32-windows
+description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoot, port conflicts, BLE keyboard bench build/upload, HTTP control plane, and common pitfalls when working with ESP32-C3 sketches or the tools/esp32c3_kbd test bench.
+---
+
+# ESP32-C3 开发踩坑要点（Windows 环境）
 
 > 面向本仓库的 ESP32-C3 参考主机开发（tools/esp32c3_probe、tools/rk_recon）。
 > 全是实测踩过的坑，按主题分组，新会话先读这份再动手。
