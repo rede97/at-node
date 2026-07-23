@@ -136,14 +136,14 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 
 | # | 阶段 | 内容 | 判据 |
 |---|------|------|------|
-| E1 | HTTP 基础 | `/at-node/status`, `/at-node/cmd/keyboard/{tap,text,key}` | 通过 `tools/test_esp32_at_node.py` 验证 |
-| E2 | BLE 键盘接入 | NimBLE boot keyboard，设备名 `AT-Node-ESP` | CH582 dongle 扫描/连接/转发成功 |
-| E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | 万用表/杜邦线验证 |
-| E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | 挂 EEPROM/传感器验证 |
-| E5 | IR (RMT) | `/at-node/cmd/ir/send` | 示波器/设备验证 |
-| E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | 串口测试脚本通过 |
-| E7 | 测试脚本 | `tools/test_esp32_at_node.py` | 全项 PASS |
-| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | 远程命令下发/状态上报成功 |
+| E1 | HTTP 基础 | `/at-node/status`, `/at-node/cmd/keyboard/{tap,text,key}` | ✅ 已完成（骨架实现，测试通过） |
+| E2 | BLE 键盘接入 | NimBLE boot keyboard，设备名 `AT-Node-ESP` | ✅ 已完成（CH582 dongle 扫描/连接/转发成功） |
+| E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | 🚧 未实现 |
+| E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | 🚧 未实现 |
+| E5 | IR (RMT) | `/at-node/cmd/ir/send` | 🚧 未实现 |
+| E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | 🚧 部分实现（AT/TAP/TEXT/CONF/STATUS，缺 GPIO/ADC/I2C/IR） |
+| E7 | 测试脚本 | `tools/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
+| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | 🚧 未实现（预留） |
 
 ## 10. 与 CH582 版的命令语义对齐
 
