@@ -202,6 +202,44 @@ def main():
         ok &= check("/at-node/cmd/mqtt/status", False)
         print(f"    error: {e}")
 
+    # MQTT config
+    try:
+        r = requests.post(f"{base}/cmd/mqtt/config",
+                          params={"broker": "192.168.1.7", "port": 1883}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/mqtt/config", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/mqtt/config", False)
+        print(f"    error: {e}")
+
+    # MQTT connect (queued, check status after delay)
+    try:
+        r = requests.post(f"{base}/cmd/mqtt/connect", timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/mqtt/connect", j.get("ok") and j.get("queued"))
+
+        time.sleep(3)
+        r = requests.get(f"{base}/cmd/mqtt/status", timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("MQTT connected", j.get("connected"))
+    except Exception as e:
+        ok &= check("MQTT connect", False)
+        print(f"    error: {e}")
+
+    # MQTT publish
+    try:
+        r = requests.post(f"{base}/cmd/mqtt/publish",
+                          params={"topic": "test/topic", "msg": "hello"}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/mqtt/publish", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/mqtt/publish", False)
+        print(f"    error: {e}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
 
