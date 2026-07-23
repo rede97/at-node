@@ -230,7 +230,7 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 | `AT+I2C_SCAN` | 扫描 I²C 总线上的设备（SCL=PB13/SDA=PB12） | 无 | P1 | ✅ 冒烟已验（HWS_I2C 宏可配） |
 | `AT+I2C_R=<addr>,<reg>,<len>` | 读取 I²C 设备寄存器（hex 参数，len≤32） | addr: 7 位地址, reg: 寄存器, len: 字节数 | P1 | ✅ 冒烟已验 |
 | `AT+I2C_W=<addr>,<reg>,<data>` | 写入 I²C 设备寄存器（hex，≤16 字节） | addr, reg, data: 十六进制 | P1 | ✅ 冒烟已验 |
-| `AT+SLEEP=<mode>` | 进入指定休眠模式 | mode: 0=空闲, 1=睡眠, 2=下电 | P2 | 🚧 stub |
+| `AT+SLEEP=<mode>[,<sec>]` | RTC 定时休眠并唤醒（USB 构建下禁用，电池/UART 场景用） | mode: 0=空闲, 1=睡眠, 2=下电; sec 默认 5 | P2 | ✅（USB 构建拒绝执行） |
 | `AT+STATUS` | 查询设备状态（角色/输出模式/BLE/电量） | 无 | P2 | ✅ |
 | `AT+BT_SCAN[=<sec>[,<过滤>]]` | 扫描 BLE 设备，按信号排序（idx 0=最近）；过滤=名称子串或 HID | sec: 1–30，默认 5 | P3 | ✅ |
 | `AT+BT_CONN=<idx\|addr\|name>` | 连接扫描结果（dongle）：索引 / 12 位地址 / 名称子串（信号最强者优先） | name 大小写不敏感 | P3 | ✅ |
