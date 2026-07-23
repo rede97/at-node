@@ -37,9 +37,9 @@ def main():
         return 1
 
     try:
-        r = requests.post(f"{base}/text", params={"s": args.text}, timeout=30)
+        r = requests.post(f"{base}/text", params={"s": args.text}, timeout=5)
         r.raise_for_status()
-        print(f"OK: typed '{args.text}'")
+        print(f"OK: {r.text} '{args.text}'")
     except Exception as e:
         print(f"FAIL: /text request failed ({e})")
         return 1

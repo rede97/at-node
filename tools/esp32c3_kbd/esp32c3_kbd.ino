@@ -105,6 +105,13 @@ static struct {
     uint8_t keys[6];
 } g_key_state;
 
+static String  g_type_text;
+static size_t  g_type_idx   = 0;
+static int     g_type_ms    = 40;
+static int     g_type_gap   = 30;
+static uint32_t g_type_next  = 0;
+static bool    g_type_busy  = false;
+
 /* --- helpers ----------------------------------------------------------- */
 static uint8_t parse_uint8(const String& s)
 {
@@ -208,25 +215,55 @@ static void handle_text(void)
         g_server_http.send(409, "text/plain", "BLE not connected");
         return;
     }
+    if (g_type_busy) {
+        g_server_http.send(423, "text/plain", "typing in progress");
+        return;
+    }
     String text = g_server_http.arg("s");
     if (text.length() == 0) {
         g_server_http.send(400, "text/plain", "missing s=");
         return;
     }
-    for (unsigned int i = 0; i < text.length(); i++) {
-        uint8_t c = (uint8_t)text[i];
-        if (c >= 'a' && c <= 'z') {
-            key_tap(0, 0x04 + (c - 'a'), 20);
-        } else if (c >= 'A' && c <= 'Z') {
-            key_tap(0x02, 0x04 + (c - 'A'), 20);
-        } else if (c == ' ') {
-            key_tap(0, 0x2C, 20);
-        } else {
-            key_tap(0, c, 20);
-        }
-        delay(10);
+    int ms  = g_server_http.arg("ms").toInt();
+    int gap = g_server_http.arg("gap").toInt();
+    g_type_ms  = (ms > 0) ? ms : 40;
+    g_type_gap = (gap > 0) ? gap : 30;
+    g_type_text = text;
+    g_type_idx  = 0;
+    g_type_next = 0;
+    g_type_busy = true;
+    g_server_http.send(200, "text/plain", "OK queued");
+}
+
+static void type_poll(void)
+{
+    if (!g_type_busy) return;
+
+    uint32_t now = millis();
+    if (now < g_type_next) return;
+
+    if (g_type_idx >= g_type_text.length()) {
+        g_type_busy = false;
+        g_type_text = "";
+        return;
     }
-    g_server_http.send(200, "text/plain", "OK");
+
+    uint8_t c = (uint8_t)g_type_text[g_type_idx];
+    if (c >= 'a' && c <= 'z') {
+        key_tap(0, 0x04 + (c - 'a'), g_type_ms);
+    } else if (c >= 'A' && c <= 'Z') {
+        key_tap(0x02, 0x04 + (c - 'A'), g_type_ms);
+    } else if (c == ' ') {
+        key_tap(0, 0x2C, g_type_ms);
+    } else if (c >= '0' && c <= '9') {
+        key_tap(0, 0x1E + (c - '0'), g_type_ms);
+    } else if (c == '\n') {
+        key_tap(0, 0x28, g_type_ms); /* Return */
+    } else {
+        key_tap(0, c, g_type_ms);
+    }
+    g_type_idx++;
+    g_type_next = now + g_type_ms + g_type_gap;
 }
 
 static void handle_not_found(void)
@@ -252,8 +289,21 @@ static void handle_serial(void)
         String text = line.substring(5);
         if (is_connected()) {
             for (unsigned int i = 0; i < text.length(); i++) {
-                key_tap(0, (uint8_t)text[i], 20);
-                delay(10);
+                uint8_t c = (uint8_t)text[i];
+                if (c >= 'a' && c <= 'z') {
+                    key_tap(0, 0x04 + (c - 'a'), 40);
+                } else if (c >= 'A' && c <= 'Z') {
+                    key_tap(0x02, 0x04 + (c - 'A'), 40);
+                } else if (c == ' ') {
+                    key_tap(0, 0x2C, 40);
+                } else if (c >= '0' && c <= '9') {
+                    key_tap(0, 0x1E + (c - '0'), 40);
+                } else if (c == '\n') {
+                    key_tap(0, 0x28, 40);
+                } else {
+                    key_tap(0, c, 40);
+                }
+                delay(30);
             }
             Serial.println("OK TEXT");
         } else {
@@ -356,5 +406,6 @@ void loop(void)
 {
     if (g_wifi_ready) g_server_http.handleClient();
     handle_serial();
+    type_poll();
     delay(2);
 }
