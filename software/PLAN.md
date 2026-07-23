@@ -222,14 +222,15 @@ ESP32-C3 作为**可编程模拟键盘**（BLE HID Peripheral），获得：
 - **场景可编程**：RPA 地址旋转 / boot·report 模式变体 /
   "断电式消失"——覆盖实体键盘买不起也买不全的边界场景。
 - **烧录稳定**（esptool / arduino-cli），消除 WCH 工具链的 USB 重连摩擦。
-- **标准库即可**：使用 `ESP32BLECombo` 标准 Arduino 库（NimBLE 底层），提供 boot
-  keyboard input report + Just Works 配对，与 AT-Node 键盘板工作模式一致。
+- **直接 NimBLE 实现**：不依赖 `ESP32-BLE-Keyboard`/`ESP32BLECombo` 高层封装，
+  精确控制 boot input/output report 与 protocol mode 属性，与 CH582 dongle
+  的发现逻辑完全对齐。
 
 **实施步骤**：
 
 | # | 内容 | 产出 | 解锁的测试 |
 |---|------|------|-----------|
-| ① | 最简键盘 sketch（**ESP32BLECombo** 库，NimBLE，boot 报告）放 `tools/esp32c3_kbd/` | 替代 kbd 板跑通 loop/hardening | 🚧 代码/上传完成，待 dongle 闭环实测 |
+| ① | 最简键盘 sketch（**NimBLE-Arduino 直接实现 boot keyboard**，8 字节报告）放 `tools/esp32c3_kbd/` | 替代 kbd 板跑通 loop/hardening | ✅ 闭环实测通过（COM3 C3 + COM4 dongle） |
 | ② | LE Privacy RPA 周期轮换 | RPA 键盘模拟 | dongle RPA 重连（TEST-TODO C 区） |
 | ③ | ~~手工 Report Map 变体~~ | ~~F1.22 黄金测试键盘~~ | **不实现**（RK/复杂键盘支持已废弃，见 §3） |
 | ④ | 射频硬关断模拟"断电消失" | 监督超时触发器 | C1/C2 精确复现（通用连接可靠性） |

@@ -49,10 +49,9 @@
 
 2. 首次安装依赖库（已装则跳过）：
    ```powershell
-   arduino-cli config set library.enable_unsafe_install true
-   arduino-cli lib install --git-url https://github.com/T-vK/ESP32-BLE-Keyboard.git
-   # 若核心 3.3.10 与 ESP32-BLE-Keyboard 不兼容，改用 ESP32BLECombo：
-   # arduino-cli lib install ESP32BLECombo
+   # 只需要 NimBLE-Arduino，随 ESP32 core 3.x 已自带，无需额外安装。
+   # 若编译提示缺少，可尝试：
+   # arduino-cli lib install NimBLE-Arduino
    ```
 
 3. 编译/上传：
@@ -71,9 +70,10 @@
 
 ## 技术要点
 
-- 库选择:**ESP32BLECombo** 库（NimBLE 底层）。
-  原标准 ESP32-BLE-Keyboard 与当前 esp32 core 3.3.10 的 `String` API
-  不兼容（`std::string`/`String` 混用导致编译失败），因此改用本库。
+- 库选择:**NimBLE-Arduino 直接实现最小 HID boot keyboard**，不再依赖高层封装。
+  原因：ESP32-BLE-Keyboard 与 esp32 core 3.3.10 不兼容；ESP32BLECombo
+  不暴露带 READ 属性的 boot input report，导致 CH582  dongle 的
+  Read-Using-Char-UUID 发现失败。直接 NimBLE 可以精确控制特征属性。
 - 配对:Just Works 即可(CH582 dongle 支持;MITM 不是当前目标)
 - 串口命令风格对齐 at-node:一行一条,`KEY <mods>,<k1>..<k6>` / `TAP <ms>,<mods>,<k>`
 - USB 串口只作后备,主控走 HTTP
