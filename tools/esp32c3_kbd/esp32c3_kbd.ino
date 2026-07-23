@@ -6,7 +6,7 @@
  * CH582F dongle (DONGLE=1 or MODE=DUAL) over BLE.
  *
  * Features:
- *   - Standard Arduino ESP32-BLE-Keyboard library, boot keyboard report.
+ *   - ESP32BLECombo library (NimBLE), keyboard-only mode.
  *   - WiFi HTTP control plane on http://esp32kbd.local
  *   - USB serial fallback commands
  *
@@ -24,61 +24,38 @@
 #include <WiFi.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
-#include <BleKeyboard.h>
-
-/* --- user configuration: edit before build ----------------------------- */
-#ifndef WIFI_SSID
-#define WIFI_SSID     "YOUR_SSID"
-#endif
-#ifndef WIFI_PASSWORD
-#define WIFI_PASSWORD "YOUR_PASSWORD"
-#endif
+#include <ESP32BLECombo.h>
+#include "wifi_config.h"
 
 #define HOSTNAME      "esp32kbd"
 #define DEVICE_NAME   "C3-Kbd"
 #define MANUFACTURER  "AT-Node"
 
+/* modifier bit -> USB HID modifier keycode */
+static const uint8_t MOD_KEYS[8] = {
+    0xE0,   /* Left Ctrl  */
+    0xE1,   /* Left Shift */
+    0xE2,   /* Left Alt   */
+    0xE3,   /* Left GUI   */
+    0xE4,   /* Right Ctrl */
+    0xE5,   /* Right Shift*/
+    0xE6,   /* Right Alt  */
+    0xE7    /* Right GUI  */
+};
+
 /* --- globals ----------------------------------------------------------- */
-BleKeyboard bleKeyboard(DEVICE_NAME, MANUFACTURER, 100);
+ESP32BLECombo bleCombo;
 WebServer server(80);
 
 static bool wifi_ready = false;
 
 /* --- helpers ----------------------------------------------------------- */
-static uint8_t parse_mods(const String& s)
+static uint8_t parse_uint8(const String& s)
 {
     if (s.length() == 0) {
         return 0;
     }
     return (uint8_t)strtoul(s.c_str(), NULL, 0);
-}
-
-static uint8_t parse_key(const String& s)
-{
-    if (s.length() == 0) {
-        return 0;
-    }
-    return (uint8_t)strtoul(s.c_str(), NULL, 0);
-}
-
-static void send_key_report(uint8_t mods, uint8_t k0, uint8_t k1,
-                            uint8_t k2, uint8_t k3, uint8_t k4, uint8_t k5)
-{
-    KeyReport report;
-    report.modifiers = mods;
-    report.reserved  = 0;
-    report.keys[0]   = k0;
-    report.keys[1]   = k1;
-    report.keys[2]   = k2;
-    report.keys[3]   = k3;
-    report.keys[4]   = k4;
-    report.keys[5]   = k5;
-    bleKeyboard.sendReport(&report);
-}
-
-static void clear_keys(void)
-{
-    send_key_report(0, 0, 0, 0, 0, 0, 0);
 }
 
 static void key_tap(uint8_t mods, uint8_t key, int ms)
@@ -86,9 +63,22 @@ static void key_tap(uint8_t mods, uint8_t key, int ms)
     if (ms <= 0) {
         ms = 100;
     }
-    send_key_report(mods, key, 0, 0, 0, 0, 0);
+
+    for (int i = 0; i < 8; i++) {
+        if (mods & (1 << i)) {
+            bleCombo.press(MOD_KEYS[i]);
+        }
+    }
+
+    bleCombo.press(key);
     delay(ms);
-    clear_keys();
+    bleCombo.release(key);
+
+    for (int i = 0; i < 8; i++) {
+        if (mods & (1 << i)) {
+            bleCombo.release(MOD_KEYS[i]);
+        }
+    }
 }
 
 /* --- HTTP handlers ----------------------------------------------------- */
@@ -96,7 +86,7 @@ static void handle_status(void)
 {
     String json = "{";
     json += "\"connected\":";
-    json += bleKeyboard.isConnected() ? "true" : "false";
+    json += bleCombo.isConnected() ? "true" : "false";
     json += ",\"ip\":\"";
     json += WiFi.localIP().toString();
     json += "\"";
@@ -107,13 +97,13 @@ static void handle_status(void)
 
 static void handle_tap(void)
 {
-    if (!bleKeyboard.isConnected()) {
+    if (!bleCombo.isConnected()) {
         server.send(409, "text/plain", "BLE not connected");
         return;
     }
 
-    uint8_t mods = parse_mods(server.arg("mods"));
-    uint8_t key  = parse_key(server.arg("k"));
+    uint8_t mods = parse_uint8(server.arg("mods"));
+    uint8_t key  = parse_uint8(server.arg("k"));
     int ms       = server.arg("ms").toInt();
 
     key_tap(mods, key, ms);
@@ -122,7 +112,7 @@ static void handle_tap(void)
 
 static void handle_text(void)
 {
-    if (!bleKeyboard.isConnected()) {
+    if (!bleCombo.isConnected()) {
         server.send(409, "text/plain", "BLE not connected");
         return;
     }
@@ -133,7 +123,7 @@ static void handle_text(void)
         return;
     }
 
-    bleKeyboard.print(text);
+    bleCombo.print(text);
     server.send(200, "text/plain", "OK");
 }
 
@@ -158,20 +148,20 @@ static void handle_serial(void)
     if (line.startsWith("TAP ")) {
         String args = line.substring(4);
         args.trim();
-        uint8_t key  = (uint8_t)strtoul(args.c_str(), NULL, 0);
+        uint8_t key = (uint8_t)strtoul(args.c_str(), NULL, 0);
         key_tap(0, key, 100);
         Serial.println("OK TAP");
     } else if (line.startsWith("TEXT ")) {
         String text = line.substring(5);
-        if (bleKeyboard.isConnected()) {
-            bleKeyboard.print(text);
+        if (bleCombo.isConnected()) {
+            bleCombo.print(text);
             Serial.println("OK TEXT");
         } else {
             Serial.println("ERR NOT CONNECTED");
         }
     } else if (line == "STATUS") {
         Serial.print("CONNECTED=");
-        Serial.println(bleKeyboard.isConnected() ? "1" : "0");
+        Serial.println(bleCombo.isConnected() ? "1" : "0");
     } else {
         Serial.println("ERR UNKNOWN");
     }
@@ -216,7 +206,18 @@ void setup(void)
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
 
-    bleKeyboard.begin();
+    ESP32BLEComboConfig cfg;
+    cfg.mode = ESP32BLEComboMode::KEYBOARD_ONLY;
+    cfg.deviceName = DEVICE_NAME;
+    cfg.manufacturer = MANUFACTURER;
+    cfg.batteryLevel = 100;
+    cfg.appearance = ESP32BLEComboAppearance::KEYBOARD;
+    cfg.enableSecurity = true;
+    cfg.keyPressDelayMs = 20;
+    cfg.keyReleaseDelayMs = 20;
+    cfg.keyIntervalDelayMs = 10;
+
+    bleCombo.begin(cfg);
     Serial.println("BLE keyboard started");
 }
 
