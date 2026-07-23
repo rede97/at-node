@@ -149,6 +149,27 @@ def main():
         ok &= check("AT+GPIO/ADC", False)
         print(f"    error: {e}")
 
+    # I2C scan
+    try:
+        r = requests.post(f"{base}/cmd/i2c/scan", timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/i2c/scan", j.get("ok") and "devices" in j)
+    except Exception as e:
+        ok &= check("/at-node/cmd/i2c/scan", False)
+        print(f"    error: {e}")
+
+    # raw AT I2C scan
+    try:
+        r = requests.post(f"{base}/at", data="AT+I2C_SCAN", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+I2C_SCAN", j.get("ok"))
+    except Exception as e:
+        ok &= check("AT+I2C_SCAN", False)
+        print(f"    error: {e}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
 

@@ -24,6 +24,7 @@
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include <Wire.h>
 #include <NimBLEDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
@@ -304,6 +305,61 @@ static void handle_at(void)
         int ch = cmd.substring(7).toInt();
         int mv = analogReadMilliVolts(ch);
         resp = "+ADC:" + String(mv);
+    } else if (cmd == "AT+I2C_SCAN") {
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                resp += "+I2C_SCAN:0x" + String(addr, HEX) + " ";
+            }
+        }
+        if (resp.length() == 0) resp = "+I2C_SCAN:none";
+    } else if (cmd.startsWith("AT+I2C_R=")) {
+        String args = cmd.substring(9);
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int addr = strtoul(args.substring(0, c1).c_str(), NULL, 0);
+            int reg  = strtoul(args.substring(c1 + 1, c2).c_str(), NULL, 0);
+            int len  = args.substring(c2 + 1).toInt();
+            Wire.beginTransmission(addr);
+            Wire.write(reg);
+            Wire.endTransmission(false);
+            Wire.requestFrom(addr, len);
+            resp = "+I2C_R:";
+            while (Wire.available()) {
+                uint8_t b = Wire.read();
+                if (b < 0x10) resp += "0";
+                resp += String(b, HEX);
+                resp += " ";
+            }
+            resp.trim();
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+I2C_W=")) {
+        String args = cmd.substring(9);
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int addr = strtoul(args.substring(0, c1).c_str(), NULL, 0);
+            int reg  = strtoul(args.substring(c1 + 1, c2).c_str(), NULL, 0);
+            String hexData = args.substring(c2 + 1);
+            hexData.replace(" ", "");
+            Wire.beginTransmission(addr);
+            Wire.write(reg);
+            for (int i = 0; i < hexData.length(); i += 2) {
+                String byteStr = hexData.substring(i, i + 2);
+                uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
+                Wire.write(b);
+            }
+            if (Wire.endTransmission() == 0) {
+                resp = "OK";
+            } else {
+                resp = "ERROR";
+            }
+        } else {
+            resp = "ERROR";
+        }
     } else {
         resp = "ERROR: unknown command";
     }
@@ -413,6 +469,77 @@ static void handle_adc_read(void)
     int mv = analogReadMilliVolts(pin);
     send_json("{\"ok\":true,\"cmd\":\"adc/read\",\"ch\":" + String(ch) +
               ",\"mv\":" + String(mv) + "}");
+}
+
+/* --- I2C --------------------------------------------------------------- */
+static void handle_i2c_scan(void)
+{
+    String found = "[";
+    bool first = true;
+    for (uint8_t addr = 1; addr < 127; addr++) {
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0) {
+            if (!first) found += ",";
+            found += "\"0x" + String(addr, HEX) + "\"";
+            first = false;
+        }
+    }
+    found += "]";
+    send_json("{\"ok\":true,\"cmd\":\"i2c/scan\",\"devices\":" + found + "}");
+}
+
+static void handle_i2c_read(void)
+{
+    int addr = strtoul(g_http.arg("addr").c_str(), NULL, 0);
+    int reg  = strtoul(g_http.arg("reg").c_str(), NULL, 0);
+    int len  = g_http.arg("len").toInt();
+    if (len <= 0 || len > 32) {
+        send_json("{\"ok\":false,\"error\":\"len must be 1-32\"}", 400);
+        return;
+    }
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) {
+        send_json("{\"ok\":false,\"error\":\"i2c no ack\"}", 500);
+        return;
+    }
+    Wire.requestFrom(addr, len);
+    String data = "";
+    while (Wire.available()) {
+        uint8_t b = Wire.read();
+        char hex[3];
+        sprintf(hex, "%02X", b);
+        data += hex;
+        data += " ";
+    }
+    data.trim();
+    send_json("{\"ok\":true,\"cmd\":\"i2c/read\",\"addr\":\"0x" + String(addr, HEX) +
+              "\",\"reg\":\"0x" + String(reg, HEX) + "\",\"data\":\"" + data + "\"}");
+}
+
+static void handle_i2c_write(void)
+{
+    int addr = strtoul(g_http.arg("addr").c_str(), NULL, 0);
+    int reg  = strtoul(g_http.arg("reg").c_str(), NULL, 0);
+    String hexData = g_http.arg("data");
+    hexData.replace(" ", "");
+    if (hexData.length() == 0 || (hexData.length() % 2) != 0) {
+        send_json("{\"ok\":false,\"error\":\"data must be hex pairs\"}", 400);
+        return;
+    }
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    for (int i = 0; i < hexData.length(); i += 2) {
+        String byteStr = hexData.substring(i, i + 2);
+        uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
+        Wire.write(b);
+    }
+    if (Wire.endTransmission() != 0) {
+        send_json("{\"ok\":false,\"error\":\"i2c no ack\"}", 500);
+        return;
+    }
+    send_json("{\"ok\":true,\"cmd\":\"i2c/write\",\"addr\":\"0x" + String(addr, HEX) +
+              "\",\"reg\":\"0x" + String(reg, HEX) + "\"}");
 }
 
 static void handle_not_found(void)
@@ -544,6 +671,63 @@ static void handle_serial(void)
         Serial.print("+ADC:");
         Serial.println(mv);
         Serial.println("OK");
+    } else if (line == "AT+I2C_SCAN") {
+        for (uint8_t addr = 1; addr < 127; addr++) {
+            Wire.beginTransmission(addr);
+            if (Wire.endTransmission() == 0) {
+                Serial.print("+I2C_SCAN:0x");
+                Serial.println(addr, HEX);
+            }
+        }
+        Serial.println("OK");
+    } else if (line.startsWith("AT+I2C_R=")) {
+        String args = line.substring(9);
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int addr = strtoul(args.substring(0, c1).c_str(), NULL, 0);
+            int reg  = strtoul(args.substring(c1 + 1, c2).c_str(), NULL, 0);
+            int len  = args.substring(c2 + 1).toInt();
+            Wire.beginTransmission(addr);
+            Wire.write(reg);
+            Wire.endTransmission(false);
+            Wire.requestFrom(addr, len);
+            Serial.print("+I2C_R:");
+            while (Wire.available()) {
+                uint8_t b = Wire.read();
+                if (b < 0x10) Serial.print("0");
+                Serial.print(b, HEX);
+                Serial.print(" ");
+            }
+            Serial.println();
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+I2C_W=")) {
+        String args = line.substring(9);
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int addr = strtoul(args.substring(0, c1).c_str(), NULL, 0);
+            int reg  = strtoul(args.substring(c1 + 1, c2).c_str(), NULL, 0);
+            String hexData = args.substring(c2 + 1);
+            hexData.replace(" ", "");
+            Wire.beginTransmission(addr);
+            Wire.write(reg);
+            for (int i = 0; i < hexData.length(); i += 2) {
+                String byteStr = hexData.substring(i, i + 2);
+                uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
+                Wire.write(b);
+            }
+            if (Wire.endTransmission() == 0) {
+                Serial.println("OK");
+            } else {
+                Serial.println("ERROR");
+            }
+        } else {
+            Serial.println("ERROR");
+        }
     } else {
         Serial.println("ERROR");
     }
@@ -588,12 +772,19 @@ void setup(void)
         g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
         g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
         g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
+        g_http.on("/at-node/cmd/i2c/scan", HTTP_POST, handle_i2c_scan);
+        g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
+        g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
     } else {
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
+
+    /* I2C: SDA=GPIO8, SCL=GPIO9 (ESP32-C3 default) */
+    Wire.begin(8, 9);
+    Serial.println("I2C initialized (SDA=8, SCL=9)");
 
     ble_init();
 }
