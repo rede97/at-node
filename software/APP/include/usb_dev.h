@@ -15,6 +15,11 @@ extern "C" {
 #include "CH58x_common.h"
 
 extern void USB_Device_Setup(void);
+
+/* Detach the USB device (host sees unplug) — required before sleep
+   (the USB clock stops in low-power modes). Re-attach with
+   USB_Device_Setup() + PFIC_EnableIRQ(USB_IRQn) after wake. */
+void USB_DevDetach(void);
 extern void USB_DevTransProcess(void);
 extern void USB_HID_SendReport(uint8_t *buf, uint8_t len);
 extern void USB_CDC_Write(const uint8_t *data, uint16_t len);
