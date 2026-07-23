@@ -217,3 +217,38 @@ ESP32-C3 作为**可编程模拟键盘**（BLE HID Peripheral），获得：
 **与现有台架关系**：脚本沿用双板模式（`test_dongle_loop.py` 的角色识别
 扩展出 `c3` 标签）；CH582 kbd 板保留（同栈回归仍有价值）。
 优先级：排在 TEST-TODO C 区之前——它是 C 区多项测试的使能器。
+
+### 8.1 控制面：HTTP API（2026-07-22 评估通过）
+
+C3 同时运行 WiFi HTTP 服务，测试脚本/Agent 以 HTTP 请求驱动键盘动作,
+**键盘侧彻底去 USB 化**（仅需供电），绕开 VMware USB 仲裁痛点。
+
+```
+测试脚本/Agent --HTTP(WiFi)--> ESP32-C3(HTTP 服务 + BLE 键盘外设)
+                                      | BLE HID reports
+                                      v
+                                 CH582 dongle --USB--> 主机
+```
+
+**API 设计**（草案）：
+
+| 端点 | 功能 |
+|------|------|
+| `GET  /status` | 状态：BLE 连接/RPA/当前 Map/IP |
+| `POST /tap?ms=&mods=&k=` | 点按（按下+自动释放） |
+| `POST /key?mods=&k=` | 手动报告（k=0 为释放） |
+| `POST /text?s=` | 字符串打字 |
+| `POST /seq?d=&r=` | 按键序列回放 |
+| `POST /rpa?enable=&period_s=` | RPA 地址轮换开关/周期 |
+| `POST /rf?state=off\|on` | 模拟断电消失/恢复（射频硬关断） |
+| `POST /map?name=boot\|nkro_multi` | Report Map 变体切换 |
+| `POST /pair` `/disconnect` | 配对/断链控制 |
+
+寻址用 mDNS（`esp32kbd.local`）。
+
+**评估结论（可行，推荐为主控制面）**：
+- WiFi+BLE 共存为乐鑫官方支持组合（射频时分复用），C3 资源充足；
+- 按键延迟抖动 ~10-100ms，**功能/内容验证无影响，延迟指标不测它**;
+- 时序敏感动作（断电窗口等）由 C3 固件本地执行，HTTP 只发触发；
+- 串口控制面保留作后备/调试；
+- 工作量：v1（/status+/tap+/text+mDNS）约 0.5-1 天，场景端点随 ②③ 扩展。
