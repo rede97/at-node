@@ -58,10 +58,12 @@ static WebServer g_http(80);
 static bool      g_wifi_ready = false;
 
 /* --- MQTT client ------------------------------------------------------- */
-static WiFiClientSecure g_mqtt_wifi;
+static WiFiClient       g_mqtt_wifi;
 static PubSubClient     g_mqtt(g_mqtt_wifi);
 static bool             g_mqtt_connected = false;
+static bool             g_mqtt_connect_pending = false;
 static String           g_mqtt_broker;
+static TaskHandle_t     g_mqtt_task = NULL;
 static int              g_mqtt_port = 8883;
 static String           g_mqtt_user;
 static String           g_mqtt_pass;
@@ -739,13 +741,13 @@ static void mqtt_callback(char* topic, byte* payload, unsigned int length)
 static bool mqtt_connect(void)
 {
     if (g_mqtt_broker.length() == 0) return false;
+    Serial.printf("MQTT connect to %s:%d ...\n", g_mqtt_broker.c_str(), g_mqtt_port);
     g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
     g_mqtt.setCallback(mqtt_callback);
     g_mqtt_client_id = "atnode-" + g_hostname;
     g_mqtt_topic_prefix = "atnode/" + g_hostname;
 
-    g_mqtt_wifi.setInsecure(); /* skip cert verify for local dev; use setCACert for prod */
-
+    /* For local testing use plain TCP; use WiFiClientSecure for TLS. */
     bool ok;
     if (g_mqtt_user.length() > 0) {
         ok = g_mqtt.connect(g_mqtt_client_id.c_str(), g_mqtt_user.c_str(), g_mqtt_pass.c_str());
@@ -753,11 +755,24 @@ static bool mqtt_connect(void)
         ok = g_mqtt.connect(g_mqtt_client_id.c_str());
     }
     g_mqtt_connected = ok;
+    Serial.printf("MQTT connect %s\n", ok ? "OK" : "FAILED");
     return ok;
+}
+
+static void mqtt_task_func(void* arg)
+{
+    /* MQTT background task disabled — using main loop with short timeout */
+    for (;;) {
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
 }
 
 static void mqtt_poll(void)
 {
+    if (g_mqtt_connect_pending) {
+        g_mqtt_connect_pending = false;
+        mqtt_connect();
+    }
     if (!g_mqtt_connected) return;
     if (!g_mqtt.loop()) {
         g_mqtt_connected = false;
@@ -803,10 +818,8 @@ static void handle_mqtt_config(void)
 
 static void handle_mqtt_connect(void)
 {
-    bool ok = mqtt_connect();
-    send_json("{\"ok\":" + String(ok ? "true" : "false") +
-              ",\"cmd\":\"mqtt/connect\",\"connected\":" +
-              String(g_mqtt_connected ? "true" : "false") + "}");
+    g_mqtt_connect_pending = true;
+    send_json("{\"ok\":true,\"cmd\":\"mqtt/connect\",\"queued\":true}");
 }
 
 static void handle_mqtt_publish(void)
@@ -1163,6 +1176,10 @@ void setup(void)
     }
 
     ble_init();
+
+    /* start MQTT background task */
+    /* BaseType_t task_ok = xTaskCreate(mqtt_task_func, "mqtt", 4096, NULL, 1, &g_mqtt_task);
+    Serial.printf("MQTT task create %s\n", (task_ok == pdPASS) ? "OK" : "FAILED"); */
 }
 
 void loop(void)
