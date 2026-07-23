@@ -39,11 +39,41 @@
 - ~~`POST /map?name=boot|nkro_multi` — Report Map 变体~~
   **不实现**（RK/复杂键盘支持已废弃，见 PLAN §3）
 
+## 快速开始（Windows + arduino-cli）
+
+1. 拷贝 WiFi 配置：
+   ```powershell
+   Copy-Item wifi_config.h.example wifi_config.h
+   # 编辑 wifi_config.h 填入 SSID 和密码
+   ```
+
+2. 首次安装依赖库（已装则跳过）：
+   ```powershell
+   arduino-cli config set library.enable_unsafe_install true
+   arduino-cli lib install --git-url https://github.com/T-vK/ESP32-BLE-Keyboard.git
+   # 若核心 3.3.10 与 ESP32-BLE-Keyboard 不兼容，改用 ESP32BLECombo：
+   # arduino-cli lib install ESP32BLECombo
+   ```
+
+3. 编译/上传：
+   ```powershell
+   cd tools/esp32c3_kbd
+   .\build.ps1 -Port COM3   # C3 通常为 COM3，以实际为准
+   ```
+
+4. 与 CH582 dongle 闭环测试：
+   ```powershell
+   cd tools
+   ..\.venv\Scripts\python test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27
+   # 或依赖 mDNS：
+   # ..\.venv\Scripts\python test_dongle_c3.py --dongle-port COM4
+   ```
+
 ## 技术要点
 
-- 库选择:**标准 `ESP32-BLE-Keyboard` 库**。
-  本项目 C3 测试台目标是替代/陪练 AT-Node 简单键盘，用该库即可提供
-  标准 boot keyboard input report + Just Works 配对，无需 NimBLE 底层。
+- 库选择:**ESP32BLECombo** 库（NimBLE 底层）。
+  原标准 ESP32-BLE-Keyboard 与当前 esp32 core 3.3.10 的 `String` API
+  不兼容（`std::string`/`String` 混用导致编译失败），因此改用本库。
 - 配对:Just Works 即可(CH582 dongle 支持;MITM 不是当前目标)
 - 串口命令风格对齐 at-node:一行一条,`KEY <mods>,<k1>..<k6>` / `TAP <ms>,<mods>,<k>`
 - USB 串口只作后备,主控走 HTTP
