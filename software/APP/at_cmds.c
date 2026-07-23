@@ -561,17 +561,21 @@ static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; retu
 /* ---- dongle role: Central, connects TO a BLE keyboard ---- */
 extern uint8_t ble_dongle_state_debug(void);   /* DIAG: current dgl_state */
 extern uint8_t ble_dongle_start_status_debug(void);
-/* AT+BT_SCAN[=<sec>] — scan for HID-advertising devices.
-   Results arrive asynchronously as +BT_SCAN lines over this channel. */
+/* AT+BT_SCAN[=<sec>[,<filter>]] — scan for HID-advertising devices.
+   Results arrive asynchronously as +BT_SCAN lines over this channel,
+   sorted strongest-first (idx 0 = nearest). <filter>: case-insensitive
+   name substring, or "HID" for HID-flagged devices only. */
 static int bt_scan_dgl(int argc, char *argv[]) {
     int sec = (argc > 1) ? atoi(argv[1]) : 5;
     if (sec < 1)  sec = 1;
     if (sec > 30) sec = 30;
-    if (ble_dongle_scan((uint8_t)sec) < 0) {
+    const char *filter = (argc > 2) ? argv[2] : NULL;
+    if (ble_dongle_scan((uint8_t)sec, filter) < 0) {
         AT_Response("ERROR: busy state=%d", ble_dongle_state_debug());
         return -1;
     }
-    AT_Response("scanning %ds...", sec);
+    AT_Response("scanning %ds%s%s...", sec,
+                filter ? " filter=" : "", filter ? filter : "");
     return 0;
 }
 /* AT+BT_CONN=<idx|addr|name> — connect a scan result. Name is a

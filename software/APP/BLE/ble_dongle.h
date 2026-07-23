@@ -43,7 +43,7 @@ void    ble_dongle_init(void);
  *   device, then "+BT_SCAN: done <n>".
  *   Returns 0 if scan started, -1 if busy (already scanning/connected).
  */
-int     ble_dongle_scan(uint8_t seconds);
+int     ble_dongle_scan(uint8_t seconds, const char *filter);
 
 /*********************************************************************
  * ble_dongle_connect — connect to scan result <idx> (0-based, from the

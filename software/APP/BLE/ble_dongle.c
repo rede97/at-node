@@ -155,6 +155,11 @@ typedef struct {
 static dgl_scan_rec_t dgl_scan_list[DGL_MAX_SCAN_RES];
 static uint8_t  dgl_scan_count = 0;
 
+/* Optional scan filter (AT+BT_SCAN=<sec>,<filter>): case-insensitive
+   name substring, or "HID" for HID-flagged devices only. Cleared and
+   re-set per scan. */
+static char     dgl_filter[DGL_NAME_LEN + 1];
+
 /* Discovered handles */
 static uint16_t dgl_svc_start, dgl_svc_end;
 static uint16_t dgl_boot_hdl;    /* Boot Keyboard Input Report value handle */
@@ -315,6 +320,16 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
     if (!is_hid && name[0] == '\0')
         return;
 
+    /* Optional AT-level filter: "HID" = flagged only, else name
+       substring (case-insensitive) */
+    if (dgl_filter[0]) {
+        if (strcasecmp(dgl_filter, "HID") == 0) {
+            if (!is_hid) return;
+        } else if (!name[0] || !strcasestr(name, dgl_filter)) {
+            return;
+        }
+    }
+
     /* dedupe by address — but merge: a scan response may carry the
        name that the bare advertisement lacked */
     for (uint8_t i = 0; i < dgl_scan_count; i++) {
@@ -325,39 +340,31 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
             return;
         }
     }
-    if (dgl_scan_count >= DGL_MAX_SCAN_RES) {
-        /* List full (RPA spam defeats dedupe): evict the weakest entry if
-           the new one is stronger — keeps the nearby keyboard discoverable
-           in noisy RF environments. */
-        uint8_t weak = 0;
-        for (uint8_t i = 1; i < dgl_scan_count; i++)
-            if (dgl_scan_list[i].rssi < dgl_scan_list[weak].rssi)
-                weak = i;
-        if (info->rssi <= dgl_scan_list[weak].rssi)
-            return;
-        dgl_scan_rec_t *rec = &dgl_scan_list[weak];
-        tmos_memcpy(rec->addr, info->addr, B_ADDR_LEN);
-        rec->addr_type = info->addrType;
-        rec->rssi = info->rssi;
-        tmos_memcpy(rec->name, name, sizeof(rec->name));
-        AT_Response("+BT_SCAN:%d,%02X%02X%02X%02X%02X%02X,%d,%s%s (evict)",
-                weak,
-                rec->addr[5], rec->addr[4], rec->addr[3],
-                rec->addr[2], rec->addr[1], rec->addr[0],
-                rec->rssi, rec->name[0] ? rec->name : "?",
-                is_hid ? " [HID]" : "");
-        return;
-    }
 
-    dgl_scan_rec_t *rec = &dgl_scan_list[dgl_scan_count];
+    /* Insert sorted by RSSI, strongest first — idx 0 is always the
+       nearest device, which in RF spam (midea floods) is almost
+       always the keyboard the user wants. When the list is full this
+       naturally drops the weakest tail entry. */
+    if (dgl_scan_count >= DGL_MAX_SCAN_RES &&
+        info->rssi <= dgl_scan_list[DGL_MAX_SCAN_RES - 1].rssi)
+        return;                                  /* weaker than tail */
+    uint8_t pos = 0;
+    while (pos < dgl_scan_count && dgl_scan_list[pos].rssi >= info->rssi)
+        pos++;
+    uint8_t tail = (dgl_scan_count < DGL_MAX_SCAN_RES)
+                 ? dgl_scan_count : DGL_MAX_SCAN_RES - 1;
+    for (uint8_t i = tail; i > pos; i--)
+        dgl_scan_list[i] = dgl_scan_list[i - 1];
+    dgl_scan_rec_t *rec = &dgl_scan_list[pos];
     tmos_memcpy(rec->addr, info->addr, B_ADDR_LEN);
     rec->addr_type = info->addrType;
     rec->rssi = info->rssi;
     tmos_memcpy(rec->name, name, sizeof(rec->name));
-    dgl_scan_count++;
+    if (dgl_scan_count < DGL_MAX_SCAN_RES)
+        dgl_scan_count++;
 
     AT_Response("+BT_SCAN:%d,%02X%02X%02X%02X%02X%02X,%d,%s%s",
-                dgl_scan_count - 1,
+                pos,
                 rec->addr[5], rec->addr[4], rec->addr[3],
                 rec->addr[2], rec->addr[1], rec->addr[0],
                 rec->rssi, rec->name[0] ? rec->name : "?",
@@ -1012,11 +1019,22 @@ void ble_dongle_init(void)
     tmos_set_event(dgl_task_id, DGL_START_DEVICE_EVT);
 }
 
-int ble_dongle_scan(uint8_t seconds)
+int ble_dongle_scan(uint8_t seconds, const char *filter)
 {
     if (dgl_state != DGL_IDLE)
         return -1;
     if (seconds == 0) seconds = DGL_SCAN_SECONDS;
+
+    /* optional name/HID filter, applied in dgl_add_scan_rec */
+    dgl_filter[0] = '\0';
+    if (filter) {
+        uint8_t i = 0;
+        while (filter[i] && i < DGL_NAME_LEN) {
+            dgl_filter[i] = filter[i];
+            i++;
+        }
+        dgl_filter[i] = '\0';
+    }
 
     /* Defer to dongle task — GAP discovery must start in its context */
     dgl_pend_scan_sec = (int8_t)seconds;
