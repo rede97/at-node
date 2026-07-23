@@ -14,7 +14,8 @@ C_SRCS += \
 ../APP/HWS/hws_key.c \
 ../APP/HWS/hws_led.c \
 ../APP/HWS/hws_rtc.c \
-../APP/HWS/hws_sleep.c 
+../APP/HWS/hws_sleep.c \
+../APP/HWS/hws_wdg.c 
 
 C_DEPS += \
 ./APP/HWS/hws_adc.d \
@@ -26,7 +27,8 @@ C_DEPS += \
 ./APP/HWS/hws_key.d \
 ./APP/HWS/hws_led.d \
 ./APP/HWS/hws_rtc.d \
-./APP/HWS/hws_sleep.d 
+./APP/HWS/hws_sleep.d \
+./APP/HWS/hws_wdg.d 
 
 OBJS += \
 ./APP/HWS/hws_adc.o \
@@ -38,7 +40,8 @@ OBJS += \
 ./APP/HWS/hws_key.o \
 ./APP/HWS/hws_led.o \
 ./APP/HWS/hws_rtc.o \
-./APP/HWS/hws_sleep.o 
+./APP/HWS/hws_sleep.o \
+./APP/HWS/hws_wdg.o 
 
 DIR_OBJS += \
 ./APP/HWS/*.o \

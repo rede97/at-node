@@ -40,6 +40,11 @@ void hws_sleep_init(void);
  */
 uint32_t hws_sleep_enter(uint32_t time);
 
+/* hws_sleep_at — timed low-power sleep for AT+SLEEP (runtime, any
+   build). mode: 0=Idle 1=Sleep 2=Shutdown (RAM retained); wakes via
+   RTC after `seconds`. Caller must drop BLE + detach USB first. */
+uint32_t hws_sleep_at(uint8_t mode, uint32_t seconds);
+
 /*********************************************************************
 *********************************************************************/
 

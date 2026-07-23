@@ -32,6 +32,7 @@ extern "C" {
 #include "hws_adc.h"    /* AT+ADC external channels (HWS_ADC) */
 #include "hws_i2c.h"    /* AT+I2C_SCAN/R/W (HWS_I2C) */
 #include "hws_ir.h"     /* AT+IR=NEC/SIRC/RAW (HWS_IR) */
+#include "hws_wdg.h"    /* AT+WDG runtime watchdog (HWS_WDG) */
 
 /* HWS task events — bitmask flags for TMOS event dispatch.
    Each subsystem uses one event bit. Bits must not overlap
@@ -40,6 +41,7 @@ extern "C" {
    table in hws_core.c; LED self-schedules its blink timing. */
 #define HWS_LED_BLINK_EVENT  0x0001  /* LED state machine update */
 #define HWS_KEY_EVENT        0x0002  /* key scan poll (100 ms) */
+#define HWS_WDG_EVENT        0x0004  /* watchdog feed (100 ms, when armed) */
 #define HWS_CALIB_EVENT      0x2000  /* BLE RF + LSI calibration (periodic) */
 
 /*********************************************************************

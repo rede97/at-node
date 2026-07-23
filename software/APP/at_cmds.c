@@ -156,7 +156,8 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ECHO  - echo <text>\r\n"
         "  AT+STATUS - role/kb/ble/batt\r\n"
         "  AT+RST   - software reset\r\n"
-        "  AT+ISP   - enter ISP bootloader (erases app!)");
+        "  AT+ISP   - enter ISP bootloader (erases app!)\r\n"
+        "  AT+WDG   - watchdog [0|1], default off");
     AT_Response(
         "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
@@ -176,7 +177,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+I2C_R    - read <addr>,<reg>,<len> (hex)\r\n"
         "  AT+I2C_W    - write <addr>,<reg>,<data> (hex)\r\n"
         "  [Power]\r\n"
-        "  AT+SLEEP    - sleep <mode> [stub]");
+        "  AT+SLEEP    - sleep <mode 0-2>[,<sec>] RTC wake");
     AT_Response(
         "  [Wireless]\r\n"
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
@@ -198,6 +199,17 @@ static int at_cmd_HELP(int argc, char *argv[])  {
 static int at_cmd_ECHO(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+ECHO=text"); return -1; }
     AT_Response("%s", argv[1]);
+    return 0;
+}
+/* AT+WDG[=0|1] — runtime watchdog switch (HWS layer). Default OFF at
+   boot; feed runs as a 100 ms HWS table task while armed. */
+static int at_cmd_WDG(int argc, char *argv[]) {
+    if (argc < 2) {
+        AT_Response("wdg=%d (0=off,1=armed)", hws_wdg_armed());
+        return 0;
+    }
+    if (atoi(argv[1])) hws_wdg_arm();
+    else               hws_wdg_disarm();
     return 0;
 }
 static int at_cmd_KB(int argc, char *argv[])  {
@@ -549,7 +561,56 @@ static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; AT_R
 #endif
 
 /* Power */
-static int at_cmd_SLEEP(int argc, char *argv[])   { (void)argc; (void)argv; return 0; }
+/* AT+SLEEP=<mode>[,<sec>] — timed low-power sleep, RTC wake.
+   mode 0=Idle 1=Sleep 2=Shutdown (RAM retained). sec default 5.
+   EXCLUDED with USB (2026-07-22 decision): tearing down and
+   rebuilding the USB stack around a sleep window is fragile and
+   pointless — sleep is for the battery/UART deployment (HWS_SLEEP
+   build, USB off), where UART is the control channel anyway. */
+static int at_cmd_SLEEP(int argc, char *argv[]) {
+#if(defined(USB_ENABLE)) && (USB_ENABLE == TRUE)
+    (void)argc; (void)argv;
+    AT_Response("ERROR: sleep excluded with USB — use HWS_SLEEP build over UART");
+    return -1;
+#else
+    if (argc < 2) { AT_Response("usage: AT+SLEEP=<mode 0-2>[,<sec>]"); return -1; }
+    int mode = atoi(argv[1]);
+    int sec  = (argc > 2) ? atoi(argv[2]) : 5;
+    if (mode < 0 || mode > 2 || sec < 1 || sec > 3600) {
+        AT_Response("usage: AT+SLEEP=<mode 0-2>[,<sec 1-3600>]");
+        return -1;
+    }
+
+    /* drop the BLE link in whichever role is active (fine if idle) */
+    if (role_current() == ROLE_DONGLE) {
+#if BLE_HAS_DONGLE
+        ble_dongle_disconnect();
+#endif
+    } else {
+#if BLE_HAS_KBD
+        kb_ble_disconnect();
+#endif
+    }
+
+    AT_Response("sleeping mode=%d wake=%ds", mode, sec);
+#ifdef DEBUG
+    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();
+#endif
+
+    hws_sleep_at((uint8_t)mode, (uint32_t)sec);
+
+    /* awake: kbd role restarts advertising (the dongle re-arms its own
+       auto-reconnect when enabled) */
+    if (role_current() == ROLE_KBD) {
+#if BLE_HAS_KBD
+        uint8_t adv = TRUE;
+        GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+#endif
+    }
+    AT_Response("awake");
+    return 0;
+#endif
+}
 
 /* Wireless — role dispatch.
    Dongle-role bodies compile when BLE_HAS_DONGLE, kbd-role bodies when
@@ -849,6 +910,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+STATUS",  "device status (role/kb/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
+    { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
@@ -866,7 +928,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+I2C_R",   "I2C read <addr>,<reg>,<len> (hex)", at_cmd_I2C_R },
     { "AT+I2C_W",   "I2C write <addr>,<reg>,<data> (hex)", at_cmd_I2C_W },
     /* Power */
-    { "AT+SLEEP",   "[stub] sleep <mode>",           at_cmd_SLEEP },
+    { "AT+SLEEP",   "sleep <mode 0-2>[,<sec>] RTC wake", at_cmd_SLEEP },
     /* Wireless */
     { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
     { "AT+BT_CONN", "connect <idx|addr|name> (dongle)", at_cmd_BT_CONN },

@@ -24,9 +24,10 @@
  */
 uint32_t hws_sleep_enter(uint32_t time)
 {
-#if(defined(HWS_SLEEP)) && (HWS_SLEEP == TRUE)
     uint32_t time_sleep, time_curr;
     unsigned long irq_status;
+    
+    SYS_DisableAllIrq(&irq_status);
     
     SYS_DisableAllIrq(&irq_status);
     time_curr = RTC_GetCycle32k();
@@ -46,12 +47,12 @@ uint32_t hws_sleep_enter(uint32_t time)
 
     hws_rtc_set_trigger(time);
     SYS_RecoverIrq(irq_status);
-  #if(DEBUG == Debug_UART1) // wait for UART1 TX flush before sleeping
+#if(DEBUG == Debug_UART1) // wait for UART1 TX flush before sleeping
     while((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0)
     {
         __nop();
     }
-  #endif
+#endif
     // low-power sleep mode
     if(!RTCTigFlag)
     {
@@ -72,7 +73,32 @@ uint32_t hws_sleep_enter(uint32_t time)
     {
         return 3;
     }
-#endif
+    return 0;
+}
+
+/*******************************************************************************
+ * @fn          hws_sleep_at
+ *
+ * @brief       Timed low-power sleep for AT+SLEEP (runtime, any build).
+ *
+ *   Unlike hws_sleep_enter (the BLE stack's sleepCB, HWS_SLEEP builds),
+ *   this path is driven manually: the CALLER must first drop the BLE
+ *   link and detach USB. Execution resumes here after the RTC wake.
+ *
+ *   @param  mode     - 0=Idle 1=Sleep 2=Shutdown (RAM retained)
+ *   @param  seconds  - wake delay (caller clamps)
+ *   @return 0 on wake
+ */
+uint32_t hws_sleep_at(uint8_t mode, uint32_t seconds)
+{
+    uint32_t wake = RTC_GetCycle32k() + MS_TO_RTC(seconds * 1000);
+    hws_rtc_set_trigger(wake);
+
+    if (mode == 0)      LowPower_Idle();
+    else if (mode == 1) LowPower_Sleep(RB_PWR_RAM2K | RB_PWR_RAM30K | RB_PWR_EXTEND);
+    else                LowPower_Shutdown(RB_PWR_RAM2K | RB_PWR_RAM30K | RB_PWR_EXTEND);
+
+    HSECFG_Current(HSE_RCur_100);
     return 0;
 }
 

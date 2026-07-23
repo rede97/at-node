@@ -490,6 +490,14 @@ void USB_CDC_Write(const uint8_t *data, uint16_t len)
     tmos_set_event(cdc_tx_task, CDC_TX_EVT);
 }
 
+void USB_DevDetach(void)
+{
+    PFIC_DisableIRQ(USB_IRQn);
+    R8_UDEV_CTRL &= ~RB_UD_PORT_EN;   /* host sees an unplug */
+    DevConfig = 0;
+    cdcReady = 0;
+}
+
 /*********************************************************************
  *  USB HID keyboard report send (same API as before)
  */
