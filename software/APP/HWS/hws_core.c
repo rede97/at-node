@@ -163,6 +163,9 @@ static const hws_task_t hws_tasks[] = {
 #if(defined HWS_KEY) && (HWS_KEY == TRUE)
     { HWS_KEY_EVENT, hws_key_poll, HWS_KEY_POLL_MS },
 #endif
+#if(defined HWS_WDG) && (HWS_WDG == TRUE)
+    { HWS_WDG_EVENT, hws_wdg_feed_task, 100 },
+#endif
 #if(defined BLE_CALIBRATION_ENABLE) && (BLE_CALIBRATION_ENABLE == TRUE)
     { HWS_CALIB_EVENT, hws_calib_task, BLE_CALIBRATION_PERIOD },
 #endif
@@ -275,6 +278,13 @@ void hws_init(hws_key_cb_t key_cb)
        Deferred: gives BLE stack time to initialize before calibrating.
        Subsequent calibrations every BLE_CALIBRATION_PERIOD ms. */
     tmos_start_task(hws_task_id, HWS_CALIB_EVENT, MS1_TO_SYSTEM_TIME(800));
+#endif
+
+#if(defined HWS_WDG) && (HWS_WDG == TRUE)
+    /* Watchdog feed task — always scheduled (100 ms); the handler is a
+       no-op until armed via AT+WDG=1. Without this initial kick the
+       table entry never fires and arming resets the chip (field bug). */
+    tmos_start_task(hws_task_id, HWS_WDG_EVENT, MS1_TO_SYSTEM_TIME(100));
 #endif
 }
 

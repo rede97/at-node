@@ -156,7 +156,8 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ECHO  - echo <text>\r\n"
         "  AT+STATUS - role/kb/ble/batt\r\n"
         "  AT+RST   - software reset\r\n"
-        "  AT+ISP   - enter ISP bootloader (erases app!)");
+        "  AT+ISP   - enter ISP bootloader (erases app!)\r\n"
+        "  AT+WDG   - watchdog [0|1], default off");
     AT_Response(
         "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
@@ -198,6 +199,17 @@ static int at_cmd_HELP(int argc, char *argv[])  {
 static int at_cmd_ECHO(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+ECHO=text"); return -1; }
     AT_Response("%s", argv[1]);
+    return 0;
+}
+/* AT+WDG[=0|1] — runtime watchdog switch (HWS layer). Default OFF at
+   boot; feed runs as a 100 ms HWS table task while armed. */
+static int at_cmd_WDG(int argc, char *argv[]) {
+    if (argc < 2) {
+        AT_Response("wdg=%d (0=off,1=armed)", hws_wdg_armed());
+        return 0;
+    }
+    if (atoi(argv[1])) hws_wdg_arm();
+    else               hws_wdg_disarm();
     return 0;
 }
 static int at_cmd_KB(int argc, char *argv[])  {
@@ -849,6 +861,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+STATUS",  "device status (role/kb/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
+    { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
