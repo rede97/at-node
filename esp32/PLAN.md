@@ -138,7 +138,7 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 |---|------|------|------|
 | E1 | HTTP 基础 | `/at-node/status`, `/at-node/cmd/keyboard/{tap,text,key}` | ✅ 已完成（骨架实现，测试通过） |
 | E2 | BLE 键盘接入 | NimBLE boot keyboard，设备名 `AT-Node-ESP` | ✅ 已完成（CH582 dongle 扫描/连接/转发成功） |
-| E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | 🚧 未实现 |
+| E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | ✅ 已完成（HTTP/串口/AT 全通，测试通过） |
 | E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | 🚧 未实现 |
 | E5 | IR (RMT) | `/at-node/cmd/ir/send` | 🚧 未实现 |
 | E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | 🚧 部分实现（AT/TAP/TEXT/CONF/STATUS，缺 GPIO/ADC/I2C/IR） |
