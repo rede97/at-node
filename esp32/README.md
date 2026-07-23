@@ -29,6 +29,12 @@
 
 ## 当前状态
 
-- 文档先行：`esp32/PLAN.md` 定义接口与阶段。
-- 代码基线：`tools/esp32c3_kbd/esp32c3_kbd.ino` 已验证 BLE boot keyboard + HTTP。
-- 下一步：按 `esp32/PLAN.md` 迁移/扩展为完整 AT Node。
+- ✅ HTTP 基础：`/at-node/status`, `/at-node/at`, `/at-node/cmd/keyboard/{tap,text,key}`
+- ✅ BLE 键盘：NimBLE boot keyboard，设备名 `AT-Node-ESP`，CH582 dongle 已验证
+- ✅ GPIO / ADC：HTTP + 串口 + 原生 AT 全通
+- ✅ I2C：扫描/读写，SDA=GPIO8, SCL=GPIO9
+- ✅ IR：RMT 38kHz 载波，NEC/SIRC/RAW，GPIO4
+- ✅ 串口全功能：与 HTTP 等价的完整 AT 命令集
+- ✅ 测试脚本：`tools/test_esp32_at_node.py` 全 PASS
+- ✅ MQTT：WiFiClientSecure + PubSubClient，TLS 预留，NVS 配置持久化（待真实 broker 实测）
+- 下一步：MQTT broker 实测、更多外设、稳定性优化
