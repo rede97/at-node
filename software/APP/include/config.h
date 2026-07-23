@@ -105,23 +105,6 @@
 #define HWS_SLEEP  FALSE
 #endif
 
-/*********************************************************************
- * WWDG_ENABLE — window watchdog (Q1.1). Armed in AT_Init, fed every
- *   AT task poll (10 ms).
- *
- *   DEFAULT FALSE (2026-07-22): the hardware dog tops out at ~0.56 s
- *   (8-bit counter at Fsys/131072), and USB_CDC_Write legitimately
- *   stalls far longer when the host detaches (VMware USB drop) — the
- *   transfer always completes when the host returns. Field-proven:
- *   reset loop at exactly the ~0.5 s watchdog period on the dongle.
- *   Future: two-tier design — HWS task feeds the hardware dog
- *   unconditionally, a separate AT-heartbeat budget (~10 s) decides
- *   when to STOP feeding. Only that preserves "CDC always finishes".
- */
-#ifndef WWDG_ENABLE
-#define WWDG_ENABLE  FALSE
-#endif
-
 /* ====================================================================
  * 5.1 PERIPHERAL DRIVERS — HWS layer, macro-gated (PLAN.md M5)
  * ====================================================================
