@@ -56,6 +56,60 @@
 - 换固件新增 GATT 服务后，主机端要"忘记设备"重连刷新服务缓存，
   否则看不到新服务（NUS 事件的教训）。
 
+## C3 可编程键盘 bench（tools/esp32c3_kbd）
+
+> 2026-07-22 实测记录。把 C3 当成 BLE HID 键盘，经 CH582 dongle
+> 转发为 USB HID，供自动化输入/回归测试用。
+
+### 库选择：不要高层封装，直接 NimBLE
+
+- **ESP32-BLE-Keyboard**（T-vK）与当前 esp32 core **3.3.10 不兼容**，
+  编译报 `std::string` → `String` 转换错误。不可用。
+- **ESP32BLECombo** 能编译，但它创建的 **Boot Keyboard Input Report (0x2A22)
+  只有 NOTIFY 属性，没有 READ**。CH582 dongle 用 `GATT_ReadUsingCharUUID`
+  按值 UUID 发现特征时会读到 `ATT_ERR_READ_NOT_PERMITTED (0x02)`，
+  导致 boot 特征找不到，dongle 退回到 report mode 订阅 0x2A4D。
+- **结论**：直接调用 **NimBLE-Arduino** API，自己创建 HID service、
+  boot input/output、protocol mode，精确控制特征属性。
+
+### Boot 键盘必须满足的条件（CH582 dongle 侧）
+
+1. **Boot Keyboard Input Report (0x2A22)** 属性必须包含 `READ | NOTIFY`。
+   - READ 让 dongle 的 Read-Using-Char-UUID 发现成功。
+   - NOTIFY 用于后续按键通知。
+2. **Protocol Mode (0x2A4E)** 默认值设为 `0x00`（boot protocol）。
+   - 若保持库默认 `0x01`（report protocol），dongle 会按 report mode 处理。
+3. **Report Map** 使用标准 boot keyboard map（无 Report ID 前缀，8 字节报告）。
+4. 服务/特征句柄范围必须在 dongle 可发现的 HID service (0x1812) 内。
+
+### 设备名与扫描
+
+- NimBLE 默认把设备名放在 advertisement 里即可，dongle 扫描能解析到
+  `C3-Kbd [HID]`。
+- 如果名字解析失败，测试脚本用 **BLE MAC 地址**兜底匹配。
+  C3 的串口日志/NimBLE `getAddress()` 给出的是公共地址；空中广播地址
+  可能与公共地址差末几位（随机静态地址），以扫描结果中的地址为准。
+
+### HTTP 控制面：不要阻塞 handler
+
+- `/text` 端点如果逐个字符 `delay()` 发键，会阻塞 WebServer 几百毫秒，
+  客户端可能 TCP 超时并重试，结果出现**重复打字/乱序/漏键**。
+- **正确做法**：handler 只做入队，立即返回 `OK queued`；
+  `loop()` 里的 `type_poll()` 用 `millis()` 节拍异步逐字发送。
+
+### 打字速度
+
+- 默认 **40ms 按下 + 30ms 间隔** 在大多数主机上可用；若目标系统漏键，
+  用 `--ms` 和 `--gap` 加大间隔。
+- 实测较慢但稳的组合：`--ms 60 --gap 100`。
+- BLE + dongle 转发链路本身有 10-100ms 抖动，**不能用于延迟指标测试**。
+
+### 连接状态注意
+
+- C3 与 dongle 配对绑定后，dongle 会主动回连；若 C3 重启或刷机，
+  旧绑定可能失效，需要 dongle 端 `AT+BT_PAIR` 清绑定后重新扫描连接。
+- `AT+BT_DISC` 会断开当前链路并抑制自动回连一次，适合测试脚本做 clean slate。
+
 ## RK-S75RGB 专项（详见 software/PLAN.md §3.0)
 
 - boot 特征 0x2A22 是空壳（可订阅，永不发数据）。
