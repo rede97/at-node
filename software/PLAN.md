@@ -193,3 +193,27 @@ AT 命令处理只做参数解析，调用 `hws_*` API。
 I²C 扫描不挂死、IR 命令受理；AT 回归 + 双板 loop/hardening 全 PASS。
 待完整实测：GPIO 回环、ADC 定压、I²C 挂 EEPROM/传感器、IR 示波器/空调验证。
 已知设计点：GPIO 读固定切上拉输入（读输出引脚会读到上拉电平，非回读驱动态）。
+
+## 8. 阶段六：ESP32-C3 模拟键盘测试台（2026-07-22 立项）
+
+**动机**：当前双板台架是 CH582↔CH582 同栈互测，存在盲区（RK 失败已证明
+真实世界键盘多样性不可省略）；且 kbd 板的烧录/重连摩擦大。引入
+ESP32-C3 作为**可编程模拟键盘**（BLE HID Peripheral），获得：
+
+- **异构第二栈互操作验证**（NimBLE/Bluedroid 开源栈 vs CH582 闭源栈）
+- **场景可编程**：任意 Report Map / RPA 地址旋转 / boot·report 模式变体 /
+  "断电式消失"——覆盖实体键盘买不起也买不全的边界场景
+- **烧录稳定**（esptool），消除 WCH 工具链的 USB 重连摩擦
+
+**实施步骤**：
+
+| # | 内容 | 产出 | 解锁的测试 |
+|---|------|------|-----------|
+| ① | 最简键盘 sketch（`ESP32-BLE-Keyboard` 库，boot 报告）放 `tools/esp32c3_kbd/` | 替代 kbd 板跑通 loop/hardening | 现有全部双板回归的异构复测 |
+| ② | LE Privacy RPA 周期轮换 | RPA 键盘模拟 | dongle RPA 重连（TEST-TODO C 区最大欠款） |
+| ③ | 手工 Report Map 变体（RK 风格：NKRO ID1 + boot8 ID2 + 消费控制 ID4;boot 特征有无/空壳三态） | F1.22 黄金测试键盘 | 全量 HOGP 主机（F1.22）实施时的验收陪练 |
+| ④ | 射频硬关断模拟"断电消失" | 监督超时触发器 | C1/C2 精确复现（含 Peripheral 侧开放问题） |
+
+**与现有台架关系**：脚本沿用双板模式（`test_dongle_loop.py` 的角色识别
+扩展出 `c3` 标签）；CH582 kbd 板保留（同栈回归仍有价值）。
+优先级：排在 TEST-TODO C 区之前——它是 C 区多项测试的使能器。
