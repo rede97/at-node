@@ -1,0 +1,15 @@
+/*
+ * wifi_config.h
+ *
+ * WiFi credentials for ESP32-C3 AT Node.
+ * This file is ignored by git to avoid committing secrets.
+ * Copy from wifi_config.h.example and edit.
+ */
+
+#ifndef WIFI_CONFIG_H
+#define WIFI_CONFIG_H
+
+#define WIFI_SSID     "YOUR_SSID"
+#define WIFI_PASSWORD "YOUR_PASSWORD"
+
+#endif /* WIFI_CONFIG_H */
