@@ -143,7 +143,7 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | E5 | IR (RMT) | `/at-node/cmd/ir/send` | ✅ 已完成（RMT 38kHz 载波，NEC/SIRC/RAW 全通） |
 | E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | ✅ 已完成（AT/TAP/TEXT/CONF/GPIO/ADC/I2C/IR 全通） |
 | E7 | 测试脚本 | `tools/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
-| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | 🚧 未实现（预留） |
+| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | ✅ 已实现（WiFiClientSecure + PubSubClient，NVS 配置持久化；待真实 broker 实测） |
 
 ## 10. 与 CH582 版的命令语义对齐
 
