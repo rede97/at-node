@@ -98,6 +98,57 @@ def main():
         ok &= check("AT+CONF set", False)
         print(f"    error: {e}")
 
+    # GPIO write/read
+    try:
+        r = requests.post(f"{base}/cmd/gpio/write",
+                          params={"pin": 2, "level": 1}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/gpio/write", j.get("ok"))
+
+        r = requests.post(f"{base}/cmd/gpio/read",
+                          params={"pin": 2}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/gpio/read", j.get("ok") and j.get("level") == 1)
+    except Exception as e:
+        ok &= check("/at-node/cmd/gpio", False)
+        print(f"    error: {e}")
+
+    # ADC
+    try:
+        r = requests.post(f"{base}/cmd/adc/read",
+                          params={"ch": 0}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/adc/read", j.get("ok") and "mv" in j)
+    except Exception as e:
+        ok &= check("/at-node/cmd/adc/read", False)
+        print(f"    error: {e}")
+
+    # raw AT GPIO/ADC
+    try:
+        r = requests.post(f"{base}/at", data="AT+GPIO_W=2,0", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+GPIO_W", j.get("ok"))
+
+        r = requests.post(f"{base}/at", data="AT+GPIO_R=2", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+GPIO_R", j.get("ok") and j.get("response", "").startswith("+GPIO_R:"))
+
+        r = requests.post(f"{base}/at", data="AT+ADC=0", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+ADC", j.get("ok") and j.get("response", "").startswith("+ADC:"))
+    except Exception as e:
+        ok &= check("AT+GPIO/ADC", False)
+        print(f"    error: {e}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
 

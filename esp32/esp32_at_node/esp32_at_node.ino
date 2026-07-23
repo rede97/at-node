@@ -283,12 +283,33 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+    } else if (cmd.startsWith("AT+GPIO_W=")) {
+        String args = cmd.substring(10);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            int pin = args.substring(0, c1).toInt();
+            int level = args.substring(c1 + 1).toInt();
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, level ? HIGH : LOW);
+            resp = "OK";
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+GPIO_R=")) {
+        int pin = cmd.substring(10).toInt();
+        pinMode(pin, INPUT_PULLUP);
+        int level = digitalRead(pin);
+        resp = "+GPIO_R:" + String(level);
+    } else if (cmd.startsWith("AT+ADC=")) {
+        int ch = cmd.substring(7).toInt();
+        int mv = analogReadMilliVolts(ch);
+        resp = "+ADC:" + String(mv);
     } else {
         resp = "ERROR: unknown command";
     }
 
     String json = "{\"ok\":";
-    json += (resp.indexOf("OK") == 0) ? "true" : "false";
+    json += (resp.indexOf("OK") == 0 || resp.indexOf("+") == 0) ? "true" : "false";
     json += ",\"response\":\"" + resp + "\"}";
     send_json(json);
 }
@@ -349,6 +370,49 @@ static void handle_keyboard_key(void)
     }
     send_report();
     send_json("{\"ok\":true,\"cmd\":\"keyboard/key\"}");
+}
+
+/* --- GPIO / ADC --------------------------------------------------------- */
+static void handle_gpio_write(void)
+{
+    int pin   = g_http.arg("pin").toInt();
+    int level = g_http.arg("level").toInt();
+    if (pin < 0 || pin > 48) {
+        send_json("{\"ok\":false,\"error\":\"invalid pin\"}", 400);
+        return;
+    }
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, level ? HIGH : LOW);
+    send_json("{\"ok\":true,\"cmd\":\"gpio/write\",\"pin\":" + String(pin) +
+              ",\"level\":" + String(level) + "}");
+}
+
+static void handle_gpio_read(void)
+{
+    int pin = g_http.arg("pin").toInt();
+    if (pin < 0 || pin > 48) {
+        send_json("{\"ok\":false,\"error\":\"invalid pin\"}", 400);
+        return;
+    }
+    pinMode(pin, INPUT_PULLUP);
+    int level = digitalRead(pin);
+    send_json("{\"ok\":true,\"cmd\":\"gpio/read\",\"pin\":" + String(pin) +
+              ",\"level\":" + String(level) + "}");
+}
+
+static void handle_adc_read(void)
+{
+    int ch = g_http.arg("ch").toInt();
+    if (ch < 0 || ch > 7) {
+        send_json("{\"ok\":false,\"error\":\"invalid adc ch\"}", 400);
+        return;
+    }
+    /* ESP32-C3 ADC1: GPIO0-4 = ch0-4, GPIO5-7 = ch5-7 */
+    int pin = ch;
+    if (ch >= 5 && ch <= 7) pin = ch;
+    int mv = analogReadMilliVolts(pin);
+    send_json("{\"ok\":true,\"cmd\":\"adc/read\",\"ch\":" + String(ch) +
+              ",\"mv\":" + String(mv) + "}");
 }
 
 static void handle_not_found(void)
@@ -455,6 +519,31 @@ static void handle_serial(void)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+GPIO_W=")) {
+        String args = line.substring(10);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            int pin = args.substring(0, c1).toInt();
+            int level = args.substring(c1 + 1).toInt();
+            pinMode(pin, OUTPUT);
+            digitalWrite(pin, level ? HIGH : LOW);
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+GPIO_R=")) {
+        int pin = line.substring(10).toInt();
+        pinMode(pin, INPUT_PULLUP);
+        int level = digitalRead(pin);
+        Serial.print("+GPIO_R:");
+        Serial.println(level);
+        Serial.println("OK");
+    } else if (line.startsWith("AT+ADC=")) {
+        int ch = line.substring(7).toInt();
+        int mv = analogReadMilliVolts(ch);
+        Serial.print("+ADC:");
+        Serial.println(mv);
+        Serial.println("OK");
     } else {
         Serial.println("ERROR");
     }
@@ -496,6 +585,9 @@ void setup(void)
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
         g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
+        g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
+        g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
+        g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
