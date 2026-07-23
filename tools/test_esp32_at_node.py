@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+r"""ESP32 AT Node test harness.
+
+  Tests the network-enabled ESP32-C3 AT Node over HTTP.
+  Verifies /at-node/status, /at-node/at (raw AT), and keyboard endpoints.
+
+  Usage:
+      uv run python tools/test_esp32_at_node.py --ip 192.168.1.27
+"""
+import argparse
+import sys
+import time
+
+import requests
+
+DEFAULT_HOST = "192.168.1.27"
+
+
+def check(name, condition):
+    status = "PASS" if condition else "FAIL"
+    print(f"  [{status}] {name}")
+    return condition
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ESP32 AT Node test harness")
+    parser.add_argument("--ip", default=DEFAULT_HOST, help="ESP32 IP or mDNS hostname")
+    args = parser.parse_args()
+
+    base = f"http://{args.ip}/at-node"
+    ok = True
+
+    print(f"Testing ESP32 AT Node at {base} ...")
+
+    # status
+    try:
+        r = requests.get(f"{base}/status", timeout=5)
+        r.raise_for_status()
+        st = r.json()
+        ok &= check("/at-node/status", "device" in st and "connected" in st)
+        print(f"    {st}")
+    except Exception as e:
+        ok &= check("/at-node/status", False)
+        print(f"    error: {e}")
+
+    # raw AT
+    try:
+        r = requests.post(f"{base}/at", data="AT", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/at AT", j.get("ok") and j.get("response") == "OK")
+    except Exception as e:
+        ok &= check("/at-node/at AT", False)
+        print(f"    error: {e}")
+
+    # AT+TAP via raw AT
+    try:
+        r = requests.post(f"{base}/at", data="AT+TAP=100,0,4", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/at AT+TAP", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/at AT+TAP", False)
+        print(f"    error: {e}")
+
+    # keyboard/tap
+    try:
+        r = requests.post(f"{base}/cmd/keyboard/tap",
+                          params={"mods": 0, "k": 5, "ms": 100}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/keyboard/tap", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/keyboard/tap", False)
+        print(f"    error: {e}")
+
+    # keyboard/text
+    try:
+        r = requests.post(f"{base}/cmd/keyboard/text",
+                          params={"s": "hello", "ms": 50, "gap": 50}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/keyboard/text", j.get("ok") and j.get("queued"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/keyboard/text", False)
+        print(f"    error: {e}")
+
+    # config set/get
+    try:
+        r = requests.post(f"{base}/at", data="AT+CONF=testkey=testval", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+CONF set", j.get("ok"))
+    except Exception as e:
+        ok &= check("AT+CONF set", False)
+        print(f"    error: {e}")
+
+    print("\nALL PASS" if ok else "\nSOME FAILED")
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
