@@ -60,12 +60,20 @@
    .\build.ps1 -Port COM3   # C3 通常为 COM3，以实际为准
    ```
 
-4. 与 CH582 dongle 闭环测试：
+4. 作为键盘输入打字（需先连上 dongle，见第 5 步）：
    ```powershell
    cd tools
-   ..\.venv\Scripts\python test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27
+   .venv\Scripts\python c3_type.py --ip 192.168.1.27 "Hello World"
+   # 若觉得太快丢键，可加大间隔：
+   .venv\Scripts\python c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
+   ```
+
+5. 与 CH582 dongle 闭环测试：
+   ```powershell
+   cd tools
+   .venv\Scripts\python test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27
    # 或依赖 mDNS：
-   # ..\.venv\Scripts\python test_dongle_c3.py --dongle-port COM4
+   # .venv\Scripts\python test_dongle_c3.py --dongle-port COM4
    ```
 
 ## 技术要点

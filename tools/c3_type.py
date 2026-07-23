@@ -20,6 +20,10 @@ def main():
     parser.add_argument("text", help="text to type")
     parser.add_argument("--host", default="esp32kbd.local", help="C3 HTTP host or IP")
     parser.add_argument("--ip", default=None, help="C3 IP (overrides --host)")
+    parser.add_argument("--ms", type=int, default=0, dest="ms",
+                        help="per-key press duration in ms (default: use C3 default)")
+    parser.add_argument("--gap", type=int, default=0, dest="gap",
+                        help="gap between characters in ms (default: use C3 default)")
     args = parser.parse_args()
 
     host = args.ip if args.ip else args.host
@@ -36,8 +40,14 @@ def main():
         print(f"FAIL: cannot reach C3 at {base} ({e})")
         return 1
 
+    params = {"s": args.text}
+    if args.ms > 0:
+        params["ms"] = args.ms
+    if args.gap > 0:
+        params["gap"] = args.gap
+
     try:
-        r = requests.post(f"{base}/text", params={"s": args.text}, timeout=5)
+        r = requests.post(f"{base}/text", params=params, timeout=5)
         r.raise_for_status()
         print(f"OK: {r.text} '{args.text}'")
     except Exception as e:
