@@ -192,6 +192,16 @@ def main():
         ok &= check("AT+IR=NEC", False)
         print(f"    error: {e}")
 
+    # MQTT status
+    try:
+        r = requests.get(f"{base}/cmd/mqtt/status", timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/mqtt/status", "connected" in j)
+    except Exception as e:
+        ok &= check("/at-node/cmd/mqtt/status", False)
+        print(f"    error: {e}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
 

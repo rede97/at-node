@@ -21,10 +21,12 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <Wire.h>
+#include <PubSubClient.h>
 #include <NimBLEDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
@@ -54,6 +56,17 @@ static struct {
 /* --- HTTP globals ----------------------------------------------------- */
 static WebServer g_http(80);
 static bool      g_wifi_ready = false;
+
+/* --- MQTT client ------------------------------------------------------- */
+static WiFiClientSecure g_mqtt_wifi;
+static PubSubClient     g_mqtt(g_mqtt_wifi);
+static bool             g_mqtt_connected = false;
+static String           g_mqtt_broker;
+static int              g_mqtt_port = 8883;
+static String           g_mqtt_user;
+static String           g_mqtt_pass;
+static String           g_mqtt_client_id;
+static String           g_mqtt_topic_prefix;
 
 /* --- typing queue (non-blocking) -------------------------------------- */
 static String   g_type_text;
@@ -166,6 +179,10 @@ static void load_config(void)
     prefs.begin("atnode", false);
     g_device_name = prefs.getString("name", DEFAULT_DEVICE_NAME);
     g_hostname    = prefs.getString("hostname", DEFAULT_HOSTNAME);
+    g_mqtt_broker = prefs.getString("mqtt_broker", "");
+    g_mqtt_port   = prefs.getInt("mqtt_port", 8883);
+    g_mqtt_user   = prefs.getString("mqtt_user", "");
+    g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     prefs.end();
 }
 
@@ -392,6 +409,31 @@ static void handle_at(void)
             }
             if (ok) resp = "OK";
             else resp = "ERROR";
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+MQTT=")) {
+        String args = cmd.substring(8);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String sub = args.substring(0, c1);
+            String val = args.substring(c1 + 1);
+            if (sub == "broker") {
+                g_mqtt_broker = val;
+                save_config("mqtt_broker", val);
+                resp = "OK";
+            } else if (sub == "port") {
+                g_mqtt_port = val.toInt();
+                save_config("mqtt_port", val);
+                resp = "OK";
+            } else if (sub == "connect") {
+                bool ok = mqtt_connect();
+                resp = ok ? "OK" : "ERROR";
+            } else if (sub == "status") {
+                resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected");
+            } else {
+                resp = "ERROR";
+            }
         } else {
             resp = "ERROR";
         }
@@ -686,6 +728,120 @@ static void handle_ir_send(void)
     }
 }
 
+/* --- MQTT client ------------------------------------------------------- */
+static void mqtt_callback(char* topic, byte* payload, unsigned int length)
+{
+    Serial.printf("MQTT [%s] ", topic);
+    for (unsigned int i = 0; i < length; i++) Serial.print((char)payload[i]);
+    Serial.println();
+}
+
+static bool mqtt_connect(void)
+{
+    if (g_mqtt_broker.length() == 0) return false;
+    g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
+    g_mqtt.setCallback(mqtt_callback);
+    g_mqtt_client_id = "atnode-" + g_hostname;
+    g_mqtt_topic_prefix = "atnode/" + g_hostname;
+
+    g_mqtt_wifi.setInsecure(); /* skip cert verify for local dev; use setCACert for prod */
+
+    bool ok;
+    if (g_mqtt_user.length() > 0) {
+        ok = g_mqtt.connect(g_mqtt_client_id.c_str(), g_mqtt_user.c_str(), g_mqtt_pass.c_str());
+    } else {
+        ok = g_mqtt.connect(g_mqtt_client_id.c_str());
+    }
+    g_mqtt_connected = ok;
+    return ok;
+}
+
+static void mqtt_poll(void)
+{
+    if (!g_mqtt_connected) return;
+    if (!g_mqtt.loop()) {
+        g_mqtt_connected = false;
+    }
+}
+
+static void handle_mqtt_status(void)
+{
+    String json = "{";
+    json += "\"connected\":";
+    json += g_mqtt_connected ? "true" : "false";
+    json += ",\"broker\":\"" + g_mqtt_broker + "\"";
+    json += ",\"port\":" + String(g_mqtt_port);
+    json += ",\"client_id\":\"" + g_mqtt_client_id + "\"";
+    json += "}";
+    send_json(json);
+}
+
+static void handle_mqtt_config(void)
+{
+    String broker = g_http.arg("broker");
+    String port   = g_http.arg("port");
+    String user   = g_http.arg("user");
+    String pass   = g_http.arg("pass");
+    if (broker.length() > 0) {
+        g_mqtt_broker = broker;
+        save_config("mqtt_broker", broker);
+    }
+    if (port.length() > 0) {
+        g_mqtt_port = port.toInt();
+        save_config("mqtt_port", port);
+    }
+    if (user.length() > 0) {
+        g_mqtt_user = user;
+        save_config("mqtt_user", user);
+    }
+    if (pass.length() > 0) {
+        g_mqtt_pass = pass;
+        save_config("mqtt_pass", pass);
+    }
+    send_json("{\"ok\":true,\"cmd\":\"mqtt/config\"}");
+}
+
+static void handle_mqtt_connect(void)
+{
+    bool ok = mqtt_connect();
+    send_json("{\"ok\":" + String(ok ? "true" : "false") +
+              ",\"cmd\":\"mqtt/connect\",\"connected\":" +
+              String(g_mqtt_connected ? "true" : "false") + "}");
+}
+
+static void handle_mqtt_publish(void)
+{
+    if (!g_mqtt_connected) {
+        send_json("{\"ok\":false,\"error\":\"mqtt not connected\"}", 409);
+        return;
+    }
+    String topic = g_http.arg("topic");
+    String msg   = g_http.arg("msg");
+    if (topic.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing topic\"}", 400);
+        return;
+    }
+    bool ok = g_mqtt.publish(topic.c_str(), msg.c_str());
+    send_json("{\"ok\":" + String(ok ? "true" : "false") +
+              ",\"cmd\":\"mqtt/publish\"}");
+}
+
+static void handle_mqtt_subscribe(void)
+{
+    if (!g_mqtt_connected) {
+        send_json("{\"ok\":false,\"error\":\"mqtt not connected\"}", 409);
+        return;
+    }
+    String topic = g_http.arg("topic");
+    if (topic.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing topic\"}", 400);
+        return;
+    }
+    bool ok = g_mqtt.subscribe(topic.c_str());
+    send_json("{\"ok\":" + String(ok ? "true" : "false") +
+              ",\"cmd\":\"mqtt/subscribe\"}");
+}
+
 static void handle_not_found(void)
 {
     send_json("{\"ok\":false,\"error\":\"not found\"}", 404);
@@ -908,6 +1064,33 @@ static void handle_serial(void)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+MQTT=")) {
+        String args = line.substring(8);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String sub = args.substring(0, c1);
+            String val = args.substring(c1 + 1);
+            if (sub == "broker") {
+                g_mqtt_broker = val;
+                save_config("mqtt_broker", val);
+                Serial.println("OK");
+            } else if (sub == "port") {
+                g_mqtt_port = val.toInt();
+                save_config("mqtt_port", val);
+                Serial.println("OK");
+            } else if (sub == "connect") {
+                bool ok = mqtt_connect();
+                Serial.println(ok ? "OK" : "ERROR");
+            } else if (sub == "status") {
+                Serial.print("+MQTT:");
+                Serial.println(g_mqtt_connected ? "connected" : "disconnected");
+                Serial.println("OK");
+            } else {
+                Serial.println("ERROR");
+            }
+        } else {
+            Serial.println("ERROR");
+        }
     } else {
         Serial.println("ERROR");
     }
@@ -956,6 +1139,11 @@ void setup(void)
         g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
         g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
         g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
+        g_http.on("/at-node/cmd/mqtt/status", HTTP_GET, handle_mqtt_status);
+        g_http.on("/at-node/cmd/mqtt/config", HTTP_POST, handle_mqtt_config);
+        g_http.on("/at-node/cmd/mqtt/connect", HTTP_POST, handle_mqtt_connect);
+        g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
+        g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
@@ -982,5 +1170,6 @@ void loop(void)
     if (g_wifi_ready) g_http.handleClient();
     handle_serial();
     type_poll();
+    mqtt_poll();
     delay(2);
 }
