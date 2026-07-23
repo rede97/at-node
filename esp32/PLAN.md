@@ -91,9 +91,9 @@ Base path：`/at-node`
 
 ## 5. 串口功能
 
-- USB 串口（USB-Serial-JTAG）保留，默认输出调试日志。
-- 支持简单文本命令：`TAP <key>`、`TEXT <str>`、`STATUS`。
-- 不实现完整 AT 命令集（HTTP 为主控制面）。
+- USB 串口（USB-Serial-JTAG）与 HTTP **同等优先级**，均实现完整 AT 命令集。
+- 命令解析、参数处理、响应生成与 HTTP 的 `/at-node/at` 完全一致。
+- 串口同时保留调试日志（可开关）。
 
 ## 6. 外设命令（GPIO / ADC / I2C / IR）
 
@@ -104,19 +104,35 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | GPIO | E3 | 数字输入输出，可配置引脚 |
 | ADC | E3 | 模拟采样，返回 mV |
 | I2C | E4 | 主机模式，扫描/读写 |
-| IR | E5 | NEC/SIRC/RAW 发送 |
+| IR | E5 | **RMT 外设实现**，NEC/SIRC/RAW 发送 |
 
-**待确认**：IR 发送在 ESP32-C3 上需要 RMT 外设，比 CH582 的 PWM+Timer 复杂，是否纳入第一阶段？
+**IR 实现方案**：
+- 使用 ESP32-C3 的 RMT 外设（专为红外收发设计）。
+- 参考开源方案（如 IRremoteESP8266 的 RMT 驱动思路），但不引入完整库（体积大），
+  在 `ir_sender.cpp/h` 中实现最小 RMT 载波发送状态机。
+- 支持协议：NEC、SIRC、RAW 时序数组。
 
-## 7. MQTT 预留
+## 7. 设备配置持久化
 
-当前不实现，但代码结构预留：
+- 配置存储：**NVS (Preferences)**。
+- 配置项：设备名（BLE advertising）、WiFi SSID/密码、MQTT 服务器（预留）。
+- 修改方式：
+  - **Web**：`POST /at-node/cmd/config/set`（JSON 键值对）。
+  - **串口 AT**：`AT+CONF=<key>=<value>`（与 HTTP 同等功能）。
+- 修改后生效策略：
+  - WiFi 参数：保存后提示重启生效，或提供 `AT+RST` 命令。
+  - BLE 设备名：保存后重新初始化 BLE 广播。
 
-- `mqtt_client.cpp/h` 接口定义（connect/publish/subscribe）。
-- 命令处理器与 HTTP 共用同一入口 `handle_at_command()`。
-- Topic 草案：`atnode/<device_id>/cmd/<cmd>` / `atnode/<device_id>/resp/<cmd>`。
+## 8. MQTT 预留
 
-## 8. 实现阶段
+- **必须支持 TLS**（远程连接安全）。
+- 当前不实现 broker 对接，但代码结构预留：
+  - `mqtt_client.cpp/h` 接口定义（connect/publish/subscribe）。
+  - 使用 `WiFiClientSecure` + 最小 MQTT 客户端实现。
+  - Topic 草案：`atnode/<device_id>/cmd/<cmd>` / `atnode/<device_id>/resp/<cmd>`。
+  - 命令处理器与 HTTP 共用同一入口 `handle_at_command()`。
+
+## 9. 实现阶段
 
 | # | 阶段 | 内容 | 判据 |
 |---|------|------|------|
@@ -124,11 +140,12 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | E2 | BLE 键盘接入 | NimBLE boot keyboard，设备名 `AT-Node-ESP` | CH582 dongle 扫描/连接/转发成功 |
 | E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | 万用表/杜邦线验证 |
 | E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | 挂 EEPROM/传感器验证 |
-| E5 | IR | `/at-node/cmd/ir/send` | 示波器/设备验证 |
-| E6 | 串口后备 | 简单 TAP/TEXT/STATUS 命令 | 可用 |
+| E5 | IR (RMT) | `/at-node/cmd/ir/send` | 示波器/设备验证 |
+| E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | 串口测试脚本通过 |
 | E7 | 测试脚本 | `tools/test_esp32_at_node.py` | 全项 PASS |
+| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | 远程命令下发/状态上报成功 |
 
-## 9. 与 CH582 版的命令语义对齐
+## 10. 与 CH582 版的命令语义对齐
 
 | CH582 AT 命令 | ESP32 HTTP 端点 | 备注 |
 |-------------|----------------|------|
@@ -143,12 +160,14 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | `AT+ADC` | `POST /at-node/cmd/adc/read` | 参数映射 |
 | `AT+I2C_SCAN` | `POST /at-node/cmd/i2c/scan` | 参数映射 |
 | `AT+I2C_R/W` | `POST /at-node/cmd/i2c/{read,write}` | 预留 |
-| `AT+IR=...` | `POST /at-node/cmd/ir/send` | 参数映射 |
+| `AT+IR=...` | `POST /at-node/cmd/ir/send` | RMT 外设实现 |
+| `AT+CONF` | `POST /at-node/cmd/config/set` | NVS 持久化，串口/HTTP 双通道 |
 | `AT+BT_*` | 不实现 | ESP32 版不做 BLE 主机/接收器 |
 
-## 10. 开放问题
+## 11. 已决策事项
 
-- [ ] IR 发送是否纳入 E5？（RMT 实现复杂度）
-- [ ] 设备名/网络配置是否支持运行时修改？（需要持久化到 NVS）
-- [ ] MQTT 的 broker 地址/端口/认证方式？
-- [ ] 是否需要 TLS（HTTPS）？当前建议仅本地网络使用 HTTP。
+- **IR 发送**：纳入 E5，使用 RMT 外设，参考开源 RMT 驱动方案。
+- **设备配置**：NVS 持久化，HTTP + 串口双通道修改。
+- **MQTT**：预留接口，必须 TLS，broker 配置由运行时决定。
+- **TLS**：MQTT 必须 TLS；HTTP 仅本地网络，无 TLS。
+- **串口与 HTTP**：同等优先级，均实现完整 AT 命令集。
