@@ -7,10 +7,9 @@
 ## 背景(必读)
 
 - 完整动机与步骤见 `software/PLAN.md` §8 与 §8.1
+- Windows 开发踩坑要点见 `software/SKILL-Windows.md`（必读）
 - 参照实现(同仓库):
   - `tools/esp32c3_probe/` — C3 BLE HID **主机** probe(验证过 AT-Node kbd 全链路)
-  - `tools/rk_recon/rk_recon.ino` — C3 对 RK 键盘的 GATT 侦察 sketch
-    (含 boot 订阅、protocol-mode 写、Report Map dump 的完整代码模式)
 - 被测对象:CH582 dongle(`DONGLE=1` 或 `MODE=DUAL` 固件),
   行为见 `software/APP/BLE/ble_dongle.c` —— boot 优先订阅,
   无 boot 走 report fallback(订阅全部 report CCCD,转发 len>=8 报告)
@@ -37,13 +36,14 @@
 
 - `POST /rpa?enable=&period_s=` — LE Privacy 地址轮换
 - `POST /rf?state=off|on` — 射频硬关断模拟断电
-- `POST /map?name=boot|nkro_multi` — Report Map 变体
-  (RK 风格:NKRO ID1 + boot8 ID2 + 消费控制 ID4)
+- ~~`POST /map?name=boot|nkro_multi` — Report Map 变体~~
+  **不实现**（RK/复杂键盘支持已废弃，见 PLAN §3）
 
 ## 技术要点
 
-- 库选择:**NimBLE** 优先(内存小、行为透明);`ESP32-BLE-Keyboard`
-  库(Bluedroid)可作为快速起点但注意体积
+- 库选择:**标准 `ESP32-BLE-Keyboard` 库**。
+  本项目 C3 测试台目标是替代/陪练 AT-Node 简单键盘，用该库即可提供
+  标准 boot keyboard input report + Just Works 配对，无需 NimBLE 底层。
 - 配对:Just Works 即可(CH582 dongle 支持;MITM 不是当前目标)
 - 串口命令风格对齐 at-node:一行一条,`KEY <mods>,<k1>..<k6>` / `TAP <ms>,<mods>,<k>`
 - USB 串口只作后备,主控走 HTTP
