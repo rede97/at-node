@@ -12,6 +12,20 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 - **Device name**: "AT-Node" (BLE advertising, set in `hidkbd_ble.c`)
 - **Design notes**: see `DESIGN.md` for memory layout, BLE bonding, USB constraints
 
+## Firmware variants
+
+| Variant | Build | Notes |
+|---------|------|-------|
+| kbd | `make main-build` (default) | Production keyboard (Peripheral) |
+| dongle | `make main-build DONGLE=1` | BLE HID receiver (Central) — verified on two-board rig |
+| dual | `make main-build MODE=DUAL` | Both roles, `AT+ROLE=KBD\|DONGLE` runtime switch (DataFlash flag + soft reset) |
+
+`BLE_MODE` tri-state in `config.h`; `BLE_DONGLE` kept as normalized alias.
+
+- **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` (runtime role in DUAL) — distinguishes identical boards.
+- **RAM budget**: kbd 19076 B (58%) / dongle 19740 B (60%) / dual ~21000 B (64%). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
+- **Two-board dev rig**: kbd board (test keyboard, inject keys via `AT+KEY`) + dongle board (receiver). `tools/test_dongle_loop.py` + `tools/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
+
 ## Commands
 
 Build:
@@ -29,7 +43,28 @@ uv run python tools/check_encoding.py
 uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 ```
 
+AT test:
+```bash
+uv run python tools/test_at.py
+uv run python tools/send_key.py 0x39 --mode BLE          # CapsLock via BLE
+uv run python tools/send_key.py 0x04 --mode USB --seq "Hi"  # 'a' / text via KEY_SEQ
+```
+
+Dongle loop test:
+```bash
+uv run python tools/test_dongle_loop.py          # two CH582 boards
+uv run python tools/test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27  # C3 keyboard
+```
+
+C3 typing:
+```bash
+uv run python tools/c3_type.py --ip 192.168.1.27 "Hello World"
+uv run python tools/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
+```
+
 ## Architecture
+
+### Layer stack
 
 | Layer | Path | Role |
 |-------|------|------|
@@ -41,7 +76,7 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 | RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
 | Startup | `software/Startup/` | Reset vector + interrupt table |
 
-**USB endpoint allocation**:
+### USB endpoint allocation
 
 | EP | Interface | Type | Size | Note |
 |----|-----------|------|------|------|
@@ -52,19 +87,66 @@ uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
 
 **Data flow**: KEY polling (`hws_key_config(key_press)` in main) → `kb_ble_send_report()` / `kb_usb_send_report()` → BLE GATT notification + `USB_HID_SendReport()` → EP2 IN.
 
+### Keyboard routing layer (`hidkbd_common.h` + `at_cmds.c`)
+
+```
+AT command → at_cmds handler (at_cmd_KEY etc.)
+  → kb_*() function (at_cmds.c)
+    → kb_flush() checks kb_mode
+      → kb_ble_send_report() [hidkbd_ble.c] → ble_hid_dev_report() [BLE/hiddev.c]
+      → kb_usb_send_report() [hidkbd_usb.c] → USB_HID_SendReport() [usb_dev.c]
+```
+
+Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
+
+### Init sequence (7 linear stages)
+
+```
+1. hws_platform_init()    — power, clock, GPIO, debug UART
+2. ble_stack_init()       — BLE protocol stack (+ initializes TMOS scheduler)
+3. hws_init(key_press)    — RTC, sleep, LED, KEY + callback, HWS TMOS task
+4. at_init()              — AT command parser (UART1 + CDC, 10ms TMOS poll)
+5. ble_peripheral_init()  — GAP role + HID Device + HID Emu + advertising
+6. usb_init()             — USB composite (CDC+HID) OR sleep mode
+7. main_loop()            — TMOS_SystemProcess() forever
+```
+
+Stage 2 MUST come before stage 3: `BLE_LibInit()` initializes TMOS,
+and `hws_init()` calls `TMOS_ProcessEventRegister()` which requires TMOS.
+USB and sleep are mutually exclusive (compile-time via `HWS_SLEEP`).
+
+### TMOS task registry
+
+| Task | Registered in | File |
+|------|--------------|------|
+| HWS task | `hws_init()` | `APP/HWS/hws_core.c` |
+| AT task | `at_init()` → `AT_Init()` | `APP/at_parser.c` |
+| HID Dev task | `ble_hid_dev_init()` | `APP/BLE/ble_hid_dev.c` |
+| HID Emu task | `ble_hid_emu_init()` | `APP/hidkbd_ble.c` |
+| Dongle task | `ble_dongle_init()` (when `BLE_DONGLE=TRUE`, replaces Peripheral) | `APP/BLE/ble_dongle.c` |
+
+HWS periodic tasks (KEY poll, BLE calibration) are table-driven via
+`hws_tasks[]` in `hws_core.c` — adding one is a one-line table entry;
+LED self-schedules blink timing outside the table.
+
 ## Conventions
 
 - **C only**, gnu99. All `.c/.h/.S` are UTF-8 without BOM, ASCII comments only.
-- **USB code is WCH EVT copy**: `usb_dev.c` USB_DevTransProcess is based on official `HID_CompliantDev/src/Main.c`. Don't rewrite it.
+- **USB code is WCH EVT copy**: `usb_dev.c` `USB_DevTransProcess` is based on official `HID_CompliantDev/src/Main.c`. Don't rewrite it.
 - **Key scanning in `main()`**, not in BLE callback — works on USB without BLE paired.
-- **HWS_SLEEP=TRUE disables USB** — enforced at compile time in main.c. USB clock stops in sleep.
-- **GPIO_Pin_All init does NOT interfere with USB D+/D-** — confirmed by BleInputStick.
+- **HWS_SLEEP=TRUE disables USB** — enforced at compile time in `main.c`. USB clock stops in sleep.
+- **GPIO_Pin_All init does NOT interfere with USB D+/D-** (PB10/11) — confirmed by BleInputStick.
+- **Feature conflicts are compile errors**: `config.h` uses first-class macros (`USB_ENABLE`, `HWS_SLEEP`, `BLE_DONGLE`); invalid combos (#error): USB+sleep, dongle without USB.
+- **BLE SNV**: Flash at `0x77E00` (last 512B of Data Flash), 1 bonded device, new pairing overwrites.
+- **BLE heap**: `MEM_BUF[BLE_MEMHEAP_SIZE/4]` at top of RAM, default 5KB (hard floor 4KB, checked in `ble_stack_init`).
 - **Tools** under `tools/` use Python + `uv` venv.
 
 ## Notes
 
-- `DESIGN.md` — memory layout, BLE callback registration, USB/low-power exclusion details.
-- `software/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers).
+- `DESIGN.md` — design philosophy, memory layout, BLE callback registration, USB/low-power exclusion details.
+- `software/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers; M6 = C3 keyboard bench).
 - `software/SKILL-Linux.md` — Linux build/flash/test ops manual (wlink/ISP, tools catalog, pit list).
+- `software/SKILL-Windows.md` — Windows/ESP32-C3 development pit list.
 - `EVT/` — WCH CH583 SDK reference code (gitignored, not compiled).
 - `software/REQUIREMENTS.md` — feature requirements (Chinese).
+- `software/POWER.md` — low-power design guide.
