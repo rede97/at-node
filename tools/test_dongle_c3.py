@@ -73,11 +73,12 @@ def main():
     try:
         st = c3_status(host)
         print(f"C3 status: {st}")
-        if not st.get("connected"):
-            print("WARN: C3 reports BLE not connected yet")
     except Exception as e:
         print(f"FAIL: cannot reach C3 HTTP ({e})")
         return 1
+
+    c3_mac = st.get("ble_addr", "").replace(":", "").upper()
+    print(f"C3 BLE address: {c3_mac or 'unknown'}")
 
     print(f"Opening dongle {args.dongle_port} ...")
     try:
@@ -108,6 +109,11 @@ def main():
         m = re.search(r"\+BT_SCAN:(\d+),.*C3-Kbd", line)
         if m:
             idx = m.group(1)
+        if c3_mac and c3_mac in line.upper().replace(":", ""):
+            m2 = re.search(r"\+BT_SCAN:(\d+),", line)
+            if m2:
+                idx = m2.group(1)
+                print(f"(matched C3 MAC) idx={idx}")
     if idx is None:
         print("FAIL: C3-Kbd not found in scan")
         dgl.close()
