@@ -170,6 +170,28 @@ def main():
         ok &= check("AT+I2C_SCAN", False)
         print(f"    error: {e}")
 
+    # IR send
+    try:
+        r = requests.post(f"{base}/cmd/ir/send",
+                          params={"protocol": "NEC", "data": "0x807F00FF"}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/ir/send", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/ir/send", False)
+        print(f"    error: {e}")
+
+    # raw AT IR
+    try:
+        r = requests.post(f"{base}/at", data="AT+IR=NEC,0x807F00FF", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+IR=NEC", j.get("ok"))
+    except Exception as e:
+        ok &= check("AT+IR=NEC", False)
+        print(f"    error: {e}")
+
     print("\nALL PASS" if ok else "\nSOME FAILED")
     return 0 if ok else 1
 

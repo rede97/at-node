@@ -360,6 +360,41 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+    } else if (cmd.startsWith("AT+IR=")) {
+        String args = cmd.substring(6);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String proto = args.substring(0, c1);
+            String data = args.substring(c1 + 1);
+            bool ok = false;
+            if (proto.equalsIgnoreCase("NEC")) {
+                uint32_t d = strtoul(data.c_str(), NULL, 0);
+                ok = ir_send_nec(d);
+            } else if (proto.equalsIgnoreCase("SIRC")) {
+                int c2 = data.indexOf(',');
+                uint32_t d = strtoul(data.substring(0, c2).c_str(), NULL, 0);
+                int bits = data.substring(c2 + 1).toInt();
+                ok = ir_send_sirc(d, bits);
+            } else if (proto.equalsIgnoreCase("RAW")) {
+                uint16_t timings[256];
+                int count = 0;
+                int start = 0;
+                while (count < 256) {
+                    int comma = data.indexOf(',', start);
+                    String part = (comma > 0) ? data.substring(start, comma) : data.substring(start);
+                    timings[count++] = (uint16_t)part.toInt();
+                    if (comma < 0) break;
+                    start = comma + 1;
+                }
+                ok = ir_send_raw(timings, count);
+            } else {
+                resp = "ERROR";
+            }
+            if (ok) resp = "OK";
+            else resp = "ERROR";
+        } else {
+            resp = "ERROR";
+        }
     } else {
         resp = "ERROR: unknown command";
     }
@@ -540,6 +575,115 @@ static void handle_i2c_write(void)
     }
     send_json("{\"ok\":true,\"cmd\":\"i2c/write\",\"addr\":\"0x" + String(addr, HEX) +
               "\",\"reg\":\"0x" + String(reg, HEX) + "\"}");
+}
+
+/* --- IR sender (RMT) --------------------------------------------------- */
+#define IR_TX_PIN      4
+#define IR_CARRIER_HZ  38000
+#define RMT_FREQ_HZ    1000000     /* 1MHz, 1us per tick */
+
+static bool ir_init(void)
+{
+    if (!rmtInit(IR_TX_PIN, RMT_TX_MODE, RMT_MEM_NUM_BLOCKS_1, RMT_FREQ_HZ)) {
+        return false;
+    }
+    if (!rmtSetCarrier(IR_TX_PIN, true, true, IR_CARRIER_HZ, 0.33f)) {
+        return false;
+    }
+    return true;
+}
+
+static bool ir_send_raw(const uint16_t* timings, size_t count)
+{
+    if (count == 0 || count > 256) return false;
+    rmt_data_t items[256];
+    for (size_t i = 0; i < count; i++) {
+        uint16_t us = timings[i];
+        items[i].level0    = (i % 2 == 0) ? 1 : 0;
+        items[i].duration0 = us;
+        items[i].level1    = 0;
+        items[i].duration1 = 0;
+    }
+    return rmtWrite(IR_TX_PIN, items, count, RMT_WAIT_FOR_EVER);
+}
+
+static bool ir_send_nec(uint32_t data)
+{
+    /* NEC: 9000us mark, 4500us space, then 32 bits (560us mark + 560/1690us space) */
+    uint16_t timings[68];
+    int idx = 0;
+    timings[idx++] = 9000;
+    timings[idx++] = 4500;
+    for (int i = 0; i < 32; i++) {
+        timings[idx++] = 560;
+        if (data & (1UL << i)) {
+            timings[idx++] = 1690;
+        } else {
+            timings[idx++] = 560;
+        }
+    }
+    timings[idx++] = 560;
+    return ir_send_raw(timings, idx);
+}
+
+static bool ir_send_sirc(uint32_t data, int bits)
+{
+    /* SIRC: 2400us mark, 600us space, then bits (1200/600us mark + 600us space) */
+    uint16_t timings[2 + 2 * 20];
+    int idx = 0;
+    timings[idx++] = 2400;
+    timings[idx++] = 600;
+    for (int i = 0; i < bits; i++) {
+        if (data & (1UL << i)) {
+            timings[idx++] = 1200;
+        } else {
+            timings[idx++] = 600;
+        }
+        timings[idx++] = 600;
+    }
+    return ir_send_raw(timings, idx);
+}
+
+static void handle_ir_send(void)
+{
+    String proto = g_http.arg("protocol");
+    String data  = g_http.arg("data");
+    String bitsStr = g_http.arg("bits");
+    if (proto.length() == 0 || data.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing protocol/data\"}", 400);
+        return;
+    }
+    bool ok = false;
+    uint32_t d = strtoul(data.c_str(), NULL, 0);
+    int bits = bitsStr.toInt();
+    if (bits <= 0) bits = 32;
+
+    if (proto.equalsIgnoreCase("NEC")) {
+        ok = ir_send_nec(d);
+    } else if (proto.equalsIgnoreCase("SIRC")) {
+        ok = ir_send_sirc(d, bits);
+    } else if (proto.equalsIgnoreCase("RAW")) {
+        /* data should be comma-separated us timings */
+        uint16_t timings[256];
+        int count = 0;
+        int start = 0;
+        while (count < 256) {
+            int comma = data.indexOf(',', start);
+            String part = (comma > 0) ? data.substring(start, comma) : data.substring(start);
+            timings[count++] = (uint16_t)part.toInt();
+            if (comma < 0) break;
+            start = comma + 1;
+        }
+        ok = ir_send_raw(timings, count);
+    } else {
+        send_json("{\"ok\":false,\"error\":\"unknown protocol\"}", 400);
+        return;
+    }
+    if (ok) {
+        send_json("{\"ok\":true,\"cmd\":\"ir/send\",\"protocol\":\"" + proto + "\"}");
+    } else {
+        send_json("{\"ok\":false,\"error\":\"ir send failed\"}", 500);
+    }
 }
 
 static void handle_not_found(void)
@@ -728,6 +872,42 @@ static void handle_serial(void)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+IR=")) {
+        String args = line.substring(6);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String proto = args.substring(0, c1);
+            String data = args.substring(c1 + 1);
+            bool ok = false;
+            if (proto.equalsIgnoreCase("NEC")) {
+                uint32_t d = strtoul(data.c_str(), NULL, 0);
+                ok = ir_send_nec(d);
+            } else if (proto.equalsIgnoreCase("SIRC")) {
+                int c2 = data.indexOf(',');
+                uint32_t d = strtoul(data.substring(0, c2).c_str(), NULL, 0);
+                int bits = data.substring(c2 + 1).toInt();
+                ok = ir_send_sirc(d, bits);
+            } else if (proto.equalsIgnoreCase("RAW")) {
+                uint16_t timings[256];
+                int count = 0;
+                int start = 0;
+                while (count < 256) {
+                    int comma = data.indexOf(',', start);
+                    String part = (comma > 0) ? data.substring(start, comma) : data.substring(start);
+                    timings[count++] = (uint16_t)part.toInt();
+                    if (comma < 0) break;
+                    start = comma + 1;
+                }
+                ok = ir_send_raw(timings, count);
+            } else {
+                Serial.println("ERROR");
+                return;
+            }
+            if (ok) Serial.println("OK");
+            else Serial.println("ERROR");
+        } else {
+            Serial.println("ERROR");
+        }
     } else {
         Serial.println("ERROR");
     }
@@ -775,6 +955,7 @@ void setup(void)
         g_http.on("/at-node/cmd/i2c/scan", HTTP_POST, handle_i2c_scan);
         g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
         g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
+        g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
@@ -785,6 +966,13 @@ void setup(void)
     /* I2C: SDA=GPIO8, SCL=GPIO9 (ESP32-C3 default) */
     Wire.begin(8, 9);
     Serial.println("I2C initialized (SDA=8, SCL=9)");
+
+    /* IR: RMT on GPIO4 */
+    if (ir_init()) {
+        Serial.println("IR initialized (GPIO4, 38kHz carrier)");
+    } else {
+        Serial.println("IR init failed");
+    }
 
     ble_init();
 }
