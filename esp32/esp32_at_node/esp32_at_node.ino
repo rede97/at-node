@@ -242,9 +242,27 @@ static void handle_at(void)
         resp = "OK";
     } else if (cmd.startsWith("AT+TAP=")) {
         String args = cmd.substring(7);
-        int ms  = args.substring(0, args.indexOf(',')).toInt();
-        int mods = args.substring(args.indexOf(',') + 1).toInt();
-        /* NOTE: full parsing omitted in skeleton; see at_parser.cpp later */
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int ms   = args.substring(0, c1).toInt();
+            int mods = args.substring(c1 + 1, c2).toInt();
+            int key  = args.substring(c2 + 1).toInt();
+            key_tap((uint8_t)mods, (uint8_t)key, ms);
+            resp = "OK";
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+KEY=")) {
+        String args = cmd.substring(7);
+        g_key_state.mods = parse_uint8(args);
+        for (int i = 0; i < 6; i++) {
+            int comma = args.indexOf(',');
+            String part = (comma > 0) ? args.substring(0, comma) : args;
+            g_key_state.keys[i] = parse_uint8(part);
+            if (comma > 0) args = args.substring(comma + 1);
+        }
+        send_report();
         resp = "OK";
     } else if (cmd.startsWith("AT+TEXT=")) {
         String text = cmd.substring(8);
@@ -396,11 +414,27 @@ static void handle_serial(void)
         Serial.println(WiFi.localIP().toString());
     } else if (line.startsWith("AT+TAP=")) {
         String args = line.substring(7);
-        int ms  = args.substring(0, args.indexOf(',')).toInt();
-        int mods = args.substring(args.indexOf(',') + 1).toInt();
-        /* simplified: mods ignored, key from last arg */
-        int key = args.substring(args.lastIndexOf(',') + 1).toInt();
-        key_tap((uint8_t)mods, (uint8_t)key, ms);
+        int c1 = args.indexOf(',');
+        int c2 = args.indexOf(',', c1 + 1);
+        if (c1 > 0 && c2 > c1) {
+            int ms   = args.substring(0, c1).toInt();
+            int mods = args.substring(c1 + 1, c2).toInt();
+            int key  = args.substring(c2 + 1).toInt();
+            key_tap((uint8_t)mods, (uint8_t)key, ms);
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+KEY=")) {
+        String args = line.substring(7);
+        g_key_state.mods = parse_uint8(args);
+        for (int i = 0; i < 6; i++) {
+            int comma = args.indexOf(',');
+            String part = (comma > 0) ? args.substring(0, comma) : args;
+            g_key_state.keys[i] = parse_uint8(part);
+            if (comma > 0) args = args.substring(comma + 1);
+        }
+        send_report();
         Serial.println("OK");
     } else if (line.startsWith("AT+TEXT=")) {
         String text = line.substring(8);
