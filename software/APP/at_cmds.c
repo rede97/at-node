@@ -17,6 +17,7 @@
 /* Per-slot report drop counter (AT+DEV diagnostics). A drop means the
    link TX queue stayed full for a whole retry budget. */
 static uint16_t kb_ble_drops[KBD_MAX_CONN];
+static uint8_t  kb_ble_lasterr[KBD_MAX_CONN];   /* last GATT status that exhausted retries */
 
 /* Output target bitmask (F1.11/F1.12). Single-host builds have only
    slot 0 (BLE1); BLE2/BLE3 bits are accepted but never route. */
@@ -27,15 +28,15 @@ static uint16_t kb_ble_drops[KBD_MAX_CONN];
 #define KB_TGT_BLE_ALL  (KB_TGT_BLE1|KB_TGT_BLE2|KB_TGT_BLE3)
 #define KB_TGT_ALL      (KB_TGT_USB|KB_TGT_BLE_ALL)
 
-static uint8_t kb_target = KB_TGT_ALL;
+static uint8_t kb_target = KB_TGT_USB | KB_TGT_BLE1;   /* = KB_BOTH */
 
 void kb_set_mode(kb_mode_t m) {
     kb_target = (m == KB_USB) ? KB_TGT_USB :
-                (m == KB_BLE) ? KB_TGT_BLE_ALL : KB_TGT_ALL;
+                (m == KB_BLE) ? KB_TGT_BLE1 : (KB_TGT_USB | KB_TGT_BLE1);
 }
 kb_mode_t kb_get_mode(void) {
     if (kb_target == KB_TGT_USB) return KB_USB;
-    if (kb_target == KB_TGT_ALL) return KB_BOTH;
+    if (kb_target == (KB_TGT_USB | KB_TGT_BLE1)) return KB_BOTH;
     return KB_BLE;
 }
 
@@ -67,13 +68,11 @@ static int kb_flush(uint8_t mods, uint8_t *keys, int count)
                     if (st != blePending && st != bleMemAllocError) break;
                     for (volatile uint32_t d = 0; d < 80000; d++) __nop();
                 }
-                if (st != SUCCESS && st != bleNotReady) kb_ble_drops[s]++;
+                if (st != SUCCESS && st != bleNotReady) {
+                    kb_ble_drops[s]++;
+                    kb_ble_lasterr[s] = st;
+                }
                 sent = 1;
-                /* Back-to-back GATT notifications on different links in the
-                   same TMOS tick corrupt each other in the WCH stack — a
-                   broadcast (DEV=ALL) loses BOTH reports (field 2026-07-24).
-                   ~3 ms spacing lets each link's ATT transaction clear. */
-                for (volatile uint32_t d = 0; d < 60000; d++) __nop();
             }
         }
     }
@@ -124,6 +123,10 @@ static uint8_t    seq_buf[SEQ_MAX_REPORTS][7];   /* mods + 6 keys per report */
 static int        seq_count    = 0;
 static int        seq_idx      = 0;
 static uint16_t   seq_delay_ms = 0;
+/* KEY_STR inter-report pacing, AT+PACE configurable. 15 ms suits USB /
+   fast links; BLE hosts with long conn intervals (phones) need 60-150.
+   RAM-only, no persistence. */
+static uint16_t   keystr_pace_ms = 15;
 
 /* KEY_STR state — full definitions live after at_cmd_KEY_SEQ */
 static char    keystr_buf[];
@@ -154,7 +157,7 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
                 }
             }
             keystr_idx++;
-            tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(15));
+            tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(keystr_pace_ms));
             return evt ^ SEQ_EVENT;
         }
         if (seq_idx < seq_count) {
@@ -205,7 +208,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
-        "  AT+DEV   - output target USB|BLE1..3|ALL\r\n"
+        "  AT+DEV   - output target USB|BLE1..3\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
         "  AT+TAP   - press+release <ms>,<mods>,<k1>..<k6>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
@@ -276,9 +279,10 @@ static int at_cmd_KB(int argc, char *argv[])  {
    Returns the KB_TGT_* bitmask, or 0 on unknown. */
 static uint8_t dev_target_parse(const char *s)
 {
+    /* Single-target routing only — the DEV=ALL multi-host broadcast was
+       dropped as a feature (rarely useful, owner decision 2026-07-24).
+       BT_DISC/UNBIND still accept BLE1..3 via this parser. */
     if (!strcmp(s, "USB"))  return KB_TGT_USB;
-    if (!strcmp(s, "BLE"))  return KB_TGT_BLE_ALL;
-    if (!strcmp(s, "BOTH") || !strcmp(s, "ALL")) return KB_TGT_ALL;
     if (s[0] == 'B' && s[1] == 'L' && s[2] == 'E' && s[3] >= '1' && s[3] <= '3' && !s[4])
         return (uint8_t)(KB_TGT_BLE1 << (s[3] - '1'));
     return 0;
@@ -297,17 +301,30 @@ static int at_cmd_DEV(int argc, char *argv[])
                     (kb_target & KB_TGT_USB) ? ",active" : "");
         for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
             const uint8_t *a = kb_ble_slot_addr(s);
-            if (a)
-                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s%s",
+            if (a) {
+                uint16_t iv = 0, lt = 0;
+                kb_ble_slot_params(s, &iv, &lt);
+                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s%s%s%s,err=%02X,int=%u.%02ums/lat%u",
                             s + 2, s + 1,
                             a[5], a[4], a[3], a[2], a[1], a[0],
                             kb_ble_slot_secure(s) ? ",secure" : ",INSECURE",
                             kb_ble_slot_notify(s) ? ",notify" : ",NO-CCCD",
+                            (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "",
                             kb_ble_drops[s] ? ",drops" : "",
-                            (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
-            else
-                AT_Response("%d,BLE%d,-,free%s", s + 2, s + 1,
-                            (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+                            kb_ble_lasterr[s],
+                            iv * 125 / 100, (iv * 125) % 100, lt);
+            }
+            else {
+                const uint8_t *b = kb_ble_slot_bound_addr(s);
+                if (b)
+                    AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,reserved%s",
+                                s + 2, s + 1,
+                                b[5], b[4], b[3], b[2], b[1], b[0],
+                                (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+                else
+                    AT_Response("%d,BLE%d,-,free%s", s + 2, s + 1,
+                                (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+            }
         }
         return 0;
     }
@@ -317,12 +334,33 @@ static int at_cmd_DEV(int argc, char *argv[])
                   | (KBD_MAX_CONN >= 2 ? KB_TGT_BLE2 : 0)
                   | (KBD_MAX_CONN >= 3 ? KB_TGT_BLE3 : 0);
     if (!m || (m & ~valid)) {
-        AT_Response("usage: AT+DEV[=USB|BLE1|BLE2|BLE3|ALL]");
+        AT_Response("usage: AT+DEV[=USB|BLE1|BLE2|BLE3]");
         return -1;
     }
     kb_target = m;
+    /* single-active-link policy: drop every other link now; BLE quiet
+       when USB-only is selected */
+    extern void kb_ble_activate_slot(int slot);
+    if (m & KB_TGT_BLE_ALL) {
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+            if (m & (KB_TGT_BLE1 << s)) { kb_ble_activate_slot(s); break; }
+    } else {
+        kb_ble_activate_slot(-1);
+    }
     AT_Response("DEV=%s", argv[1]);
     return 0;
+}
+
+/* Single-active-link policy hooks (called from hidkbd_ble.c):
+   a slot is allowed to hold a link iff it is the kb_target BLE slot. */
+uint8_t kb_ble_slot_allowed(uint8_t slot, const uint8_t *addr)
+{
+    (void)addr;
+    return (slot < KBD_MAX_CONN && (kb_target & (KB_TGT_BLE1 << slot))) ? 1 : 0;
+}
+uint8_t kb_ble_advert_wanted(void)
+{
+    return (kb_target & KB_TGT_BLE_ALL) ? 1 : 0;
 }
 #endif /* BLE_HAS_KBD */
 /* AT+KEY=<mods>,<k1>,..,<k6> — raw HID report. Missing args = 0. */
@@ -494,6 +532,19 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 }
 
 
+/* AT+PACE[=<ms>] — KEY_STR inter-report pacing (default 15).
+   Set 60-150 for BLE hosts with long connection intervals (phones):
+   the link drains ~1 report per conn event, so bursting at 15 ms
+   overruns its queue and releases get lost (field 2026-07-24). */
+static int at_cmd_PACE(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("pace=%ums", keystr_pace_ms); return 0; }
+    int v = atoi(argv[1]);
+    if (v < 5 || v > 2000) { AT_Response("usage: AT+PACE=<ms 5-2000>"); return -1; }
+    keystr_pace_ms = (uint16_t)v;
+    AT_Response("pace=%ums", keystr_pace_ms);
+    return 0;
+}
+
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
 
 /* Core */
@@ -501,8 +552,7 @@ static int at_cmd_STATUS(int argc, char *argv[])  {
     (void)argc; (void)argv;
     /* compact active-target string, e.g. "BLE1" / "USB+BLE2" / "ALL" */
     char tgt[20] = "";
-    if (kb_target == KB_TGT_ALL) { tgt[0]='A'; tgt[1]='L'; tgt[2]='L'; tgt[3]=0; }
-    else {
+    {
         if (kb_target & KB_TGT_USB) strcat(tgt, "USB");
         for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
             if (kb_target & (KB_TGT_BLE1 << s)) {
@@ -828,7 +878,7 @@ static int bt_disc_kbd(int argc, char *argv[]) {
     if (argc >= 2) {
         uint8_t m = dev_target_parse(argv[1]);
         if (!(m & KB_TGT_BLE_ALL)) {
-            AT_Response("usage: AT+BT_DISC[=BLE1|BLE2|BLE3|ALL]");
+            AT_Response("usage: AT+BT_DISC[=BLE1|BLE2|BLE3]");
             return -1;
         }
         int n = 0;
@@ -849,7 +899,24 @@ static int bt_pair_kbd(int argc, char *argv[]) {
     (void)argc; (void)argv;
     kb_ble_disconnect();      /* fine if not connected */
     kb_ble_forget_bonds();
+    for (uint8_t s = 0; s < KBD_MAX_CONN; s++) kb_ble_unbind_slot(s);
     AT_Response("bonds erased — pairing mode");
+    return 0;
+}
+/* AT+BT_UNBIND=<BLE1|BLE2|BLE3> — forget ONE host: clears its slot
+   reservation and its bond record. The slot becomes free for a new
+   pairing; the other hosts are untouched (F1.12). */
+static int bt_unbind_kbd(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+BT_UNBIND=<BLE1|BLE2|BLE3>"); return -1; }
+    uint8_t m = dev_target_parse(argv[1]);
+    if (!m || !(m & KB_TGT_BLE_ALL)) {
+        AT_Response("usage: AT+BT_UNBIND=<BLE1|BLE2|BLE3>");
+        return -1;
+    }
+    int n = 0;
+    for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+        if ((m & (KB_TGT_BLE1 << s)) && kb_ble_unbind_slot(s) == 0) n++;
+    if (!n) { AT_Response("ERROR: slot not bound"); return -1; }
     return 0;
 }
 #endif /* BLE_HAS_KBD */
@@ -937,6 +1004,23 @@ static int at_cmd_BT_PAIR(int argc, char *argv[]) {
     return bt_pair_dgl(argc, argv);
 #else
     return bt_pair_kbd(argc, argv);
+#endif
+}
+
+/* AT+BT_UNBIND=<BLE1..3> — kbd-role only (dongle has a single peer). */
+static int at_cmd_BT_UNBIND(int argc, char *argv[]) {
+#if BLE_HAS_KBD
+  #if BLE_MODE == BLE_MODE_DUAL
+    if (role_current() == ROLE_DONGLE) {
+        AT_Response("ERROR: kbd role only");
+        return -1;
+    }
+  #endif
+    return bt_unbind_kbd(argc, argv);
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: kbd role only");
+    return -1;
 #endif
 }
 
@@ -1038,13 +1122,14 @@ const at_cmd_t cmd_table[] = {
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
 #if BLE_HAS_KBD
-    { "AT+DEV",     "output target USB|BLE1..3|ALL",  at_cmd_DEV },
+    { "AT+DEV",     "output target USB|BLE1..3",  at_cmd_DEV },
 #endif
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
     { "AT+TAP",     "press+release <ms>,<mods>,<k1>..<k6>", at_cmd_TAP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     { "AT+KEY_STR", "type text <string> (US layout)", at_cmd_KEY_STR },
+    { "AT+PACE",    "KEY_STR pacing <ms>",          at_cmd_PACE },
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },
@@ -1060,6 +1145,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_CONN", "connect <idx|addr|name> (dongle)", at_cmd_BT_CONN },
     { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
     { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
+    { "AT+BT_UNBIND", "forget one host <BLE1..3>",   at_cmd_BT_UNBIND },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },

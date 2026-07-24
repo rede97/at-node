@@ -42,13 +42,16 @@
 
 // Minimum connection interval (units of 1.25ms)
 /* Connection parameters requested from hosts. Single-host kbd keeps the
-   aggressive 10 ms/0-latency profile. KBD_MULTI relaxes to 30-60 ms with
-   latency 2: two links at 10 ms + advertising oversubscribe the airtime
-   and hosts drop with LL supervision timeout 0x08 (field 2026-07-24). */
+   aggressive 10 ms/0-latency profile. KBD_MULTI history: first relaxed
+   to 30-60 ms/latency 2 for multi-link airtime — but with the
+   single-active-link policy (2026-07-24) only ONE link is ever up, so
+   multi-link airtime pressure is gone; latency 2 also starved typing
+   (phone auto-repeated keys when releases queued behind 180 ms events).
+   Now 15-30 ms / latency 0 — snappy typing, stable link. */
 #if(BLE_MODE == BLE_MODE_KBD_MULTI)
-#define DEFAULT_DESIRED_MIN_CONN_INTERVAL    24
-#define DEFAULT_DESIRED_MAX_CONN_INTERVAL    48
-#define DEFAULT_DESIRED_SLAVE_LATENCY        2
+#define DEFAULT_DESIRED_MIN_CONN_INTERVAL    12
+#define DEFAULT_DESIRED_MAX_CONN_INTERVAL    24
+#define DEFAULT_DESIRED_SLAVE_LATENCY        0
 #else
 #define DEFAULT_DESIRED_MIN_CONN_INTERVAL    8
 #define DEFAULT_DESIRED_MAX_CONN_INTERVAL    8
@@ -178,6 +181,45 @@ static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
     [0 ... KBD_MAX_CONN-1] = { GAP_CONNHANDLE_INIT, {0} }
 };
 
+/* ---- persistent slot binding (F1.12) ----------------------------------
+ * Maps host address -> slot so a host keeps its BLE1/2/3 identity across
+ * reconnects and reboots: the user records "laptop = BLE2" once.
+ * One DataFlash page at APP_SLOTMAP_FLASH_ADDR; entries for hosts that
+ * connected but never bonded are dropped on disconnect (unbonded RPA
+ * addresses are throwaway). */
+#define SLOTMAP_MAGIC  0xA77E0001
+static uint8_t slotmap[KBD_MAX_CONN][6];   /* all-0xFF = free */
+
+static void slotmap_save(void)
+{
+    uint8_t buf[32];
+    uint32_t magic = SLOTMAP_MAGIC;
+    tmos_memcpy(buf, &magic, 4);
+    tmos_memcpy(buf + 4, slotmap, KBD_MAX_CONN * 6);
+    EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, sizeof(buf));
+    EEPROM_WRITE(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
+}
+
+static void slotmap_load(void)
+{
+    uint8_t buf[32];
+    uint32_t magic = 0;
+    tmos_memset(slotmap, 0xFF, sizeof(slotmap));
+    EEPROM_READ(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
+    tmos_memcpy(&magic, buf, 4);
+    if (magic == SLOTMAP_MAGIC)
+        tmos_memcpy(slotmap, buf + 4, KBD_MAX_CONN * 6);
+}
+
+static int slotmap_find(const uint8_t *addr)
+{
+    for (int s = 0; s < KBD_MAX_CONN; s++) {
+        if (slotmap[s][0] == 0xFF) continue;
+        if (tmos_memcmp(slotmap[s], (void *)addr, 6)) return s;
+    }
+    return -1;
+}
+
 static int kbd_slot_of(uint16_t handle)
 {
     for (int i = 0; i < KBD_MAX_CONN; i++)
@@ -189,14 +231,31 @@ static int kbd_slot_alloc(uint16_t handle, const uint8_t *addr)
 {
     int s = kbd_slot_of(handle);
     if (s >= 0) return s;
-    for (s = 0; s < KBD_MAX_CONN; s++) {
-        if (kbd_conns[s].handle == GAP_CONNHANDLE_INIT) {
+    /* stable identity: a known host reclaims its recorded slot */
+    if (addr) {
+        s = slotmap_find(addr);
+        if (s >= 0 && kbd_conns[s].handle == GAP_CONNHANDLE_INIT) {
             kbd_conns[s].handle = handle;
-            if (addr) tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
+            tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
             return s;
         }
     }
-    return -1;  /* table full — stack caps links at PERIPHERAL_MAX_CONNECTION */
+    /* new host: lowest TRULY free slot (no live link AND no reservation),
+       then remember it. Reserved-but-absent slots belong to their host
+       and are never handed out (2026-07-24). */
+    for (s = 0; s < KBD_MAX_CONN; s++) {
+        if (kbd_conns[s].handle == GAP_CONNHANDLE_INIT &&
+            slotmap[s][0] == 0xFF) {
+            kbd_conns[s].handle = handle;
+            if (addr) {
+                tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
+                tmos_memcpy(slotmap[s], addr, 6);
+                slotmap_save();
+            }
+            return s;
+        }
+    }
+    return -1;  /* no free slot — all reserved or connected */
 }
 
 uint8_t kb_ble_connected(void)  { return kb_ble_conn_count() > 0 ? 1 : 0; }
@@ -218,6 +277,38 @@ uint8_t kb_ble_slot_notify(uint8_t slot)
 {
     return (slot < KBD_MAX_CONN && kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
            ? ble_hid_dev_conn_notify(kbd_conns[slot].handle) : 0;
+}
+
+/* Reserved address for a slot (from the persistent table), or NULL. */
+const uint8_t *kb_ble_slot_bound_addr(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN && slotmap[slot][0] != 0xFF) ? slotmap[slot] : NULL;
+}
+
+/* Forget a host: clear its slot reservation AND its bond. */
+int kb_ble_unbind_slot(uint8_t slot)
+{
+    if (slot >= KBD_MAX_CONN || slotmap[slot][0] == 0xFF) return -1;
+    uint8_t addr[6];
+    tmos_memcpy(addr, slotmap[slot], 6);
+    tmos_memset(slotmap[slot], 0xFF, 6);
+    slotmap_save();
+    if (kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
+        GAPRole_TerminateLink(kbd_conns[slot].handle);
+    /* erase the bond record (address type byte first: 0=public,1=random) */
+    uint8_t buf[7] = { 1 };   /* our hosts use random/static addresses */
+    tmos_memcpy(buf + 1, addr, 6);
+    GAPBondMgr_SetParameter(GAPBOND_ERASE_SINGLEBOND, sizeof(buf), buf);
+    return 0;
+}
+
+/* Effective link pacing: interval in 1.25 ms units + slave latency. */
+uint8_t kb_ble_slot_params(uint8_t slot, uint16_t *intv, uint16_t *lat)
+{
+    if (slot >= KBD_MAX_CONN || kbd_conns[slot].handle == GAP_CONNHANDLE_INIT)
+        return 0;
+    *intv = ble_hid_dev_conn_interval(kbd_conns[slot].handle, lat);
+    return 1;
 }
 
 uint8_t kb_ble_slot_secure(uint8_t slot)
@@ -296,6 +387,41 @@ static uint8_t ble_hid_emu_rpt_cb(uint8_t id, uint8_t type, uint16_t uuid,
 static void    ble_hid_emu_evt_cb(uint8_t evt);
 static void    ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEvent);
 
+/* ---- single-active-link policy (KBD_MULTI, owner decision 2026-07-24)
+ * Only the kb_target BLE slot may hold a link; other bonded hosts are
+ * dropped on sight (their reconnect retries back off harmlessly).
+ * Unknown (unbonded) hosts are always allowed through so pairing never
+ * needs a special mode. Saves airtime/power and kills the whole class
+ * of multi-link issues (broadcast corruption, queue storms). */
+uint8_t kb_ble_slot_allowed(uint8_t slot, const uint8_t *addr);   /* at_cmds.c */
+
+static int kbd_policy_drop(const uint8_t *addr)
+{
+#if KBD_MAX_CONN > 1
+    int s = slotmap_find(addr);
+    if (s < 0) return 0;                 /* unknown host: pairing, allow */
+    return !kb_ble_slot_allowed((uint8_t)s, addr);
+#else
+    (void)addr;
+    return 0;
+#endif
+}
+
+/* AT-facing: switch the active BLE slot. Terminates every other link and
+   turns advertising on (BLEn selected) or off (USB-only, BLE quiet). */
+void kb_ble_activate_slot(int slot)
+{
+#if KBD_MAX_CONN > 1
+    for (int s = 0; s < KBD_MAX_CONN; s++)
+        if (s != slot && kbd_conns[s].handle != GAP_CONNHANDLE_INIT)
+            GAPRole_TerminateLink(kbd_conns[s].handle);
+#else
+    (void)slot;
+#endif
+    uint8_t adv = (slot >= 0) ? TRUE : FALSE;
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+}
+
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -329,6 +455,7 @@ void ble_hid_emu_init(void)
     ble_hid_emu_task_id = TMOS_ProcessEventRegister(ble_hid_emu_process_event);
 
     kbd_name_init();   /* build "AT-Node-XXXX" before advert data is set */
+    slotmap_load();    /* restore persistent host->slot bindings */
 
     // Setup the GAP Peripheral Role Profile
     {
@@ -478,6 +605,13 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
     if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)
     {
         gapEstLinkReqEvent_t *event = (gapEstLinkReqEvent_t *)pEvent;
+        /* single-active policy: bonded host on a non-active slot is
+           dropped immediately (unknown hosts pass through for pairing) */
+        if (kbd_policy_drop(event->devAddr)) {
+            PRINT("Rejected non-active host\n");
+            GAPRole_TerminateLink(event->connectionHandle);
+            return;
+        }
         int slot = kbd_slot_alloc(event->connectionHandle, event->devAddr);
         if (slot >= 0) {
             tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
@@ -492,14 +626,23 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
     if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
     {
         int slot = kbd_slot_of(pEvent->linkTerminate.connectionHandle);
-        if (slot >= 0)
+        if (slot >= 0) {
             kbd_conns[slot].handle = GAP_CONNHANDLE_INIT;
-        AT_Response("+BT_DISCONNECTED:%d reason=%X", slot + 1, pEvent->linkTerminate.reason);
-        PRINT("Disconnected.. slot %d Reason:%x\n", slot, pEvent->linkTerminate.reason);
-        /* A slot just freed — make sure we are connectable again
-           (covers terminate from CONNECTED state, where the WAITING
-           re-enable path below is not reached). */
-        if (kb_ble_conn_count() < KBD_MAX_CONN) {
+            AT_Response("+BT_DISCONNECTED:%d reason=%X", slot + 1, pEvent->linkTerminate.reason);
+            PRINT("Disconnected.. slot %d Reason:%x\n", slot, pEvent->linkTerminate.reason);
+        }
+        /* slot < 0 = a policy-rejected connection (single-active model):
+           not a real session, stay quiet to avoid URC spam against a
+           retrying host. */
+        /* NOTE: no auto-clear of the slotmap reservation here — the
+           profile layer clears hidDevConnSecure BEFORE this handler
+           runs, so "was bonded" is unknowable at this point (ordering
+           bug, wiped the dongle's reservation 2026-07-24). Cleanup is
+           explicit via AT+BT_UNBIND. */
+        /* A slot just freed — make sure we are connectable again, unless
+           USB-only mode asked for BLE quiet (kb_ble_activate_slot(-1)). */
+        extern uint8_t kb_ble_advert_wanted(void);   /* at_cmds.c */
+        if (kb_ble_conn_count() < KBD_MAX_CONN && kb_ble_advert_wanted()) {
             uint8_t adv = TRUE;
             GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
         }

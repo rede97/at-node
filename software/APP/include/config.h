@@ -445,6 +445,17 @@
 #endif
 
 /*********************************************************************
+ * APP_SLOTMAP_FLASH_ADDR — DataFlash offset of the kbd slot-binding
+ * table (KBD_MULTI): which host address owns BLE1/BLE2/BLE3, so a host
+ * keeps its slot across reconnects and reboots (F1.12 usability: the
+ * user records "laptop = BLE2" once). One 256-byte page below the role
+ * flag page.
+ */
+#ifndef APP_SLOTMAP_FLASH_ADDR
+#define APP_SLOTMAP_FLASH_ADDR  0x7B00
+#endif
+
+/*********************************************************************
  * BLE_DONGLE_DEBUG — verbose receiver diagnostics over the AT channel.
  *
  *   TRUE (default): diag lines +BT_ADV (every advertiser), +BT_DISC

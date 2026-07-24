@@ -128,6 +128,12 @@ static int hiddev_conn_count(void)
 // Status of last pairing
 static uint8_t pairingStatus = SUCCESS;
 
+/* Effective per-slot pacing: connInterval (1.25 ms units) and slave
+   latency, captured at connect + param update. AT+DEV shows them so
+   link pacing bugs are diagnosable without a sniffer (2026-07-24). */
+static uint16_t hidDevConnIntv[KBD_MAX_CONN];
+static uint16_t hidDevConnLat[KBD_MAX_CONN];
+
 static ble_hid_rpt_map_t *pHidDevRptTbl;
 
 static uint8_t hidDevRptTblLen;
@@ -228,6 +234,12 @@ void ble_hid_dev_init()
         // Device controller's advertising filter policy to 'process scan and
         // connection requests only from devices in the White List'.
         GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_WL, sizeof(uint8_t), &syncWL);
+
+        /* Sync the Resolving List too: bonded RPA hosts (phones) are
+           resolved to their IDENTITY address before the connect event
+           reaches us — that stable address keys the slot-binding table
+           (KBD_MULTI slot persistence, 2026-07-24). */
+        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_RL, sizeof(uint8_t), &syncWL);
     }
 
     // Set up services
@@ -834,8 +846,11 @@ static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
         int slot = hiddev_slot_alloc(event->connectionHandle);
 
         gapConnHandle = event->connectionHandle;   /* last-connected */
-        if (slot >= 0)
+        if (slot >= 0) {
             hidDevConnSecure[slot] = FALSE;   /* not secure yet */
+            hidDevConnIntv[slot] = event->connInterval;
+            hidDevConnLat[slot]  = event->connLatency;
+        }
 
         /* The GAPRole lib stops advertising on every connect. With free
            slots we must explicitly re-enable it so hosts 2/3 can still
@@ -887,7 +902,20 @@ static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
 static void hidDevParamUpdateCB(uint16_t connHandle, uint16_t connInterval,
                                 uint16_t connSlaveLatency, uint16_t connTimeout)
 {
+    int slot = hiddev_slot_of(connHandle);
+    if (slot >= 0) {
+        hidDevConnIntv[slot] = connInterval;
+        hidDevConnLat[slot]  = connSlaveLatency;
+    }
     PRINT("Update %d - Int 0x%x - Latency %d\n", connHandle, connInterval, connSlaveLatency);
+}
+
+uint16_t ble_hid_dev_conn_interval(uint16_t conn, uint16_t *latency)
+{
+    int s = hiddev_slot_of(conn);
+    if (s < 0) { if (latency) *latency = 0; return 0; }
+    if (latency) *latency = hidDevConnLat[s];
+    return hidDevConnIntv[s];
 }
 
 /*********************************************************************

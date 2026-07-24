@@ -346,6 +346,7 @@ extern void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *
  */
 extern uint8_t ble_hid_dev_conn_secure(uint16_t conn);
 extern uint8_t ble_hid_dev_conn_notify(uint16_t conn);
+extern uint16_t ble_hid_dev_conn_interval(uint16_t conn, uint16_t *latency);
 extern uint8_t ble_hid_dev_report(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
 
 /*********************************************************************
