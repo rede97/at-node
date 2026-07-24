@@ -606,15 +606,24 @@ static void handle_at(void)
             } else if (sub == "status") {
                 resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected");
             } else if (sub == "ca") {
-                /* val should be the CA cert PEM or SHA256 fingerprint */
-                if (val.startsWith("-----BEGIN")) {
+                /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
+                if (val == "status") {
+                    if (g_mqtt_ca_fp.length() > 0) {
+                        resp = "+MQTT_CA:fingerprint";
+                    } else if (g_mqtt_ca_cert.length() > 0) {
+                        resp = "+MQTT_CA:pem";
+                    } else {
+                        resp = "+MQTT_CA:none";
+                    }
+                } else if (val.startsWith("-----BEGIN")) {
                     g_mqtt_ca_cert = val;
                     save_config("mqtt_ca_cert", val);
+                    resp = "OK";
                 } else {
                     g_mqtt_ca_fp = val;
                     save_config("mqtt_ca_fp", val);
+                    resp = "OK";
                 }
-                resp = "OK";
             } else {
                 resp = "ERROR";
             }
@@ -1066,6 +1075,15 @@ static void handle_mqtt_status(void)
     json += ",\"broker\":\"" + g_mqtt_broker + "\"";
     json += ",\"port\":" + String(g_mqtt_port);
     json += ",\"client_id\":\"" + g_mqtt_client_id + "\"";
+    json += ",\"ca_type\":\"";
+    if (g_mqtt_ca_fp.length() > 0) {
+        json += "fingerprint";
+    } else if (g_mqtt_ca_cert.length() > 0) {
+        json += "pem";
+    } else {
+        json += "none";
+    }
+    json += "\"";
     json += "}";
     send_json(json);
 }
@@ -1408,15 +1426,24 @@ static void handle_serial(void)
                 Serial.println(g_mqtt_connected ? "connected" : "disconnected");
                 Serial.println("OK");
             } else if (sub == "ca") {
-                /* val should be the CA cert PEM or SHA256 fingerprint */
-                if (val.startsWith("-----BEGIN")) {
+                /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
+                if (val == "status") {
+                    if (g_mqtt_ca_fp.length() > 0) {
+                        Serial.println("+MQTT_CA:fingerprint");
+                    } else if (g_mqtt_ca_cert.length() > 0) {
+                        Serial.println("+MQTT_CA:pem");
+                    } else {
+                        Serial.println("+MQTT_CA:none");
+                    }
+                } else if (val.startsWith("-----BEGIN")) {
                     g_mqtt_ca_cert = val;
                     save_config("mqtt_ca_cert", val);
+                    Serial.println("OK");
                 } else {
                     g_mqtt_ca_fp = val;
                     save_config("mqtt_ca_fp", val);
+                    Serial.println("OK");
                 }
-                Serial.println("OK");
             } else {
                 Serial.println("ERROR");
             }
