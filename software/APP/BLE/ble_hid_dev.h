@@ -336,6 +336,7 @@ extern void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *
  *
  * @brief   Send a HID report.
  *
+ * @param   conn - GAP connection handle of the target host link.
  * @param   id - HID report ID.
  * @param   type - HID report type.
  * @param   len - Length of report.
@@ -343,7 +344,7 @@ extern void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *
  *
  * @return  None.
  */
-extern uint8_t ble_hid_dev_report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
+extern uint8_t ble_hid_dev_report(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
 
 /*********************************************************************
  * @fn      ble_hid_dev_close

@@ -149,17 +149,79 @@ static ble_hid_dev_cfg_t ble_hid_emu_cfg = {
     BLE_HID_KBD_FEATURE_FLAGS         // HID feature flags
 };
 
-uint16_t ble_hid_emu_conn_handle = GAP_CONNHANDLE_INIT;
+/* Per-host connection slots (KBD_MULTI: BLE1/BLE2/BLE3; single builds: 1).
+   Slot index is the STABLE host identity for AT+DEV routing — allocated
+   in connect order, freed on disconnect. */
+typedef struct {
+    uint16_t handle;        /* GAP_CONNHANDLE_INIT when free */
+    uint8_t  addr[6];       /* host MAC, LSB-first */
+} kbd_conn_t;
 
-uint8_t kb_ble_connected(void)  { return (ble_hid_emu_conn_handle != GAP_CONNHANDLE_INIT) ? 1 : 0; }
+static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
+    [0 ... KBD_MAX_CONN-1] = { GAP_CONNHANDLE_INIT, {0} }
+};
 
-/* Actively drop the host link (like a real keyboard's host-switch key).
-   Advertising restarts automatically via the GAP_LINK_TERMINATED_EVENT
-   path; the bond is kept, so the same host (or a new one) can reconnect. */
+static int kbd_slot_of(uint16_t handle)
+{
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (kbd_conns[i].handle == handle) return i;
+    return -1;
+}
+
+static int kbd_slot_alloc(uint16_t handle, const uint8_t *addr)
+{
+    int s = kbd_slot_of(handle);
+    if (s >= 0) return s;
+    for (s = 0; s < KBD_MAX_CONN; s++) {
+        if (kbd_conns[s].handle == GAP_CONNHANDLE_INIT) {
+            kbd_conns[s].handle = handle;
+            if (addr) tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
+            return s;
+        }
+    }
+    return -1;  /* table full — stack caps links at PERIPHERAL_MAX_CONNECTION */
+}
+
+uint8_t kb_ble_connected(void)  { return kb_ble_conn_count() > 0 ? 1 : 0; }
+
+int kb_ble_conn_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (kbd_conns[i].handle != GAP_CONNHANDLE_INIT) n++;
+    return n;
+}
+
+uint16_t kb_ble_slot_handle(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN) ? kbd_conns[slot].handle : GAP_CONNHANDLE_INIT;
+}
+
+const uint8_t *kb_ble_slot_addr(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN && kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
+           ? kbd_conns[slot].addr : NULL;
+}
+
+/* Drop one host link by slot. Advertising restarts automatically via the
+   GAP_LINK_TERMINATED_EVENT path; the bond is kept. */
+int kb_ble_disconnect_slot(uint8_t slot)
+{
+    if (slot >= KBD_MAX_CONN || kbd_conns[slot].handle == GAP_CONNHANDLE_INIT)
+        return -1;
+    GAPRole_TerminateLink(kbd_conns[slot].handle);
+    return 0;
+}
+
+/* Actively drop ALL host links (like a real keyboard's host-switch key).
+   Bonds are kept, so the same hosts (or new ones) can reconnect. */
 int kb_ble_disconnect(void)
 {
-    if (!kb_ble_connected()) return -1;
-    GAPRole_TerminateLink(ble_hid_emu_conn_handle);
+    int n = kb_ble_conn_count();
+    if (!n) return -1;
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (kbd_conns[i].handle != GAP_CONNHANDLE_INIT)
+            GAPRole_TerminateLink(kbd_conns[i].handle);
     return 0;
 }
 
@@ -170,14 +232,24 @@ void kb_ble_forget_bonds(void)
     GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
 }
 
-void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
+/* Send to one host slot (silent drop if slot free). */
+void kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count)
 {
     uint8_t buf[8];
-    if (!kb_ble_connected()) return;  /* drop silently — no host to receive */
+    if (slot >= KBD_MAX_CONN || kbd_conns[slot].handle == GAP_CONNHANDLE_INIT)
+        return;
     buf[0] = mods;
     buf[1] = 0;
     for (int j = 0; j < 6; j++) buf[2+j] = (j < count) ? keys[j] : 0;
-    ble_hid_dev_report(BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT, 8, buf);
+    ble_hid_dev_report(kbd_conns[slot].handle,
+                       BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT, 8, buf);
+}
+
+/* Broadcast to every connected host slot (DEV=ALL / single-build BLE). */
+void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count)
+{
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        kb_ble_send_report_slot((uint8_t)i, mods, keys, count);
 }
 
 /*********************************************************************
@@ -306,23 +378,29 @@ uint16_t ble_hid_emu_process_event(uint8_t task_id, uint16_t events)
 
     if(events & START_PARAM_UPDATE_EVT)
     {
-        // Send connect param update request
-        GAPRole_PeripheralConnParamUpdateReq(ble_hid_emu_conn_handle,
-                                             DEFAULT_DESIRED_MIN_CONN_INTERVAL,
-                                             DEFAULT_DESIRED_MAX_CONN_INTERVAL,
-                                             DEFAULT_DESIRED_SLAVE_LATENCY,
-                                             DEFAULT_DESIRED_CONN_TIMEOUT,
-                                             ble_hid_emu_task_id);
-
+        // Send connect param update request to every connected host
+        for (int i = 0; i < KBD_MAX_CONN; i++) {
+            if (kbd_conns[i].handle != GAP_CONNHANDLE_INIT)
+                GAPRole_PeripheralConnParamUpdateReq(kbd_conns[i].handle,
+                                                     DEFAULT_DESIRED_MIN_CONN_INTERVAL,
+                                                     DEFAULT_DESIRED_MAX_CONN_INTERVAL,
+                                                     DEFAULT_DESIRED_SLAVE_LATENCY,
+                                                     DEFAULT_DESIRED_CONN_TIMEOUT,
+                                                     ble_hid_emu_task_id);
+        }
         return (events ^ START_PARAM_UPDATE_EVT);
     }
 
     if(events & START_PHY_UPDATE_EVT)
     {
-        // start phy update
-        PRINT("Send Phy Update %x...\n", GAPRole_UpdatePHY(ble_hid_emu_conn_handle, 0, 
-                    GAP_PHY_BIT_LE_2M, GAP_PHY_BIT_LE_2M, GAP_PHY_OPTIONS_NOPRE));
-
+        // start phy update on every connected host
+        for (int i = 0; i < KBD_MAX_CONN; i++) {
+            if (kbd_conns[i].handle != GAP_CONNHANDLE_INIT)
+                PRINT("Send Phy Update %x...\n",
+                      GAPRole_UpdatePHY(kbd_conns[i].handle, 0,
+                                        GAP_PHY_BIT_LE_2M, GAP_PHY_BIT_LE_2M,
+                                        GAP_PHY_OPTIONS_NOPRE));
+        }
         return (events ^ START_PHY_UPDATE_EVT);
     }
 
@@ -358,6 +436,41 @@ static void ble_hid_emu_process_tmos_msg(tmos_event_hdr_t *pMsg)
  */
 static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEvent)
 {
+    /* Link events are handled FIRST, independent of the GAP role state —
+       with PERIPHERAL_MAX_CONNECTION>1 a second/third host can connect
+       while the state machine sits in GAPROLE_CONNECTED_ADV, and a link
+       can terminate from any state (multi-mode fix 2026-07-24). */
+    if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)
+    {
+        gapEstLinkReqEvent_t *event = (gapEstLinkReqEvent_t *)pEvent;
+        int slot = kbd_slot_alloc(event->connectionHandle, event->devAddr);
+        if (slot >= 0) {
+            tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
+            AT_Response("+BT_CONNECTED:%d", slot + 1);   /* URC, 1-based slot (BLE1..) */
+            PRINT("Connected.. slot %d\n", slot);
+        } else {
+            PRINT("Connected.. slot table FULL, dropping\n");
+            GAPRole_TerminateLink(event->connectionHandle);
+        }
+        return;
+    }
+    if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
+    {
+        int slot = kbd_slot_of(pEvent->linkTerminate.connectionHandle);
+        if (slot >= 0)
+            kbd_conns[slot].handle = GAP_CONNHANDLE_INIT;
+        AT_Response("+BT_DISCONNECTED:%d reason=%X", slot + 1, pEvent->linkTerminate.reason);
+        PRINT("Disconnected.. slot %d Reason:%x\n", slot, pEvent->linkTerminate.reason);
+        /* A slot just freed — make sure we are connectable again
+           (covers terminate from CONNECTED state, where the WAITING
+           re-enable path below is not reached). */
+        if (kb_ble_conn_count() < KBD_MAX_CONN) {
+            uint8_t adv = TRUE;
+            GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+        }
+        /* fall through: state handling below re-enables advertising */
+    }
+
     switch(newState & GAPROLE_STATE_ADV_MASK)
     {
         case GAPROLE_STARTED:
@@ -377,17 +490,7 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
             break;
 
         case GAPROLE_CONNECTED:
-            if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)
-            {
-                gapEstLinkReqEvent_t *event = (gapEstLinkReqEvent_t *)pEvent;
-
-                // get connection handle
-                ble_hid_emu_conn_handle = event->connectionHandle;
-                tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
-                AT_Response("+BT_CONNECTED");   /* URC (F3.6) */
-                PRINT("Connected..\n");
-            }
-            break;
+            break;  /* link events handled above */
 
         case GAPROLE_CONNECTED_ADV:
             if(pEvent->gap.opcode == GAP_MAKE_DISCOVERABLE_DONE_EVENT)
@@ -401,20 +504,7 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
             {
                 PRINT("Waiting for advertising..\n");
             }
-            else if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
-            {
-                /* Clear the handle — it was previously set-only, so
-                   kb_ble_connected()/AT+KB reported a stale "connected"
-                   forever after any drop (field issue 2026-07-21). */
-                ble_hid_emu_conn_handle = GAP_CONNHANDLE_INIT;
-                AT_Response("+BT_DISCONNECTED reason=%X", pEvent->linkTerminate.reason);
-                PRINT("Disconnected.. Reason:%x\n", pEvent->linkTerminate.reason);
-            }
-            else if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)
-            {
-                PRINT("Advertising timeout..\n");
-            }
-            // Enable advertising
+            // (Re-)enable advertising — safe whenever a slot is free
             {
                 uint8_t initial_advertising_enable = TRUE;
                 // Set the GAP Role Parameters

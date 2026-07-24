@@ -78,11 +78,44 @@ uint8_t hidDevTaskId;
 // GAP State
 static gapRole_States_t hidDevGapState = GAPROLE_INIT;
 
-// TRUE if connection is secure
-static uint8_t hidDevConnSecure = FALSE;
+/* Per-connection secure flag, indexed by slot in gapConnHandles[].
+   KBD_MAX_CONN is 1 in single-host builds (identical behavior). */
+static uint8_t hidDevConnSecure[KBD_MAX_CONN];
 
-// GAP connection handle
-static uint16_t gapConnHandle;
+// GAP connection handle table (GAP_CONNHANDLE_INIT = free slot)
+static uint16_t gapConnHandles[KBD_MAX_CONN] = {
+    [0 ... KBD_MAX_CONN-1] = GAP_CONNHANDLE_INIT
+};
+
+// Last connected handle (passcode / single-link fallback paths)
+static uint16_t gapConnHandle = GAP_CONNHANDLE_INIT;
+
+static int hiddev_slot_of(uint16_t handle)
+{
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (gapConnHandles[i] == handle) return i;
+    return -1;
+}
+
+static int hiddev_slot_alloc(uint16_t handle)
+{
+    int s = hiddev_slot_of(handle);
+    if (s >= 0) return s;
+    for (s = 0; s < KBD_MAX_CONN; s++)
+        if (gapConnHandles[s] == GAP_CONNHANDLE_INIT) {
+            gapConnHandles[s] = handle;
+            return s;
+        }
+    return -1;
+}
+
+static int hiddev_conn_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (gapConnHandles[i] != GAP_CONNHANDLE_INIT) n++;
+    return n;
+}
 
 // Status of last pairing
 static uint8_t pairingStatus = SUCCESS;
@@ -102,7 +135,7 @@ static ble_hid_dev_cfg_t *pHidDevCfg;
 static void hidDev_ProcessTMOSMsg(tmos_event_hdr_t *pMsg);
 static void hidDevProcessGattMsg(gattMsgEvent_t *pMsg);
 static void hidDevProcessGAPMsg(gapRoleEvent_t *pEvent);
-static void hidDevDisconnected(void);
+static void hidDevDisconnected(uint16_t connHandle);
 static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent);
 static void hidDevParamUpdateCB(uint16_t connHandle, uint16_t connInterval,
                                 uint16_t connSlaveLatency, uint16_t connTimeout);
@@ -117,12 +150,12 @@ static ble_hid_rpt_map_t *hidDevRptByHandle(uint16_t handle);
 static ble_hid_rpt_map_t *hidDevRptById(uint8_t id, uint8_t type);
 static ble_hid_rpt_map_t *hidDevRptByCccdHandle(uint16_t handle);
 
-static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
+static uint8_t hidDevSendReport(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
 static void    hidDevHighAdvertising(void);
 static void    hidDevLowAdvertising(void);
 static void    hidDevInitialAdvertising(void);
 static uint8_t hidDevBondCount(void);
-static uint8_t HidDev_sendNoti(uint16_t handle, uint8_t len, uint8_t *pData);
+static uint8_t HidDev_sendNoti(uint16_t conn, uint16_t handle, uint8_t len, uint8_t *pData);
 /*********************************************************************
  * PROFILE CALLBACKS
  */
@@ -287,20 +320,18 @@ void ble_hid_dev_register_reports(uint8_t numReports, ble_hid_rpt_map_t *pRpt)
  *
  * @return  None.
  */
-uint8_t ble_hid_dev_report(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
+uint8_t ble_hid_dev_report(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
 {
-    // if connected
-    if(hidDevGapState == GAPROLE_CONNECTED)
+    int slot = hiddev_slot_of(conn);
+
+    // if this connection exists and is secure, send the report on it
+    if(slot >= 0 && hidDevConnSecure[slot])
     {
-        // if connection is secure
-        if(hidDevConnSecure)
-        {
-            // send report
-            return hidDevSendReport(id, type, len, pData);
-        }
+        return hidDevSendReport(conn, id, type, len, pData);
     }
-    // else if not already advertising
-    else if(hidDevGapState != GAPROLE_ADVERTISING)
+
+    // nobody to send to: if not already advertising, kick it back up
+    if(hiddev_conn_count() == 0 && hidDevGapState != GAPROLE_ADVERTISING)
     {
         // if bonded
         if(hidDevBondCount() > 0)
@@ -329,17 +360,14 @@ void ble_hid_dev_close(void)
 {
     uint8_t param;
 
-    // if connected then disconnect
-    if(hidDevGapState == GAPROLE_CONNECTED)
-    {
-        GAPRole_TerminateLink(gapConnHandle);
-    }
-    // else stop advertising
-    else
-    {
-        param = FALSE;
-        GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
-    }
+    // drop every host link
+    for (int i = 0; i < KBD_MAX_CONN; i++)
+        if (gapConnHandles[i] != GAP_CONNHANDLE_INIT)
+            GAPRole_TerminateLink(gapConnHandles[i]);
+
+    // stop advertising
+    param = FALSE;
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
 }
 
 /*********************************************************************
@@ -365,11 +393,10 @@ bStatus_t ble_hid_dev_set_param(uint8_t param, uint8_t len, void *pValue)
         case BLE_HID_DEV_ERASE_ALLBONDS:
             if(len == 0)
             {
-                // Drop connection
-                if(hidDevGapState == GAPROLE_CONNECTED)
-                {
-                    GAPRole_TerminateLink(gapConnHandle);
-                }
+                // Drop all connections
+                for (int i = 0; i < KBD_MAX_CONN; i++)
+                    if (gapConnHandles[i] != GAP_CONNHANDLE_INIT)
+                        GAPRole_TerminateLink(gapConnHandles[i]);
 
                 // Erase bonding info
                 GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
@@ -738,15 +765,19 @@ static void hidDevHandleConnStatusCB(uint16_t connHandle, uint8_t changeType)
  *
  * @return  none
  */
-static void hidDevDisconnected(void)
+static void hidDevDisconnected(uint16_t connHandle)
 {
     // Reset client characteristic configuration descriptors
-    ble_batt_handle_conn_status_cb(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
-    // ble_scan_param_handle_conn_status_cb(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
-    hidDevHandleConnStatusCB(gapConnHandle, LINKDB_STATUS_UPDATE_REMOVED);
+    ble_batt_handle_conn_status_cb(connHandle, LINKDB_STATUS_UPDATE_REMOVED);
+    // ble_scan_param_handle_conn_status_cb(connHandle, LINKDB_STATUS_UPDATE_REMOVED);
+    hidDevHandleConnStatusCB(connHandle, LINKDB_STATUS_UPDATE_REMOVED);
 
-    // Reset state variables
-    hidDevConnSecure = FALSE;
+    // Reset state variables for this connection
+    int slot = hiddev_slot_of(connHandle);
+    if (slot >= 0) {
+        gapConnHandles[slot]  = GAP_CONNHANDLE_INIT;
+        hidDevConnSecure[slot] = FALSE;
+    }
     ble_hid_protocol_mode = BLE_HID_PROTOCOL_MODE_REPORT;
 
     // if bonded and normally connectable start advertising
@@ -769,26 +800,30 @@ static void hidDevDisconnected(void)
 static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
 {
     uint8_t param;
-    // if connected
-    if(newState == GAPROLE_CONNECTED)
+
+    /* Link events first, opcode-driven — with PERIPHERAL_MAX_CONNECTION>1
+       additional hosts connect while the state is GAPROLE_CONNECTED_ADV,
+       which the old `newState == GAPROLE_CONNECTED` check would miss
+       (multi-mode fix 2026-07-24). */
+    if(pEvent->gap.opcode == GAP_LINK_ESTABLISHED_EVENT)
     {
         gapEstLinkReqEvent_t *event = (gapEstLinkReqEvent_t *)pEvent;
+        int slot = hiddev_slot_alloc(event->connectionHandle);
 
-        // get connection handle
-        gapConnHandle = event->connectionHandle;
+        gapConnHandle = event->connectionHandle;   /* last-connected */
+        if (slot >= 0)
+            hidDevConnSecure[slot] = FALSE;   /* not secure yet */
 
-        // connection not secure yet
-        hidDevConnSecure = FALSE;
-
-        // don't start advertising when connection is closed
-        param = FALSE;
-        GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
+        /* Stop advertising only when every slot is taken; otherwise stay
+           connectable so hosts 2/3 can still find us (KBD_MULTI). */
+        if (hiddev_conn_count() >= KBD_MAX_CONN) {
+            param = FALSE;
+            GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
+        }
     }
-    // if disconnected
-    else if(hidDevGapState == GAPROLE_CONNECTED &&
-            newState != GAPROLE_CONNECTED)
+    else if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
     {
-        hidDevDisconnected();
+        hidDevDisconnected(pEvent->linkTerminate.connectionHandle);
 
         if(pairingStatus == SMP_PAIRING_FAILED_CONFIRM_VALUE)
         {
@@ -840,23 +875,25 @@ static void hidDevParamUpdateCB(uint16_t connHandle, uint16_t connInterval,
  */
 static void hidDevPairStateCB(uint16_t connHandle, uint8_t state, uint8_t status)
 {
+    int slot = hiddev_slot_of(connHandle);
+
     if(state == GAPBOND_PAIRING_STATE_COMPLETE)
     {
-        if(status == SUCCESS)
+        if(status == SUCCESS && slot >= 0)
         {
-            hidDevConnSecure = TRUE;
+            hidDevConnSecure[slot] = TRUE;
         }
 
         pairingStatus = status;
     }
     else if(state == GAPBOND_PAIRING_STATE_BONDED)
     {
-        if(status == SUCCESS)
+        if(status == SUCCESS && slot >= 0)
         {
-            hidDevConnSecure = TRUE;
+            hidDevConnSecure[slot] = TRUE;
 
 #if DEFAULT_SCAN_PARAM_NOTIFY_TEST == TRUE
-            ble_scan_param_refresh_notify(gapConnHandle);
+            ble_scan_param_refresh_notify(connHandle);
 #endif
         }
     }
@@ -1036,7 +1073,7 @@ static ble_hid_rpt_map_t *hidDevRptById(uint8_t id, uint8_t type)
  *
  * @return  None.
  */
-static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
+static uint8_t hidDevSendReport(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData)
 {
     ble_hid_rpt_map_t     *pRpt;
     gattAttribute_t *pAttr;
@@ -1051,11 +1088,11 @@ static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *
         {
             uint16_t value;
 
-            value = GATTServApp_ReadCharCfg(gapConnHandle, (gattCharCfg_t *)pAttr->pValue);
+            value = GATTServApp_ReadCharCfg(conn, (gattCharCfg_t *)pAttr->pValue);
             if(value & GATT_CLIENT_CFG_NOTIFY)
             {
                 // Send report notification
-                state = HidDev_sendNoti(pRpt->handle, len, pData);
+                state = HidDev_sendNoti(conn, pRpt->handle, len, pData);
             }
         }
     }
@@ -1073,12 +1110,12 @@ static uint8_t hidDevSendReport(uint8_t id, uint8_t type, uint8_t len, uint8_t *
  *
  * @return  Success or failure.
  */
-static uint8_t HidDev_sendNoti(uint16_t handle, uint8_t len, uint8_t *pData)
+static uint8_t HidDev_sendNoti(uint16_t conn, uint16_t handle, uint8_t len, uint8_t *pData)
 {
     uint8_t              status;
     attHandleValueNoti_t noti;
 
-    noti.pValue = GATT_bm_alloc(gapConnHandle, ATT_HANDLE_VALUE_NOTI, len, NULL, 0);
+    noti.pValue = GATT_bm_alloc(conn, ATT_HANDLE_VALUE_NOTI, len, NULL, 0);
     if(noti.pValue != NULL)
     {
         noti.handle = handle;
@@ -1086,7 +1123,7 @@ static uint8_t HidDev_sendNoti(uint16_t handle, uint8_t len, uint8_t *pData)
         tmos_memcpy(noti.pValue, pData, len);
 
         // Send notification
-        status = GATT_Notification(gapConnHandle, &noti, FALSE);
+        status = GATT_Notification(conn, &noti, FALSE);
         if(status != SUCCESS)
         {
             GATT_bm_free((gattMsg_t *)&noti, ATT_HANDLE_VALUE_NOTI);

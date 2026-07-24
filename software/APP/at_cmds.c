@@ -14,27 +14,48 @@
 #include <stdlib.h>
 
 /* ===== Keyboard router ===== */
-static kb_mode_t kb_mode = KB_BOTH;
+/* Output target bitmask (F1.11/F1.12). Single-host builds have only
+   slot 0 (BLE1); BLE2/BLE3 bits are accepted but never route. */
+#define KB_TGT_USB      0x01
+#define KB_TGT_BLE1     0x02
+#define KB_TGT_BLE2     0x04
+#define KB_TGT_BLE3     0x08
+#define KB_TGT_BLE_ALL  (KB_TGT_BLE1|KB_TGT_BLE2|KB_TGT_BLE3)
+#define KB_TGT_ALL      (KB_TGT_USB|KB_TGT_BLE_ALL)
 
-void kb_set_mode(kb_mode_t m) { kb_mode = m; }
-kb_mode_t kb_get_mode(void)   { return kb_mode; }
+static uint8_t kb_target = KB_TGT_ALL;
 
-extern void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count);
+void kb_set_mode(kb_mode_t m) {
+    kb_target = (m == KB_USB) ? KB_TGT_USB :
+                (m == KB_BLE) ? KB_TGT_BLE_ALL : KB_TGT_ALL;
+}
+kb_mode_t kb_get_mode(void) {
+    if (kb_target == KB_TGT_USB) return KB_USB;
+    if (kb_target == KB_TGT_ALL) return KB_BOTH;
+    return KB_BLE;
+}
+
+extern void kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
-/* Dispatch one HID report to active output(s).
+/* Dispatch one HID report to the selected output target(s).
    keys[] is always 6 bytes (zero-padded); count = significant keys.
    Returns 0 if sent on at least one channel, -1 if no output active. */
 static int kb_flush(uint8_t mods, uint8_t *keys, int count)
 {
     int sent = 0;
-    if (kb_mode & KB_BLE && kb_ble_connected()) {
-        PRINT("KB> BLE:%02X%02X%02X%02X%02X%02X mods=%02X\n",
-              keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
-        kb_ble_send_report(mods, keys, count);
-        sent = 1;
+    if (kb_target & KB_TGT_BLE_ALL) {
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
+            if ((kb_target & (KB_TGT_BLE1 << s)) &&
+                kb_ble_slot_handle(s) != GAP_CONNHANDLE_INIT) {
+                PRINT("KB> BLE%d:%02X%02X%02X%02X%02X%02X mods=%02X\n", s+1,
+                      keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
+                kb_ble_send_report_slot(s, mods, keys, count);
+                sent = 1;
+            }
+        }
     }
-    if (kb_mode & KB_USB && usb_ready()) {
+    if (kb_target & KB_TGT_USB && usb_ready()) {
         PRINT("KB> USB:%02X%02X%02X%02X%02X%02X mods=%02X\n",
               keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
         kb_usb_send_report(mods, keys, count);
@@ -162,6 +183,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
         "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
+        "  AT+DEV   - output target USB|BLE1..3|ALL\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
         "  AT+TAP   - press+release <ms>,<mods>,<k1>..<k6>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
@@ -226,6 +248,58 @@ static int at_cmd_KB(int argc, char *argv[])  {
     if (argv[1][0]=='B' && argv[1][1]=='O' && argv[1][2]=='T' && argv[1][3]=='H' && !argv[1][4]) { kb_set_mode(KB_BOTH); AT_Response("KB=BOTH"); return 0; }
     AT_Response("usage: AT+KB[=USB|BLE|BOTH]"); return -1;
 }
+
+#if BLE_HAS_KBD
+/* Parse an output-target name: USB | BLE | BOTH | ALL | BLE1..BLE3.
+   Returns the KB_TGT_* bitmask, or 0 on unknown. */
+static uint8_t dev_target_parse(const char *s)
+{
+    if (!strcmp(s, "USB"))  return KB_TGT_USB;
+    if (!strcmp(s, "BLE"))  return KB_TGT_BLE_ALL;
+    if (!strcmp(s, "BOTH") || !strcmp(s, "ALL")) return KB_TGT_ALL;
+    if (s[0] == 'B' && s[1] == 'L' && s[2] == 'E' && s[3] >= '1' && s[3] <= '3' && !s[4])
+        return (uint8_t)(KB_TGT_BLE1 << (s[3] - '1'));
+    return 0;
+}
+
+/* AT+DEV — query or select the output target (F1.12).
+   Query prints one index-first line per target:
+     1,USB,ready[,active]
+     2,BLE1,<MAC|->,connected|free[,active]
+   Single-host builds list only BLE1. */
+static int at_cmd_DEV(int argc, char *argv[])
+{
+    if (argc < 2) {
+        AT_Response("1,USB,%s%s",
+                    usb_ready() ? "ready" : "not-ready",
+                    (kb_target & KB_TGT_USB) ? ",active" : "");
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
+            const uint8_t *a = kb_ble_slot_addr(s);
+            if (a)
+                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s",
+                            s + 2, s + 1,
+                            a[5], a[4], a[3], a[2], a[1], a[0],
+                            (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+            else
+                AT_Response("%d,BLE%d,-,free%s", s + 2, s + 1,
+                            (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+        }
+        return 0;
+    }
+    uint8_t m = dev_target_parse(argv[1]);
+    uint8_t valid = KB_TGT_USB
+                  | KB_TGT_BLE1
+                  | (KBD_MAX_CONN >= 2 ? KB_TGT_BLE2 : 0)
+                  | (KBD_MAX_CONN >= 3 ? KB_TGT_BLE3 : 0);
+    if (!m || (m & ~valid)) {
+        AT_Response("usage: AT+DEV[=USB|BLE1|BLE2|BLE3|ALL]");
+        return -1;
+    }
+    kb_target = m;
+    AT_Response("DEV=%s", argv[1]);
+    return 0;
+}
+#endif /* BLE_HAS_KBD */
 /* AT+KEY=<mods>,<k1>,..,<k6> — raw HID report. Missing args = 0. */
 static int at_cmd_KEY(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+KEY=<mods>,<k1>,..,<k6>"); return -1; }
@@ -400,11 +474,21 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 /* Core */
 static int at_cmd_STATUS(int argc, char *argv[])  {
     (void)argc; (void)argv;
-    const char *mode = (kb_get_mode() == KB_USB) ? "USB" :
-                       (kb_get_mode() == KB_BLE) ? "BLE" : "BOTH";
-    AT_Response("role=%s kb=%s ble=%s batt=%umV",
-                role_name(role_current()), mode,
-                kb_ble_connected() ? "connected" : "disconnected",
+    /* compact active-target string, e.g. "BLE1" / "USB+BLE2" / "ALL" */
+    char tgt[20] = "";
+    if (kb_target == KB_TGT_ALL) { tgt[0]='A'; tgt[1]='L'; tgt[2]='L'; tgt[3]=0; }
+    else {
+        if (kb_target & KB_TGT_USB) strcat(tgt, "USB");
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+            if (kb_target & (KB_TGT_BLE1 << s)) {
+                if (tgt[0]) strcat(tgt, "+");
+                strcat(tgt, "BLE1"); tgt[strlen(tgt)-1] = (char)('1' + s);
+            }
+    }
+    if (!tgt[0]) strcat(tgt, "NONE");
+    AT_Response("role=%s dev=%s ble=%dconn batt=%umV",
+                role_name(role_current()), tgt,
+                kb_ble_conn_count(),
                 hws_batt_read_mv());
     return 0;
 }
@@ -712,8 +796,22 @@ static int bt_pair_dgl(int argc, char *argv[]) {
 /* AT+BT_DISC (kbd) — actively drop the host link. Bond is kept and
    advertising restarts automatically, like a real keyboard's
    host-switch key: the same or a new host can reconnect. */
+/* AT+BT_DISC[=<target>] (kbd) — drop host link(s). No arg or ALL drops
+   every link; BLE1/BLE2/BLE3 drops just that slot (KBD_MULTI). Bonds
+   are kept and advertising restarts automatically. */
 static int bt_disc_kbd(int argc, char *argv[]) {
-    (void)argc; (void)argv;
+    if (argc >= 2) {
+        uint8_t m = dev_target_parse(argv[1]);
+        if (!(m & KB_TGT_BLE_ALL)) {
+            AT_Response("usage: AT+BT_DISC[=BLE1|BLE2|BLE3|ALL]");
+            return -1;
+        }
+        int n = 0;
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+            if ((m & (KB_TGT_BLE1 << s)) && kb_ble_disconnect_slot(s) == 0) n++;
+        if (!n) { AT_Response("ERROR: not connected"); return -1; }
+        return 0;
+    }
     if (kb_ble_disconnect() < 0) {
         AT_Response("ERROR: not connected");
         return -1;
@@ -907,13 +1005,16 @@ const at_cmd_t cmd_table[] = {
     { "AT+VER",     "firmware version",               at_cmd_VER },
     { "AT+HELP",    "command list",                   at_cmd_HELP },
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
-    { "AT+STATUS",  "device status (role/kb/ble/batt)", at_cmd_STATUS },
+    { "AT+STATUS",  "device status (role/dev/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
     /* Keyboard */
     { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
+#if BLE_HAS_KBD
+    { "AT+DEV",     "output target USB|BLE1..3|ALL",  at_cmd_DEV },
+#endif
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
     { "AT+TAP",     "press+release <ms>,<mods>,<k1>..<k6>", at_cmd_TAP },
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
