@@ -9,8 +9,9 @@
 |------|------|
 | `esp32/README.md` | 本文件，ESP32 版整体说明 |
 | `esp32/PLAN.md` | ESP32 版实现计划（阶段、接口、验证） |
+| `esp32/API.md` | HTTP API 参考文档（agent 集成用） |
 | `.pi/skills/esp32-windows/` | Windows/ESP32-C3 开发踩坑要点（pi skill） |
-| `esp32/esp32_at_node/` | ESP32-C3 AT Node 主 sketch（待实现） |
+| `esp32/esp32_at_node/` | ESP32-C3 AT Node 主 sketch |
 | `tools/esp32c3_kbd/` | 现有 C3 BLE 键盘测试台（保留，作为 dongle 陪练） |
 
 ## 与 CH582 版的关系
