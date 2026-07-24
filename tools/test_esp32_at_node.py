@@ -229,6 +229,50 @@ def main():
         ok &= check("MQTT connect", False)
         print(f"    error: {e}")
 
+    # WiFi config
+    try:
+        r = requests.post(f"{base}/cmd/wifi/config",
+                          params={"ssid": "2-1909", "pass": "szyt1909"}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/wifi/config", j.get("ok") and j.get("ssid") == "2-1909")
+    except Exception as e:
+        ok &= check("/at-node/cmd/wifi/config", False)
+        print(f"    error: {e}")
+
+    # MQTT CA fingerprint
+    try:
+        r = requests.post(f"{base}/cmd/mqtt/ca",
+                          params={"fp": "e1827db813ffdbb6dea1d3da3c726271179b227293d2090c72beb02ea74002a9"}, timeout=5)
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("/at-node/cmd/mqtt/ca", j.get("ok"))
+    except Exception as e:
+        ok &= check("/at-node/cmd/mqtt/ca", False)
+        print(f"    error: {e}")
+
+    # raw AT WiFi
+    try:
+        r = requests.post(f"{base}/at", data="AT+WIFI=ssid,2-1909", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+WIFI=ssid", j.get("ok"))
+    except Exception as e:
+        ok &= check("AT+WIFI=ssid", False)
+        print(f"    error: {e}")
+
+    # raw AT MQTT CA
+    try:
+        r = requests.post(f"{base}/at", data="AT+MQTT=ca,e1827db813ffdbb6dea1d3da3c726271179b227293d2090c72beb02ea74002a9", timeout=5,
+                          headers={"Content-Type": "text/plain"})
+        r.raise_for_status()
+        j = r.json()
+        ok &= check("AT+MQTT=ca", j.get("ok"))
+    except Exception as e:
+        ok &= check("AT+MQTT=ca", False)
+        print(f"    error: {e}")
+
     # MQTT publish
     try:
         r = requests.post(f"{base}/cmd/mqtt/publish",

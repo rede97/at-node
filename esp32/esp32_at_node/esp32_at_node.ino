@@ -28,6 +28,8 @@
 #include <Wire.h>
 #include <PubSubClient.h>
 #include <NimBLEDevice.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/x509_crt.h>
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLECharacteristic.h>
@@ -69,6 +71,10 @@ static String           g_mqtt_user;
 static String           g_mqtt_pass;
 static String           g_mqtt_client_id;
 static String           g_mqtt_topic_prefix;
+static String           g_mqtt_ca_cert;
+static String           g_mqtt_ca_fp;
+static String           g_wifi_ssid;
+static String           g_wifi_pass;
 
 /* --- typing queue (non-blocking) -------------------------------------- */
 static String   g_type_text;
@@ -181,10 +187,14 @@ static void load_config(void)
     prefs.begin("atnode", false);
     g_device_name = prefs.getString("name", DEFAULT_DEVICE_NAME);
     g_hostname    = prefs.getString("hostname", DEFAULT_HOSTNAME);
+    g_wifi_ssid   = prefs.getString("wifi_ssid", WIFI_SSID);
+    g_wifi_pass   = prefs.getString("wifi_pass", WIFI_PASSWORD);
     g_mqtt_broker = prefs.getString("mqtt_broker", "");
     g_mqtt_port   = prefs.getInt("mqtt_port", 8883);
     g_mqtt_user   = prefs.getString("mqtt_user", "");
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
+    g_mqtt_ca_cert = prefs.getString("mqtt_ca_cert", "");
+    g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
     prefs.end();
 }
 
@@ -433,6 +443,38 @@ static void handle_at(void)
                 resp = ok ? "OK" : "ERROR";
             } else if (sub == "status") {
                 resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected");
+            } else if (sub == "ca") {
+                /* val should be the CA cert PEM or SHA256 fingerprint */
+                if (val.startsWith("-----BEGIN")) {
+                    g_mqtt_ca_cert = val;
+                    save_config("mqtt_ca_cert", val);
+                } else {
+                    g_mqtt_ca_fp = val;
+                    save_config("mqtt_ca_fp", val);
+                }
+                resp = "OK";
+            } else {
+                resp = "ERROR";
+            }
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+WIFI=")) {
+        String args = cmd.substring(8);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String sub = args.substring(0, c1);
+            String val = args.substring(c1 + 1);
+            if (sub == "ssid") {
+                g_wifi_ssid = val;
+                save_config("wifi_ssid", val);
+                resp = "OK";
+            } else if (sub == "pass") {
+                g_wifi_pass = val;
+                save_config("wifi_pass", val);
+                resp = "OK";
+            } else if (sub == "status") {
+                resp = "+WIFI:" + g_wifi_ssid;
             } else {
                 resp = "ERROR";
             }
@@ -760,6 +802,26 @@ static void mqtt_callback(char* topic, byte* payload, unsigned int length)
     Serial.println();
 }
 
+static bool verify_fingerprint(const mbedtls_x509_crt* cert, const String& fp_hex)
+{
+    if (!cert) return false;
+    uint8_t hash[32];
+    mbedtls_sha256_context ctx;
+    mbedtls_sha256_init(&ctx);
+    mbedtls_sha256_starts(&ctx, 0);
+    mbedtls_sha256_update(&ctx, cert->raw.p, cert->raw.len);
+    mbedtls_sha256_finish(&ctx, hash);
+    mbedtls_sha256_free(&ctx);
+
+    char hex[65];
+    for (int i = 0; i < 32; i++) sprintf(hex + i * 2, "%02x", hash[i]);
+
+    String fp = fp_hex;
+    fp.replace(":", "");
+    fp.toLowerCase();
+    return fp.equals(hex);
+}
+
 static bool mqtt_connect(void)
 {
     if (g_mqtt_broker.length() == 0) return false;
@@ -770,7 +832,16 @@ static bool mqtt_connect(void)
     g_mqtt_topic_prefix = "atnode/" + g_hostname;
 
     if (g_mqtt_port == 8883) {
-        g_mqtt_wifi.setCACert(MQTT_CA_CERT);
+        if (g_mqtt_ca_fp.length() > 0) {
+            /* fingerprint mode: insecure connect, verify later */
+            g_mqtt_wifi.setInsecure();
+        } else if (g_mqtt_ca_cert.length() > 0) {
+            /* CA cert mode */
+            g_mqtt_wifi.setCACert(g_mqtt_ca_cert.c_str());
+        } else {
+            /* fallback: insecure for dev */
+            g_mqtt_wifi.setInsecure();
+        }
     }
 
     bool ok;
@@ -779,6 +850,16 @@ static bool mqtt_connect(void)
     } else {
         ok = g_mqtt.connect(g_mqtt_client_id.c_str());
     }
+
+    /* verify fingerprint if configured */
+    if (ok && g_mqtt_port == 8883 && g_mqtt_ca_fp.length() > 0) {
+        if (!verify_fingerprint(g_mqtt_wifi.getPeerCertificate(), g_mqtt_ca_fp)) {
+            Serial.println("MQTT fingerprint mismatch, disconnecting");
+            g_mqtt.disconnect();
+            ok = false;
+        }
+    }
+
     g_mqtt_connected = ok;
     Serial.printf("MQTT connect %s\n", ok ? "OK" : "FAILED");
     return ok;
@@ -839,6 +920,36 @@ static void handle_mqtt_config(void)
         save_config("mqtt_pass", pass);
     }
     send_json("{\"ok\":true,\"cmd\":\"mqtt/config\"}");
+}
+
+static void handle_mqtt_ca(void)
+{
+    String ca_cert = g_http.arg("plain");
+    String ca_fp   = g_http.arg("fp");
+    if (ca_cert.length() > 0) {
+        g_mqtt_ca_cert = ca_cert;
+        save_config("mqtt_ca_cert", ca_cert);
+    }
+    if (ca_fp.length() > 0) {
+        g_mqtt_ca_fp = ca_fp;
+        save_config("mqtt_ca_fp", ca_fp);
+    }
+    send_json("{\"ok\":true,\"cmd\":\"mqtt/ca\"}");
+}
+
+static void handle_wifi_config(void)
+{
+    String ssid = g_http.arg("ssid");
+    String pass = g_http.arg("pass");
+    if (ssid.length() > 0) {
+        g_wifi_ssid = ssid;
+        save_config("wifi_ssid", ssid);
+    }
+    if (pass.length() > 0) {
+        g_wifi_pass = pass;
+        save_config("wifi_pass", pass);
+    }
+    send_json("{\"ok\":true,\"cmd\":\"wifi/config\",\"ssid\":\"" + g_wifi_ssid + "\"}");
 }
 
 static void handle_mqtt_connect(void)
@@ -1123,6 +1234,40 @@ static void handle_serial(void)
                 Serial.print("+MQTT:");
                 Serial.println(g_mqtt_connected ? "connected" : "disconnected");
                 Serial.println("OK");
+            } else if (sub == "ca") {
+                /* val should be the CA cert PEM or SHA256 fingerprint */
+                if (val.startsWith("-----BEGIN")) {
+                    g_mqtt_ca_cert = val;
+                    save_config("mqtt_ca_cert", val);
+                } else {
+                    g_mqtt_ca_fp = val;
+                    save_config("mqtt_ca_fp", val);
+                }
+                Serial.println("OK");
+            } else {
+                Serial.println("ERROR");
+            }
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+WIFI=")) {
+        String args = line.substring(8);
+        int c1 = args.indexOf(',');
+        if (c1 > 0) {
+            String sub = args.substring(0, c1);
+            String val = args.substring(c1 + 1);
+            if (sub == "ssid") {
+                g_wifi_ssid = val;
+                save_config("wifi_ssid", val);
+                Serial.println("OK");
+            } else if (sub == "pass") {
+                g_wifi_pass = val;
+                save_config("wifi_pass", val);
+                Serial.println("OK");
+            } else if (sub == "status") {
+                Serial.print("+WIFI:");
+                Serial.println(g_wifi_ssid);
+                Serial.println("OK");
             } else {
                 Serial.println("ERROR");
             }
@@ -1144,7 +1289,7 @@ void setup(void)
     load_config();
 
     WiFi.mode(WIFI_STA);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
 
     int retry = 0;
     while (WiFi.status() != WL_CONNECTED && retry < 60) {
@@ -1179,9 +1324,11 @@ void setup(void)
         g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
         g_http.on("/at-node/cmd/mqtt/status", HTTP_GET, handle_mqtt_status);
         g_http.on("/at-node/cmd/mqtt/config", HTTP_POST, handle_mqtt_config);
+        g_http.on("/at-node/cmd/mqtt/ca", HTTP_POST, handle_mqtt_ca);
         g_http.on("/at-node/cmd/mqtt/connect", HTTP_POST, handle_mqtt_connect);
         g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
+        g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
