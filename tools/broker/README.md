@@ -210,8 +210,9 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 
 | 方式 | 命令 |
 |------|------|
-| HTTP | `POST /at-node/cmd/mqtt/config?broker=<ip>&port=<p>&user=<u>&pass=<pw>` 然后 `POST /at-node/cmd/mqtt/connect` |
-| 串口 AT | `AT+MQTT=broker,<ip>` / `AT+CONF=mqtt_user=<api-key>` / `AT+MQTT=port,<p>` / `AT+MQTT=connect,x` |
+| HTTP | `POST /at-node/cmd/mqtt/config?broker=<ip>&port=<p>&user=<api-key>` 然后 `POST /at-node/cmd/mqtt/connect` |
+| 串口 AT | `AT+MQTT=broker,<ip>` / `AT+CONF=mqtt_user=<api-key>` / `AT+MQTT=port,<p>` / `AT+MQTT=connect` |
+| 清除配置 | `AT+MQTT=clear` — 清空全部 MQTT 设置（NVS+运行时）并断开，同时停止自动重连 |
 
 - 参数持久化在 NVS，重启后 `AT+MQTT=connect` 重连即可。
 - **TLS(8883)**：设备验证方式二选一——CA 证书或服务器证书 SHA256 指纹

@@ -448,7 +448,9 @@ static const char* HELP_PAGE_HTML = R"HTML(
   <tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
   <tr><td>POST</td><td><code>/at-node/at</code></td><td><code>AT+...</code></td><td>Execute raw AT command (text/plain)</td></tr>
 </table>
-<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> (persisted to NVS).</p>
+<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> (persisted to NVS).<br>
+MQTT subcommands: <code>AT+MQTT=broker|port|ca,&lt;val&gt;</code> and <code>AT+MQTT=connect|status|clear</code> (no value) —
+<code>clear</code> wipes all MQTT settings (NVS + runtime) and disconnects.</p>
 
 <h2>BLE Keyboard / Pairing</h2>
 <table>
@@ -498,6 +500,7 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td></tr>
+  <tr><td colspan="3"><small>Clear all MQTT settings via raw AT: <code>AT+MQTT=clear</code></small></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>plain (PEM) or fp</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td></tr>
@@ -925,9 +928,9 @@ static void handle_at(void)
     } else if (cmd.startsWith("AT+MQTT=")) {
         String args = cmd.substring(8);
         int c1 = args.indexOf(',');
-        if (c1 > 0) {
-            String sub = args.substring(0, c1);
-            String val = args.substring(c1 + 1);
+        if (args.length() > 0) {   /* comma optional: sub-only commands (clear/status/connect) */
+            String sub = (c1 > 0) ? args.substring(0, c1) : args;
+            String val = (c1 > 0) ? args.substring(c1 + 1) : "";
             if (sub == "broker") {
                 g_mqtt_broker = val;
                 save_config("mqtt_broker", val);
@@ -1856,7 +1859,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R / AT+I2C_W");
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
-        Serial.println("  AT+MQTT=broker|port|connect|status|ca|clear,<val>");
+        Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
@@ -2090,9 +2093,9 @@ static void serial_exec(const String& line)
     } else if (line.startsWith("AT+MQTT=")) {
         String args = line.substring(8);
         int c1 = args.indexOf(',');
-        if (c1 > 0) {
-            String sub = args.substring(0, c1);
-            String val = args.substring(c1 + 1);
+        if (args.length() > 0) {   /* comma optional: sub-only commands (clear/status/connect) */
+            String sub = (c1 > 0) ? args.substring(0, c1) : args;
+            String val = (c1 > 0) ? args.substring(c1 + 1) : "";
             if (sub == "broker") {
                 g_mqtt_broker = val;
                 save_config("mqtt_broker", val);
