@@ -23,11 +23,15 @@ Usage:
   atnode_broker.py serve [--mqtt-port 1883] [--mqtt-tls-port 8883]
                          [--certs DIR] [--http [PORT]]
                          (HTTP proxy is OPT-IN: only started with --http)
-  atnode_broker.py client list
+  atnode_broker.py client list [--server HOST] [--port N] [--ca FILE]
   atnode_broker.py client info <device>
   atnode_broker.py client call <device> <method> [k=v ...]
   atnode_broker.py client wol  <device> <mac>
   atnode_broker.py client ping <device> <host> [count]
+
+Roles: 'serve' runs the broker (server role); 'client' is a plain MQTT
+client (client role) that can reach ANY broker - local or remote, TLS
+or plain. Both use the same wire protocol as the devices.
 
 Config (auto-created on first serve): ~/.atnode_broker.json
   {"token": ..., "mqtt_user": ..., "mqtt_password": ...}
@@ -46,7 +50,6 @@ import sys
 import threading
 import time
 import urllib.parse
-import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -161,28 +164,40 @@ def start_amqtt(cfg, mqtt_port, mqtt_tls_port, certs_dir, loop):
 # ---------------------------------------------------------------- bridge (paho, thread)
 
 class Bridge:
-    """Internal MQTT client: device registry + RPC correlation."""
+    """MQTT client: device registry + RPC correlation.
 
-    def __init__(self, cfg, mqtt_port):
+    Used by the HTTP proxy (embedded, localhost) and by client --via mqtt
+    (direct to any reachable broker)."""
+
+    def __init__(self, cfg, host="127.0.0.1", port=1883, ca=None):
         import paho.mqtt.client as mqtt
 
         self.devices = {}            # id -> {"online": bool, "info": dict, "last_seen": ts}
         self.pending = {}            # reqid -> {"event": Event, "resp": dict}
         self.lock = threading.Lock()
+        self.connected = threading.Event()
 
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
                                 client_id="atnode-broker-bridge")
         self.mqtt.username_pw_set(cfg["mqtt_user"], cfg["mqtt_password"])
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_message = self._on_message
-        self.mqtt.connect("127.0.0.1", mqtt_port, keepalive=30)
+        if ca or port == 8883:
+            have_ca = ca and os.path.exists(ca)
+            self.mqtt.tls_set(ca_certs=ca if have_ca else None,
+                              cert_reqs=ssl.CERT_REQUIRED if have_ca else ssl.CERT_NONE)
+            if not have_ca:
+                self.mqtt.tls_insecure_set(True)
+        self.mqtt.connect(host, port, keepalive=30)
         self.mqtt.loop_start()
+        self.connected.wait(5)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
         client.subscribe("atnode/+/state")
         client.subscribe("atnode/+/info")
         client.subscribe("atnode/+/resp")
-        print("[bridge] connected to embedded broker")
+        self.connected.set()
+        print("[bridge] connected to broker")
 
     def _on_message(self, client, userdata, msg):
         parts = msg.topic.split("/")
@@ -320,54 +335,75 @@ class Handler(BaseHTTPRequestHandler):
 
 # ---------------------------------------------------------------- client CLI
 
-def client_request(server, token, method, path, params=None):
-    if params:
-        path += "?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(server.rstrip("/") + path, method=method)
-    req.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(req, timeout=20) as r:
-        return json.loads(r.read())
-
-
 def run_client(args):
+    """Client role: talks MQTT directly to any reachable broker.
+
+    Same wire protocol the devices use - no HTTP involved:
+      discovery: retained atnode/+/state + atnode/+/info
+      rpc:       publish atnode/<id>/cmd, wait atnode/<id>/resp
+    """
     cfg = {}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, encoding="utf-8") as f:
             cfg = json.load(f)
-    server = args.server or "http://127.0.0.1:8080"
-    token = args.token or cfg.get("token", "")
+    creds = {
+        "mqtt_user": args.user or cfg.get("mqtt_user", "atnode"),
+        "mqtt_password": getattr(args, "pass") or cfg.get("mqtt_password", ""),
+    }
+    if not creds["mqtt_password"]:
+        print("error: no MQTT credentials (run 'serve' once to generate, "
+              "or pass --user/--pass)", file=sys.stderr)
+        sys.exit(2)
 
-    if args.what == "list":
-        data = client_request(server, token, "GET", "/api/devices")
-        devs = data.get("devices", [])
-        if not devs:
-            print("no devices seen yet")
-            return
-        print(f"{'ID':24} {'STATE':8} {'IP':16} NAME")
-        for d in devs:
+    bridge = Bridge(creds, host=args.server, port=args.port, ca=args.ca)
+    if not bridge.connected.is_set():
+        print(f"error: cannot connect to {args.server}:{args.port}",
+              file=sys.stderr)
+        sys.exit(2)
+
+    try:
+        if args.what == "list":
+            time.sleep(1.5)   # collect retained state/info
+            with bridge.lock:
+                devs = sorted(bridge.devices.items())
+            if not devs:
+                print("no devices seen yet")
+                return
+            print(f"{'ID':24} {'STATE':8} {'IP':16} NAME")
+            for dev, d in devs:
+                info = d.get("info") or {}
+                print(f"{dev:24} "
+                      f"{'online' if d.get('online') else 'offline':8} "
+                      f"{info.get('ip', '-'):16} {info.get('device', '-')}")
+        elif args.what == "info":
+            time.sleep(1.5)
+            with bridge.lock:
+                d = bridge.devices.get(args.device)
+            if not d:
+                print(f"unknown device: {args.device}")
+                return
             info = d.get("info") or {}
-            print(f"{d['id']:24} "
-                  f"{'online' if d.get('online') else 'offline':8} "
-                  f"{info.get('ip', '-'):16} {info.get('device', '-')}")
-    elif args.what == "info":
-        data = client_request(server, token, "GET", f"/api/devices/{args.device}")
-        print(json.dumps(data, indent=2, ensure_ascii=False))
-    elif args.what == "call":
-        params = dict(kv.split("=", 1) for kv in args.params)
-        data = client_request(server, token, "POST",
-                              f"/api/devices/{args.device}/cmd/{args.method}",
-                              params)
-        print(json.dumps(data, indent=2, ensure_ascii=False))
-    elif args.what == "wol":
-        data = client_request(server, token, "POST",
-                              f"/api/devices/{args.device}/cmd/net/wol",
-                              {"mac": args.mac})
-        print(json.dumps(data))
-    elif args.what == "ping":
-        data = client_request(server, token, "POST",
-                              f"/api/devices/{args.device}/cmd/net/ping",
-                              {"host": args.host, "count": args.count})
-        print(json.dumps(data))
+            print(json.dumps({
+                "id": args.device,
+                "online": d.get("online", False),
+                "info": info,
+                "services": info.get("services", []),
+                "usage": f"client call {args.device} <method> k=v ...",
+            }, indent=2, ensure_ascii=False))
+        elif args.what == "call":
+            params = dict(kv.split("=", 1) for kv in args.params)
+            print(json.dumps(bridge.rpc(args.device, args.method, params),
+                             indent=2, ensure_ascii=False))
+        elif args.what == "wol":
+            print(json.dumps(bridge.rpc(args.device, "net/wol",
+                                        {"mac": args.mac})))
+        elif args.what == "ping":
+            print(json.dumps(bridge.rpc(args.device, "net/ping",
+                                        {"host": args.host,
+                                         "count": args.count})))
+    finally:
+        bridge.mqtt.loop_stop()
+        bridge.mqtt.disconnect()
 
 
 # ---------------------------------------------------------------- main
@@ -391,15 +427,16 @@ def main():
                     help="dir with server.crt/server.key for MQTT TLS")
     sp.add_argument("--token", default=None, help="override HTTP bearer token")
 
-    cp = sub.add_parser("client", help="query a running broker")
+    cp = sub.add_parser("client", help="talk MQTT directly to any broker")
     cp.add_argument("what", choices=["list", "info", "call", "wol", "ping"])
     cp.add_argument("device", nargs="?")
     cp.add_argument("method", nargs="?")
     cp.add_argument("params", nargs="*")
-    cp.add_argument("--server", default=None)
-    cp.add_argument("--token", default=None)
-    cp.add_argument("--mac", default=None)
-    cp.add_argument("--host", default=None)
+    cp.add_argument("--server", default="127.0.0.1", help="broker host")
+    cp.add_argument("--port", type=int, default=1883, help="broker port")
+    cp.add_argument("--ca", default=None, help="CA cert for TLS (port 8883)")
+    cp.add_argument("--user", default=None, help="MQTT username")
+    cp.add_argument("--pass", dest="pass", default=None, help="MQTT password")
     cp.add_argument("--count", default="4")
 
     args = ap.parse_args()

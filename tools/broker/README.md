@@ -143,15 +143,44 @@ curl -s -H "$AUTH" -X POST "$S/api/devices/$D/cmd/net/wol?mac=AA:BB:CC:DD:EE:FF"
 curl -s -H "$AUTH" -X POST "$S/api/devices/$D/cmd/net/ping?host=192.168.1.1&count=4"
 ```
 
-## 7. Client CLI
+## 7. Client CLI（纯 MQTT 直连，无需 HTTP 代理）
+
+client 与设备是**同一协议的不同角色**：都是 broker 的 MQTT 客户端。
+因此 client 不依赖 HTTP 代理，可指向**任意可达 broker**（本地/远程/TLS)。
 
 ```bash
-uv run python tools/broker/atnode_broker.py client list                    # 设备表
-uv run python tools/broker/atnode_broker.py client info atnodeesp-5688     # 详情+服务
+# 本地（凭据自动读 ~/.atnode_broker.json）
+uv run python tools/broker/atnode_broker.py client list
+uv run python tools/broker/atnode_broker.py client info atnodeesp-5688
 uv run python tools/broker/atnode_broker.py client call atnodeesp-5688 keyboard/text s=Hello ms=60
 uv run python tools/broker/atnode_broker.py client wol  atnodeesp-5688 AA:BB:CC:DD:EE:FF
 uv run python tools/broker/atnode_broker.py client ping atnodeesp-5688 192.168.1.1 4
-# --server http://server:8080 --token xxx 可覆盖（默认读本机配置文件）
+
+# 远程 / TLS
+uv run python tools/broker/atnode_broker.py client list \
+  --server broker.example.com --port 8883 --ca ca.crt --user atnode --pass xxx
+```
+
+| 参数 | 默认 | 说明 |
+|------|------|------|
+| `--server` | 127.0.0.1 | broker 地址 |
+| `--port` | 1883 | broker 端口（8883 自动启用 TLS） |
+| `--ca` | — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
+| `--user/--pass` | 配置文件 | MQTT 凭据 |
+
+## 7b. 任何 MQTT 客户端都能直接操作设备
+
+命令通道是纯 MQTT 约定，不绑定本脚本：
+
+```bash
+# 发命令（格式：<reqid> <method> <query>）
+mosquitto_pub -h server -u atnode -P xxx \
+  -t atnode/atnodeesp-5688/cmd -m "r1 net/ping host=192.168.1.1 count=4"
+# 收响应（按 reqid 关联）
+mosquitto_sub -h server -u atnode -P xxx -t atnode/atnodeesp-5688/resp
+# 设备发现（retained）
+mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/state'
+mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/info'
 ```
 
 ## 8. ESP32 侧配置
