@@ -67,9 +67,10 @@ uv run python tools/test/c3_type.py --ip 192.168.1.27 "Hello World"
 uv run python tools/test/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
 ```
 
-Remote broker (MQTT + HTTP proxy for remote device access):
+Remote broker (MQTT + HTTP proxy for remote device access, see `tools/broker/README.md`):
 ```bash
-uv run python tools/broker/atnode_broker.py serve          # MQTT broker + HTTP proxy
+uv run python tools/broker/atnode_broker.py serve          # MQTT broker only
+uv run python tools/broker/atnode_broker.py serve --http   # + HTTP proxy :8080
 uv run python tools/broker/atnode_broker.py client list    # list devices
 ```
 

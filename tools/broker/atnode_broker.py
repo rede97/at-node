@@ -20,8 +20,9 @@ MQTT wire protocol (device side is esp32_at_node firmware):
   atnode/<id>/resp    {"id":..,"ok":.., ...}
 
 Usage:
-  atnode_broker.py serve [--http-port 8080] [--mqtt-port 1883]
-                         [--mqtt-tls-port 8883] [--certs DIR]
+  atnode_broker.py serve [--mqtt-port 1883] [--mqtt-tls-port 8883]
+                         [--certs DIR] [--http [PORT]]
+                         (HTTP proxy is OPT-IN: only started with --http)
   atnode_broker.py client list
   atnode_broker.py client info <device>
   atnode_broker.py client call <device> <method> [k=v ...]
@@ -372,11 +373,18 @@ def run_client(args):
 # ---------------------------------------------------------------- main
 
 def main():
+    try:
+        sys.stdout.reconfigure(line_buffering=True)   # unbuffered service logs
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="AT-Node remote broker")
     sub = ap.add_subparsers(dest="mode", required=True)
 
-    sp = sub.add_parser("serve", help="run MQTT broker + HTTP proxy")
-    sp.add_argument("--http-port", type=int, default=8080)
+    sp = sub.add_parser("serve", help="run MQTT broker (+ optional HTTP proxy)")
+    sp.add_argument("--http", nargs="?", const=8080, default=None, type=int,
+                    metavar="PORT",
+                    help="also start the HTTP proxy (default port 8080); "
+                         "omit to run MQTT broker only")
     sp.add_argument("--mqtt-port", type=int, default=1883)
     sp.add_argument("--mqtt-tls-port", type=int, default=8883)
     sp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"),
@@ -418,7 +426,6 @@ def main():
     # serve
     cfg = load_or_create_config(args)
     print(f"[cfg] {CONFIG_PATH}")
-    print(f"[cfg] HTTP bearer token : {cfg['token']}")
     print(f"[cfg] MQTT credentials  : {cfg['mqtt_user']} / {cfg['mqtt_password']}")
 
     loop = asyncio.new_event_loop()
@@ -428,12 +435,21 @@ def main():
     t.start()
     time.sleep(1.5)   # let the broker come up
 
+    if args.http is None:
+        print("[http] proxy disabled (start it with --http [PORT])")
+        try:
+            threading.Event().wait()
+        except KeyboardInterrupt:
+            pass
+        return
+
+    print(f"[cfg] HTTP bearer token : {cfg['token']}")
     bridge = Bridge(cfg, args.mqtt_port)
 
-    httpd = ThreadingHTTPServer(("0.0.0.0", args.http_port), Handler)
+    httpd = ThreadingHTTPServer(("0.0.0.0", args.http), Handler)
     httpd.cfg = cfg
     httpd.bridge = bridge
-    print(f"[http] proxy listening: 0.0.0.0:{args.http_port} "
+    print(f"[http] proxy listening: 0.0.0.0:{args.http} "
           f"(GET /api/help for docs)")
     try:
         httpd.serve_forever()
