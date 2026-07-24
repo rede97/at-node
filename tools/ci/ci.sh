@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # ci.sh — local CI script for at-node project
 # Runs build and test for both CH582 and ESP32 variants.
-# Uses standard xPack RISC-V toolchain (not WCH official).
+#
+# CH582 build is OPT-IN (shelved in CI): it requires the WCH MounRiver
+# toolchain, which has no public direct download and cannot be fetched
+# automatically. Standard xPack/upstream GCC produces BROKEN firmware
+# for this codebase — see tools/ci/TOOLCHAIN.md for the full report.
+# ESP32 build, Python checks and doc checks always run.
 
 set -euo pipefail
 
@@ -18,64 +23,35 @@ log() { echo -e "${GREEN}[CI]${NC} $*"; }
 warn() { echo -e "${YELLOW}[CI]${NC} $*"; }
 error() { echo -e "${RED}[CI]${NC} $*" >&2; }
 
-# --- Toolchain setup ---
-setup_toolchain() {
-    log "Setting up xPack RISC-V toolchain..."
-    
-    TOOLCHAIN_DIR="$PROJECT_ROOT/.toolchain"
-    ALIAS_DIR="$PROJECT_ROOT/.toolchain-alias"
-    
-    # Check if toolchain already exists
-    if [ -d "$TOOLCHAIN_DIR" ] && [ -f "$ALIAS_DIR/bin/riscv-none-embed-gcc" ]; then
-        log "Toolchain already installed"
-        export PATH="$ALIAS_DIR/bin:$PATH"
+# --- CH582 firmware build (opt-in, WCH toolchain only) ---
+# Do NOT substitute xPack/upstream GCC here: it silently compiles
+# __attribute__((interrupt("WCH-Interrupt-fast"))) handlers into plain
+# functions (ret instead of mret) -> firmware crashes on first IRQ.
+# Full evidence: tools/ci/TOOLCHAIN.md
+build_ch582() {
+    if [ "${BUILD_CH582:-0}" != "1" ]; then
+        warn "CH582 build skipped (set BUILD_CH582=1 to enable; requires WCH toolchain, see tools/ci/TOOLCHAIN.md)"
         return 0
     fi
-    
-    # Download xPack toolchain if not present
-    XPACK_VERSION="15.2.0-1"
-    XPACK_NAME="xpack-riscv-none-elf-gcc-${XPACK_VERSION}-linux-x64"
-    XPACK_URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v${XPACK_VERSION}/${XPACK_NAME}.tar.gz"
-    
-    log "Downloading xPack toolchain ${XPACK_VERSION}..."
-    mkdir -p "$TOOLCHAIN_DIR"
-    curl -sL "$XPACK_URL" -o /tmp/xpack-toolchain.tar.gz
-    tar -xzf /tmp/xpack-toolchain.tar.gz -C "$TOOLCHAIN_DIR" --strip-components=1
-    rm /tmp/xpack-toolchain.tar.gz
-    
-    # Create aliases for riscv-none-embed-* prefix
-    log "Creating toolchain aliases..."
-    mkdir -p "$ALIAS_DIR/bin"
-    for tool in gcc g++ objcopy objdump size ar ranlib nm strip gdb; do
-        src="$TOOLCHAIN_DIR/bin/riscv-none-elf-${tool}"
-        dst="$ALIAS_DIR/bin/riscv-none-embed-${tool}"
-        if [ -f "$src" ]; then
-            ln -sf "$src" "$dst"
-        fi
-    done
-    
-    export PATH="$ALIAS_DIR/bin:$PATH"
-    log "Toolchain setup complete"
-}
 
-# --- CH582 firmware build ---
-build_ch582() {
     log "Building CH582 firmware (all variants)..."
-    
+
+    # Locate the WCH toolchain via env.sh (expects ~/wch layout)
     if ! command -v riscv-none-embed-gcc >/dev/null 2>&1; then
-        setup_toolchain
+        if [ -f "$PROJECT_ROOT/env.sh" ]; then
+            # shellcheck disable=SC1091
+            source "$PROJECT_ROOT/env.sh" >/dev/null
+        fi
     fi
-    
-    # Verify toolchain works
-    if ! riscv-none-embed-gcc --version >/dev/null 2>&1; then
-        error "Toolchain verification failed"
+    if ! command -v riscv-none-embed-gcc >/dev/null 2>&1; then
+        error "BUILD_CH582=1 but WCH toolchain (riscv-none-embed-gcc) not found."
+        error "Install MounRiver 'RISC-V Embedded GCC' under ~/wch and re-run. See tools/ci/TOOLCHAIN.md"
         return 1
     fi
-    
     log "Toolchain: $(riscv-none-embed-gcc --version | head -1)"
-    
+
     cd "$PROJECT_ROOT/software/obj"
-    
+
     # Build all variants
     for variant in "" "DONGLE=1" "MODE=DUAL"; do
         log "Building variant: ${variant:-kbd (default)}"
@@ -85,13 +61,14 @@ build_ch582() {
         else
             make --no-print-directory main-build
         fi
-        
+
         # Show size
         if [ -f at-node.elf ]; then
             log "Size: $(riscv-none-embed-size at-node.elf | tail -1)"
         fi
     done
-    
+    make clean >/dev/null || true
+
     cd "$PROJECT_ROOT"
     log "CH582 build OK"
 }

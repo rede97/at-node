@@ -38,7 +38,7 @@ cd software/obj && make --no-print-directory main-build DONGLE=1 # dongle (after
 cd software/obj && make --no-print-directory main-build MODE=DUAL # dual: AT+ROLE runtime switch
 tools/ci/build_all.sh                                            # all three -> tools/ci/out/
 ```
-Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first.
+Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first. xPack/upstream GCC builds broken firmware (interrupt attr) — see `tools/ci/TOOLCHAIN.md`.
 
 Encoding check:
 ```bash
