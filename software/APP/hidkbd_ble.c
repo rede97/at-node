@@ -174,20 +174,24 @@ static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
 #define SLOTMAP_MAGIC  0xA77E0001
 #define SLOTNAME_LEN   12
 #define SLOTPACE_DFLT  15
-static uint8_t  slotmap[KBD_MAX_CONN][6];             /* all-0xFF = free */
+static uint8_t  slotmap[KBD_MAX_CONN][6];             /* host addrs, all-0xFF = free */
 static char     slotname[KBD_MAX_CONN][SLOTNAME_LEN]; /* "" = unnamed */
 static uint16_t slotpace[KBD_MAX_CONN];               /* KEY_STR pace ms */
+static uint8_t  slotmac[KBD_MAX_CONN][6];             /* per-slot OWN MAC, all-0xFF = derive */
 static void kbd_name_update(void);          /* defined after slotmap_find */
 
 static void slotmap_save(void)
 {
-    uint8_t buf[64];
+    uint8_t buf[96];
     uint32_t magic = SLOTMAP_MAGIC;
     tmos_memcpy(buf, &magic, 4);
     tmos_memcpy(buf + 4, slotmap, KBD_MAX_CONN * 6);
     tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6, slotname, KBD_MAX_CONN * SLOTNAME_LEN);
     tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6 + KBD_MAX_CONN * SLOTNAME_LEN,
                 slotpace, KBD_MAX_CONN * sizeof(uint16_t));
+    tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6 + KBD_MAX_CONN * SLOTNAME_LEN +
+                KBD_MAX_CONN * sizeof(uint16_t),
+                slotmac, KBD_MAX_CONN * 6);
     EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, sizeof(buf));
     EEPROM_WRITE(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
     kbd_name_update();   /* slot suffix in the advertised name changed */
@@ -195,7 +199,7 @@ static void slotmap_save(void)
 
 static void slotmap_load(void)
 {
-    uint8_t buf[64];
+    uint8_t buf[96];
     uint32_t magic = 0;
     tmos_memset(slotmap, 0xFF, sizeof(slotmap));
     tmos_memset(slotname, 0, sizeof(slotname));
@@ -216,6 +220,21 @@ static void slotmap_load(void)
             tmos_memcpy(&v, pc + s * sizeof(uint16_t), sizeof(uint16_t));
             if (v != 0xFFFF && v >= 5 && v <= 2000) slotpace[s] = v;
         }
+        const uint8_t *mc = pc + KBD_MAX_CONN * sizeof(uint16_t);
+        for (int s = 0; s < KBD_MAX_CONN; s++)
+            tmos_memcpy(slotmac[s], mc + s * 6, 6);
+    }
+    /* derive default per-slot MACs from the chip MAC (last byte + slot);
+       BLE1 keeps the chip MAC so existing bonds stay valid */
+    {
+        uint8_t mac[6];
+        GetMACAddress(mac);
+        for (int s = 0; s < KBD_MAX_CONN; s++) {
+            if (slotmac[s][0] == 0xFF && slotmac[s][5] == 0xFF) {
+                tmos_memcpy(slotmac[s], mac, 6);
+                slotmac[s][0] = (uint8_t)(mac[0] + s);
+            }
+        }
     }
     for (int s = 0; s < KBD_MAX_CONN; s++)
         slotname[s][SLOTNAME_LEN - 1] = 0;   /* belt and braces */
@@ -234,8 +253,15 @@ static int slotmap_find(const uint8_t *addr)
    free (user said "pair into this slot"), else the lowest free one. */
 int8_t kb_ble_active_slot(void);   /* at_cmds.c: target BLE slot, -1=USB */
 
+static int8_t pair_slot;   /* pairing window slot, -1 = closed (def below) */
+
 static int kbd_next_pair_slot(void)
 {
+    /* open pairing window targets its slot first */
+    if (pair_slot >= 0 && pair_slot < KBD_MAX_CONN &&
+        kbd_conns[pair_slot].handle == GAP_CONNHANDLE_INIT &&
+        slotmap[pair_slot][0] == 0xFF)
+        return pair_slot;
     int8_t act = kb_ble_active_slot();
     if (act >= 0 && act < KBD_MAX_CONN &&
         kbd_conns[act].handle == GAP_CONNHANDLE_INIT &&
@@ -254,8 +280,11 @@ static int kbd_next_pair_slot(void)
 static void kbd_name_update(void)
 {
     static const char hex[] = "0123456789ABCDEF";
-    uint8_t mac[6];
-    GetMACAddress(mac);
+    /* name follows the ACTIVE slot's own MAC (per-slot MAC scheme) */
+    int8_t act = kb_ble_active_slot();
+    const uint8_t *mac = (act >= 0 && act < KBD_MAX_CONN) ? slotmac[act] : NULL;
+    uint8_t chipmac[6];
+    if (!mac) { GetMACAddress(chipmac); mac = chipmac; }
     tmos_memset(attDeviceName, 0, GAP_DEVICE_NAME_LEN);
     tmos_memcpy(attDeviceName, "AT-Node-", 8);
     int n = 8;
@@ -370,10 +399,53 @@ int kb_ble_slot_set_pace(uint8_t slot, uint16_t ms)
     return 0;
 }
 
+/* Per-slot own MAC (LSB-first). */
+const uint8_t *kb_ble_slot_mac(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN) ? slotmac[slot] : NULL;
+}
+
+int kb_ble_slot_set_mac(uint8_t slot, const uint8_t *addr)
+{
+    if (slot >= KBD_MAX_CONN) return -1;
+    /* must be a static random address: MSB top two bits = 0b11 */
+    if ((addr[5] & 0xC0) != 0xC0) return -1;
+    tmos_memcpy(slotmac[slot], (void *)addr, 6);
+    slotmap_save();
+    return 0;
+}
+
+/* Apply a slot's own MAC on-air: stop advertising, set the static
+   address, rebuild name+advert data, restart advertising. Called at
+   GAP start and on AT+DEV slot switches (single-active model). */
+void kb_ble_apply_addr(int slot)
+{
+    if (slot < 0 || slot >= KBD_MAX_CONN) slot = 0;
+    uint8_t adv = FALSE;
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+    GAP_ConfigDeviceAddr(ADDRTYPE_STATIC, slotmac[slot]);
+    kbd_name_update();
+    GAPRole_SetParameter(GAPROLE_ADVERT_DATA, sizeof(advertData), advertData);
+    adv = TRUE;
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+}
+
 /* Reserved address for a slot (from the persistent table), or NULL. */
 const uint8_t *kb_ble_slot_bound_addr(uint8_t slot)
 {
     return (slot < KBD_MAX_CONN && slotmap[slot][0] != 0xFF) ? slotmap[slot] : NULL;
+}
+
+/* Factory reset: wipe all reservations/names/paces/MACs + flash page,
+   back to derived defaults. Caller erases bonds and resets. */
+void kb_ble_factory_reset(void)
+{
+    tmos_memset(slotmap, 0xFF, sizeof(slotmap));
+    tmos_memset(slotname, 0, sizeof(slotname));
+    tmos_memset(slotmac, 0xFF, sizeof(slotmac));
+    for (int s = 0; s < KBD_MAX_CONN; s++) slotpace[s] = SLOTPACE_DFLT;
+    EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, 96);
+    slotmap_load();   /* re-derive default MACs from the chip MAC */
 }
 
 /* Forget a host: clear its slot reservation AND its bond. */
@@ -488,11 +560,54 @@ static void    ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *p
  * of multi-link issues (broadcast corruption, queue storms). */
 uint8_t kb_ble_slot_allowed(uint8_t slot, const uint8_t *addr);   /* at_cmds.c */
 
+/* ---- pairing window (owner decision 2026-07-24) ----------------------
+ * Market-keyboard parity: a NEW (unknown) host may only connect while a
+ * pairing window is open (AT+BT_PAIR[=<slot>], 60 s). Outside the window
+ * unknown hosts are rejected like any non-active host — an agent box
+ * must never accept a pairing it did not ask for (password-mistype risk).
+ * Known (reserved) hosts are unaffected and can always return. */
+#define PAIR_WINDOW_EVT   0x0002
+#define PAIR_WINDOW_MS    60000
+static int8_t pair_slot = -1;   /* slot the window pairs into, -1 = closed */
+
+int8_t kb_ble_pair_slot(void) { return pair_slot; }
+
+/* Centralized advertising policy (single-active model, 2026-07-24):
+ *   pairing window open                    -> ON  (findable for pairing)
+ *   any link up                            -> OFF (quiet while connected)
+ *   active slot reserved, host away        -> ON  (waiting for it home)
+ *   otherwise (free active slot / USB)     -> OFF (nothing to wait for)
+ */
+static void kbd_adv_update(void)
+{
+    uint8_t want;
+    extern uint8_t kb_ble_advert_wanted(void);
+    if (pair_slot >= 0) {
+        want = TRUE;
+    } else if (kb_ble_conn_count() > 0) {
+        want = FALSE;
+    } else {
+        int8_t act = kb_ble_active_slot();
+        want = (act >= 0 && slotmap[act][0] != 0xFF && kb_ble_advert_wanted())
+               ? TRUE : FALSE;
+    }
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &want);
+}
+
+void kb_ble_pair_open(int slot)
+{
+    pair_slot = (int8_t)slot;
+    kbd_adv_update();   /* window: become findable */
+    tmos_start_task(ble_hid_emu_task_id, PAIR_WINDOW_EVT,
+                    MS1_TO_SYSTEM_TIME(PAIR_WINDOW_MS));
+    AT_Response("+BT_PAIR_WINDOW:%d", slot + 1);
+}
+
 static int kbd_policy_drop(const uint8_t *addr)
 {
 #if KBD_MAX_CONN > 1
     int s = slotmap_find(addr);
-    if (s < 0) return 0;                 /* unknown host: pairing, allow */
+    if (s < 0) return (pair_slot >= 0) ? 0 : 1;   /* unknown: window only */
     return !kb_ble_slot_allowed((uint8_t)s, addr);
 #else
     (void)addr;
@@ -511,8 +626,9 @@ void kb_ble_activate_slot(int slot)
 #else
     (void)slot;
 #endif
-    uint8_t adv = (slot >= 0) ? TRUE : FALSE;
-    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
+    if (slot >= 0)
+        kb_ble_apply_addr(slot);   /* per-slot MAC: switch own address */
+    kbd_adv_update();   /* OFF while connected / USB-only; ON if waiting */
 }
 
 /*********************************************************************
@@ -647,6 +763,16 @@ uint16_t ble_hid_emu_process_event(uint8_t task_id, uint16_t events)
         return (events ^ START_PARAM_UPDATE_EVT);
     }
 
+    if(events & PAIR_WINDOW_EVT)
+    {
+        /* pairing window closed: quiet again unless a reserved active
+           host is still on its way home */
+        pair_slot = -1;
+        kbd_adv_update();
+        AT_Response("+BT_PAIR_WINDOW:closed");
+        return (events ^ PAIR_WINDOW_EVT);
+    }
+
     if(events & START_PHY_UPDATE_EVT)
     {
         // start phy update on every connected host
@@ -733,13 +859,9 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
            runs, so "was bonded" is unknowable at this point (ordering
            bug, wiped the dongle's reservation 2026-07-24). Cleanup is
            explicit via AT+BT_UNBIND. */
-        /* A slot just freed — make sure we are connectable again, unless
-           USB-only mode asked for BLE quiet (kb_ble_activate_slot(-1)). */
-        extern uint8_t kb_ble_advert_wanted(void);   /* at_cmds.c */
-        if (kb_ble_conn_count() < KBD_MAX_CONN && kb_ble_advert_wanted()) {
-            uint8_t adv = TRUE;
-            GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &adv);
-        }
+        /* A slot just freed — re-evaluate advertising (waiting for the
+           reserved active host home vs. stay quiet). */
+        kbd_adv_update();
         /* fall through: state handling below re-enables advertising */
     }
 
@@ -747,9 +869,11 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
     {
         case GAPROLE_STARTED:
         {
-            uint8_t ownAddr[6];
-            GAPRole_GetParameter(GAPROLE_BD_ADDR, ownAddr);
-            GAP_ConfigDeviceAddr(ADDRTYPE_STATIC, ownAddr);
+            /* apply the active slot's own MAC (per-slot MAC scheme);
+               defaults to slot 0 = chip MAC */
+            extern int8_t kb_ble_active_slot(void);
+            int8_t act = kb_ble_active_slot();
+            kb_ble_apply_addr(act >= 0 ? act : 0);
             PRINT("Initialized..\n");
         }
         break;

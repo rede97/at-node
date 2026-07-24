@@ -547,6 +547,58 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 }
 
 
+/* AT+MAC[=<BLE1|BLE2|BLE3>[,<AA:BB:CC:DD:EE:FF>]] — per-slot own MAC.
+   Query shows all slots; set writes a static-random address (MSB must
+   have top bits 11) and persists it. The ACTIVE slot's MAC drives the
+   advertised name/address; switch with AT+DEV to change on-air. */
+static int at_cmd_MAC(int argc, char *argv[]) {
+    if (argc < 2) {
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
+            const uint8_t *m = kb_ble_slot_mac(s);
+            AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X", s + 1, s + 1,
+                        m[5], m[4], m[3], m[2], m[1], m[0]);
+        }
+        return 0;
+    }
+    uint8_t m = dev_target_parse(argv[1]);
+    if (!m || !(m & KB_TGT_BLE_ALL)) {
+        AT_Response("usage: AT+MAC[=<BLE1|BLE2|BLE3>[,<AA:BB:CC:DD:EE:FF>]]");
+        return -1;
+    }
+    int slot = -1;
+    for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+        if (m & (KB_TGT_BLE1 << s)) slot = s;
+    if (slot < 0) return -1;
+    if (argc < 3) {
+        const uint8_t *a = kb_ble_slot_mac((uint8_t)slot);
+        AT_Response("BLE%d,%02X:%02X:%02X:%02X:%02X:%02X", slot + 1,
+                    a[5], a[4], a[3], a[2], a[1], a[0]);
+        return 0;
+    }
+    /* parse AA:BB:CC:DD:EE:FF (display order, MSB first) */
+    uint8_t addr[6];
+    const char *p = argv[2];
+    for (int i = 5; i >= 0; i--) {
+        int v = 0;
+        for (int k = 0; k < 2; k++) {
+            char c = *p++;
+            v <<= 4;
+            if (c >= '0' && c <= '9') v |= c - '0';
+            else if ((c | 0x20) >= 'a' && (c | 0x20) <= 'f') v |= (c | 0x20) - 'a' + 10;
+            else { AT_Response("usage: AT+MAC=<BLEn>,<AA:BB:CC:DD:EE:FF>"); return -1; }
+        }
+        addr[i] = (uint8_t)v;
+        if (i > 0 && *p++ != ':') { AT_Response("usage: AT+MAC=<BLEn>,<AA:BB:CC:DD:EE:FF>"); return -1; }
+    }
+    if (kb_ble_slot_set_mac((uint8_t)slot, addr) < 0) {
+        AT_Response("ERROR: need static-random MAC (MSB top bits = 11)");
+        return -1;
+    }
+    AT_Response("BLE%d mac=%02X:%02X:%02X:%02X:%02X:%02X", slot + 1,
+                addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]);
+    return 0;
+}
+
 /* AT+PACE[=<ms>] — KEY_STR pacing of the ACTIVE BLE slot (per-slot,
    persisted with the reservation). Phones need >= 2x conn interval. */
 static int at_cmd_PACE(int argc, char *argv[]) {
@@ -942,16 +994,51 @@ static int bt_disc_kbd(int argc, char *argv[]) {
     }
     return 0;
 }
-/* AT+BT_PAIR — drop the link AND erase all bonds: back to a clean
-   pairing mode, like long-pressing a real keyboard's pairing key. */
+/* AT+BT_PAIR[=<BLE1|BLE2|BLE3>] — open a 60 s pairing window (market
+   keyboard parity: pairing must be explicitly opened, owner decision
+   2026-07-24). With a slot: unbind it first and the window pairs into
+   that slot. Outside the window unknown hosts are rejected. */
 static int bt_pair_kbd(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    kb_ble_disconnect();      /* fine if not connected */
-    kb_ble_forget_bonds();
-    for (uint8_t s = 0; s < KBD_MAX_CONN; s++) kb_ble_unbind_slot(s);
-    AT_Response("bonds erased — pairing mode");
+    int slot = -1;
+    if (argc >= 2) {
+        uint8_t m = dev_target_parse(argv[1]);
+        if (!m || !(m & KB_TGT_BLE_ALL)) {
+            AT_Response("usage: AT+BT_PAIR[=<BLE1|BLE2|BLE3>]");
+            return -1;
+        }
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+            if (m & (KB_TGT_BLE1 << s)) slot = s;
+        kb_ble_unbind_slot((uint8_t)slot);   /* fine if not bound */
+    } else {
+        extern int8_t kb_ble_active_slot(void);
+        slot = kb_ble_active_slot();
+        if (slot < 0) { AT_Response("ERROR: AT+DEV=BLEn first"); return -1; }
+    }
+    /* pairing implies pointing: activate the slot so its own MAC goes
+       on-air, then open the window */
+    extern void kb_ble_activate_slot(int slot);
+    kb_target = (uint8_t)(KB_TGT_BLE1 << slot);
+    kb_ble_activate_slot(slot);
+    kb_ble_pair_open(slot);
     return 0;
 }
+/* AT+FACTORY — wipe EVERYTHING: terminate links, erase all bonds,
+   clear all slot reservations/names/paces/MACs, then soft reset.
+   Back to factory defaults (per-slot MACs re-derive from chip MAC). */
+static int at_cmd_FACTORY(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    AT_Response("factory reset...");
+#ifdef DEBUG
+    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();
+#endif
+    kb_ble_disconnect();
+    kb_ble_forget_bonds();
+    kb_ble_factory_reset();
+    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
+    SYS_ResetExecute();
+    return 0;   /* unreachable */
+}
+
 /* AT+BT_UNBIND=<BLE1|BLE2|BLE3> — forget ONE host: clears its slot
    reservation and its bond record. The slot becomes free for a new
    pairing; the other hosts are untouched (F1.12). */
@@ -1165,6 +1252,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+ECHO",    "echo <text>",                    at_cmd_ECHO },
     { "AT+STATUS",  "device status (role/dev/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
+    { "AT+FACTORY", "wipe all config + bonds, reset", at_cmd_FACTORY },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
@@ -1180,6 +1268,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+KEY_STR", "type text <string> (US layout)", at_cmd_KEY_STR },
     { "AT+PACE",    "KEY_STR pacing <ms> (per-slot)", at_cmd_PACE },
     { "AT+NAME",    "slot label <BLEn>,<name>",   at_cmd_NAME },
+    { "AT+MAC",     "slot own MAC <BLEn>[,<addr>]", at_cmd_MAC },
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },
@@ -1194,7 +1283,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
     { "AT+BT_CONN", "connect <idx|addr|name> (dongle)", at_cmd_BT_CONN },
     { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
-    { "AT+BT_PAIR", "drop link + erase bonds",       at_cmd_BT_PAIR },
+    { "AT+BT_PAIR", "open pairing window <BLEn>",    at_cmd_BT_PAIR },
     { "AT+BT_UNBIND", "forget one host <BLE1..3>",   at_cmd_BT_UNBIND },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },

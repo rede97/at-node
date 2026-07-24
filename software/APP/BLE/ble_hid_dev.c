@@ -852,12 +852,11 @@ static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
             hidDevConnLat[slot]  = event->connLatency;
         }
 
-        /* The GAPRole lib stops advertising on every connect. With free
-           slots we must explicitly re-enable it so hosts 2/3 can still
-           find us (KBD_MULTI); only when the table is full do we stay
-           quiet. Single-host builds: count(1) >= MAX(1) -> stops,
-           identical to the old behavior. */
-        param = (hiddev_conn_count() >= KBD_MAX_CONN) ? FALSE : TRUE;
+        /* Single-active model: once a link is up, stop advertising —
+           nobody else should find us (owner decision 2026-07-24).
+           Advertising resumes only while the active host is away or a
+           pairing window is open. */
+        param = FALSE;
         GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
     }
     else if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
