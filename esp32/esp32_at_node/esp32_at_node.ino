@@ -77,8 +77,9 @@ static WebServer g_http(80);
 static bool      g_wifi_ready = false;
 
 /* --- MQTT client ------------------------------------------------------- */
-static WiFiClientSecure g_mqtt_wifi;
-static PubSubClient     g_mqtt(g_mqtt_wifi);
+static WiFiClient       g_mqtt_wifi_plain;
+static WiFiClientSecure g_mqtt_wifi_secure;
+static PubSubClient     g_mqtt(g_mqtt_wifi_plain);
 static bool             g_mqtt_connected = false;
 static bool             g_mqtt_connect_pending = false;
 static String           g_mqtt_broker;
@@ -1008,23 +1009,27 @@ static bool mqtt_connect(void)
 {
     if (g_mqtt_broker.length() == 0) return false;
     Serial.printf("MQTT connect to %s:%d ...\n", g_mqtt_broker.c_str(), g_mqtt_port);
-    g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
-    g_mqtt.setCallback(mqtt_callback);
     g_mqtt_client_id = "atnode-" + g_hostname;
     g_mqtt_topic_prefix = "atnode/" + g_hostname;
 
     if (g_mqtt_port == 8883) {
+        /* TLS mode */
+        g_mqtt.setClient(g_mqtt_wifi_secure);
         if (g_mqtt_ca_fp.length() > 0) {
-            /* fingerprint mode: insecure connect, verify later */
-            g_mqtt_wifi.setInsecure();
+            g_mqtt_wifi_secure.setInsecure();
         } else if (g_mqtt_ca_cert.length() > 0) {
-            /* CA cert mode */
-            g_mqtt_wifi.setCACert(g_mqtt_ca_cert.c_str());
+            g_mqtt_wifi_secure.setCACert(g_mqtt_ca_cert.c_str());
         } else {
-            /* fallback: insecure for dev */
-            g_mqtt_wifi.setInsecure();
+            g_mqtt_wifi_secure.setInsecure();
         }
+        g_mqtt_wifi_secure.setTimeout(1000);
+    } else {
+        /* Plain TCP mode */
+        g_mqtt.setClient(g_mqtt_wifi_plain);
+        g_mqtt_wifi_plain.setTimeout(1000);
     }
+    g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
+    g_mqtt.setCallback(mqtt_callback);
 
     bool ok;
     if (g_mqtt_user.length() > 0) {
@@ -1033,9 +1038,9 @@ static bool mqtt_connect(void)
         ok = g_mqtt.connect(g_mqtt_client_id.c_str());
     }
 
-    /* verify fingerprint if configured */
+    /* verify fingerprint if configured (TLS only) */
     if (ok && g_mqtt_port == 8883 && g_mqtt_ca_fp.length() > 0) {
-        if (!verify_fingerprint(g_mqtt_wifi.getPeerCertificate(), g_mqtt_ca_fp)) {
+        if (!verify_fingerprint(g_mqtt_wifi_secure.getPeerCertificate(), g_mqtt_ca_fp)) {
             Serial.println("MQTT fingerprint mismatch, disconnecting");
             g_mqtt.disconnect();
             ok = false;
@@ -1057,9 +1062,14 @@ static void mqtt_task_func(void* arg)
 
 static void mqtt_poll(void)
 {
+    static uint32_t last_attempt = 0;
     if (g_mqtt_connect_pending) {
-        g_mqtt_connect_pending = false;
-        mqtt_connect();
+        uint32_t now = millis();
+        if (now - last_attempt > 1000) {  /* retry at most once per second */
+            last_attempt = now;
+            g_mqtt_connect_pending = false;
+            mqtt_connect();
+        }
     }
     if (!g_mqtt_connected) return;
     if (!g_mqtt.loop()) {
@@ -1566,9 +1576,7 @@ void setup(void)
 
     ble_init();
 
-    /* start MQTT background task */
-    /* BaseType_t task_ok = xTaskCreate(mqtt_task_func, "mqtt", 4096, NULL, 1, &g_mqtt_task);
-    Serial.printf("MQTT task create %s\n", (task_ok == pdPASS) ? "OK" : "FAILED"); */
+    /* MQTT background task disabled — using main loop with short timeout */
 }
 
 void loop(void)
