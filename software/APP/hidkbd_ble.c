@@ -130,7 +130,7 @@ static uint8_t advertData[] = {
     // flags
     0x02, // length of this data
     GAP_ADTYPE_FLAGS,
-    GAP_ADTYPE_FLAGS_LIMITED | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED,
+    GAP_ADTYPE_FLAGS_GENERAL | GAP_ADTYPE_FLAGS_BREDR_NOT_SUPPORTED,
 
     // appearance
     0x03, // length of this data
@@ -269,9 +269,13 @@ static void kbd_name_update(void)
         attDeviceName[n++] = (uint8_t)('0' + next + 1);
     }
     attDeviceName[n] = 0;
-    /* rewrite the advertising name field (offset 7: after flags+appearance) */
+    /* rewrite the advertising name field: offset 7 = length byte,
+       offset 8 = AD type (keep!), name chars from offset 9.
+       (2026-07-24 bug: memcpy at offset 8 clobbered the AD type byte
+       and the advertised name parsed as garbage in nRF Connect.) */
+    if (n > 14) n = 14;
     advertData[7] = (uint8_t)(1 + n);
-    tmos_memcpy(&advertData[8], attDeviceName, (uint8_t)n);
+    tmos_memcpy(&advertData[9], attDeviceName, (uint8_t)n);
 }
 
 static int kbd_slot_of(uint16_t handle)
