@@ -1,17 +1,17 @@
 # AT-Node Remote Broker 手册
 
-> 单文件远程网关：`atnode_broker.py`。让 agent/用户从任何地方通过
-> `curl` 安全控制 ESP32 AT-Node 设备（BLE 键盘、GPIO、WOL、ping 等）。
+> 单文件远程网关：`atnode_broker.py`。让 agent/用户从任何地方安全控制
+> ESP32 AT-Node 设备（BLE 键盘、GPIO、WOL、ping 等）。
 >
 > **TL;DR**:
 > ```bash
-> uv run python tools/broker/atnode_broker.py serve --http   # MQTT broker + HTTP 代理
-> uv run python tools/broker/atnode_broker.py client list    # 看设备
-> curl -H "Authorization: Bearer $TOKEN" \
->   -X POST "http://SERVER:8080/api/devices/<id>/cmd/keyboard/text?s=Hello"
+> uv run python tools/broker/atnode_broker.py serve --http   # 启动 broker+代理
+> uv run python tools/broker/atnode_broker.py manager add --name my-agent  # 发 key
+> uv run python tools/broker/atnode_broker.py client list --key <KEY>      # 用 key 访问
 > ```
 >
-> **注意**:`serve` 默认**只启动 MQTT broker**；HTTP 代理需显式 `--http [PORT]`。
+> **三种角色**:`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
+> `manager`(MQTT 客户端，key 管理，限本地）。三者说同一套 MQTT 协议。
 
 ---
 
@@ -21,7 +21,7 @@
 用户/Agent                          远程服务器                     局域网
 ─────────                          ──────────                    ──────
 curl ──HTTPS──▶ HTTP proxy :8080 ─┐
-      Bearer token                │  atnode_broker.py（单文件）
+   Bearer <api-key>              │  atnode_broker.py（单文件）
                                   │    ├── amqtt broker :1883/:8883(TLS)
 ESP32 ──MQTT/TLS outbound────────▶│    └── paho 桥（设备注册表+RPC关联）
 (NAT 穿透，设备主动外连)      atnode/<id>/{state,info,cmd,resp}
@@ -30,29 +30,53 @@ ESP32 ──MQTT/TLS outbound────────▶│    └── paho �
 - ESP32 **主动外连** broker —— 无需公网 IP / 端口映射，天然穿 NAT。
 - 所有设备能力统一为 **method 调用**（与设备本地 HTTP API 同名同参）。
 
-## 2. 快速开始（本地 3 步）
+## 2. 认证模型（API Key）
+
+```
+            ┌─────────────────────────────────────┐
+  client ──▶│  ApiKeyAuthPlugin                   │
+  (MQTT)    │   username = API key,须 active     │
+            │   localhost 连接免 key              │
+  ESP32  ──▶│  KeyStore: ~/.atnode_broker_keys.sqlite
+  (MQTT)    │     key | name | status | created   │
+            │  ManageAclPlugin                    │
+  manager ─▶│   _manage/# topic 限 localhost      │
+  (MQTT)    │  AccessLog: ~/.atnode_broker_logs/  │
+            │   <key-name>.log / auth_fail.log    │
+            └─────────────────────────────────────┘
+```
+
+- **远程 MQTT 连接**：用户名 = API key（须存在于 SQLite 且状态 active)。
+- **本地连接（127.0.0.1）免 key**——manager 和本机 client 开箱即用；
+  远程管理走 SSH 端口转发：`ssh -L 1883:127.0.0.1:1883 server`。
+- **HTTP 代理**:`Authorization: Bearer <api-key>`；本地请求免认证。
+- ESP32 也是普通客户端：`mqtt_user = <key>`（密码留空即可）。
+
+## 3. Key 管理（manager 角色，走 MQTT，无需重启服务）
 
 ```bash
-# 1. 启动（首次运行生成 ~/.atnode_broker.json：token + MQTT 账号密码，并打印）
-#    --http 才会启动 HTTP 代理（默认 8080）；不带则纯 MQTT broker
-uv run python tools/broker/atnode_broker.py serve --http
-
-# 2. 把 ESP32 指到 broker（设备当前用哪个账号密码见配置文件打印）
-curl -X POST "http://192.168.1.27/at-node/cmd/mqtt/config?broker=<broker-ip>&port=1883&user=<u>&pass=<p>"
-curl -X POST "http://192.168.1.27/at-node/cmd/mqtt/connect"
-
-# 3. 通过代理控制设备
-TOKEN=$(jq -r .token ~/.atnode_broker.json)
-curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/devices
+B=tools/broker/atnode_broker.py
+uv run python $B manager add --name esp32-home     # 生成 key（只打印一次）
+uv run python $B manager list                      # 全部 key + 状态
+uv run python $B manager revoke agent-alice        # 标记废弃（立即断认证）
+uv run python $B manager enable agent-alice        # 恢复
+uv run python $B manager remove agent-alice        # 彻底删除
+# 接受 key 或名字定位；--server/--port 可指向 SSH 转发的端口
 ```
+
+**访问日志**（纯文件，不入库）:`~/.atnode_broker_logs/`
+- `<key-name>.log` — 该 key 的连接/HTTP 调用记录（时间、client_id、IP、操作）
+- `auth_fail.log` — 被拒的尝试（含尝试的 key 前缀，方便识别泄漏）
+- `local.log` — 本地免认证访问
 
 ## 3. 配置
 
-配置文件 `~/.atnode_broker.json`（首次 serve 自动生成，权限 600):
+本地文件：
 
-```json
-{"token": "<http-bearer>", "mqtt_user": "atnode", "mqtt_password": "<mqtt-pass>"}
-```
+| 文件 | 内容 |
+|------|------|
+| `~/.atnode_broker_keys.sqlite` | API key 数据库（manager 维护） |
+| `~/.atnode_broker_logs/` | 访问日志（每 key 一个文件） |
 
 serve 参数：
 
@@ -62,12 +86,11 @@ serve 参数：
 | `--mqtt-port` | 1883 | MQTT 明文端口（LAN/localhost） |
 | `--mqtt-tls-port` | 8883 | MQTT TLS 端口（远程，需证书） |
 | `--certs` | `tools/broker/certs` | 含 `server.crt`/`server.key` 的目录；无证书则只开明文 |
-| `--token` | 配置文件值 | 覆盖 HTTP bearer token |
 
 ## 4. HTTP API 参考
 
 Base: `http://<server>:8080`。除 `/api/help` 外全部需要
-header `Authorization: Bearer <token>`。全部返回 JSON。
+header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON。
 
 | Method | Path | 说明 | 响应 |
 |--------|------|------|------|
@@ -121,8 +144,8 @@ modifiers 位掩码：bit0 LCtrl, bit1 LShift, bit2 LAlt, bit3 LGui, bit4-7 右�
 ## 6. Agent 常用食谱
 
 ```bash
-TOKEN=...; S=http://server:8080; D=atnodeesp-5688
-AUTH="Authorization: Bearer $TOKEN"
+KEY=...; S=http://server:8080; D=atnodeesp-5688
+AUTH="Authorization: Bearer $KEY"
 
 # 设备在线？BLE 键盘连着吗？
 curl -s -H "$AUTH" $S/api/devices/$D | jq '{online, ble:.info.ble_connected}'
@@ -149,16 +172,16 @@ client 与设备是**同一协议的不同角色**：都是 broker 的 MQTT 客�
 因此 client 不依赖 HTTP 代理，可指向**任意可达 broker**（本地/远程/TLS)。
 
 ```bash
-# 本地（凭据自动读 ~/.atnode_broker.json）
+# 本地（localhost 免 key，开箱即用）
 uv run python tools/broker/atnode_broker.py client list
 uv run python tools/broker/atnode_broker.py client info atnodeesp-5688
 uv run python tools/broker/atnode_broker.py client call atnodeesp-5688 keyboard/text s=Hello ms=60
 uv run python tools/broker/atnode_broker.py client wol  atnodeesp-5688 AA:BB:CC:DD:EE:FF
 uv run python tools/broker/atnode_broker.py client ping atnodeesp-5688 192.168.1.1 4
 
-# 远程 / TLS
+# 远程 / TLS（需要 API key）
 uv run python tools/broker/atnode_broker.py client list \
-  --server broker.example.com --port 8883 --ca ca.crt --user atnode --pass xxx
+  --server broker.example.com --port 8883 --ca ca.crt --key <API_KEY>
 ```
 
 | 参数 | 默认 | 说明 |
@@ -166,7 +189,7 @@ uv run python tools/broker/atnode_broker.py client list \
 | `--server` | 127.0.0.1 | broker 地址 |
 | `--port` | 1883 | broker 端口（8883 自动启用 TLS） |
 | `--ca` | — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
-| `--user/--pass` | 配置文件 | MQTT 凭据 |
+| `--key` | `$ATNODE_KEY` | API key（manager 发放） |
 
 ## 7b. 任何 MQTT 客户端都能直接操作设备
 
@@ -174,13 +197,13 @@ uv run python tools/broker/atnode_broker.py client list \
 
 ```bash
 # 发命令（格式：<reqid> <method> <query>）
-mosquitto_pub -h server -u atnode -P xxx \
+mosquitto_pub -h server -u <API_KEY> \
   -t atnode/atnodeesp-5688/cmd -m "r1 net/ping host=192.168.1.1 count=4"
 # 收响应（按 reqid 关联）
-mosquitto_sub -h server -u atnode -P xxx -t atnode/atnodeesp-5688/resp
+mosquitto_sub -h server -u <API_KEY> -t atnode/atnodeesp-5688/resp
 # 设备发现（retained）
-mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/state'
-mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/info'
+mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/state'
+mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 ```
 
 ## 8. ESP32 侧配置
@@ -188,7 +211,7 @@ mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/info'
 | 方式 | 命令 |
 |------|------|
 | HTTP | `POST /at-node/cmd/mqtt/config?broker=<ip>&port=<p>&user=<u>&pass=<pw>` 然后 `POST /at-node/cmd/mqtt/connect` |
-| 串口 AT | `AT+MQTT=broker,<ip>` / `AT+CONF=mqtt_user=<u>` / `AT+CONF=mqtt_pass=<pw>` / `AT+MQTT=port,<p>` / `AT+MQTT=connect,x` |
+| 串口 AT | `AT+MQTT=broker,<ip>` / `AT+CONF=mqtt_user=<api-key>` / `AT+MQTT=port,<p>` / `AT+MQTT=connect,x` |
 
 - 参数持久化在 NVS，重启后 `AT+MQTT=connect` 重连即可。
 - **TLS(8883)**：设备验证方式二选一——CA 证书或服务器证书 SHA256 指纹
@@ -203,7 +226,7 @@ mosquitto_sub -h server -u atnode -P xxx -t 'atnode/+/info'
 1. `scp tools/broker/atnode_broker.py tools/broker/certs user@server:`（或 git clone)。
 2. 服务器：`pip install amqtt paho-mqtt`（或 uv 环境）。
 3. **只暴露 8883(MQTT-TLS)**；1883 绑 LAN/localhost 即可。
-4. 需要 HTTP 代理时：`serve --http`，8080 建议套 nginx/Caddy 上 HTTPS；bearer token 即认证。
+4. 需要 HTTP 代理时：`serve --http`，8080 建议套 nginx/Caddy 上 HTTPS；API key 即认证。
    纯转发场景也可以只跑 MQTT broker（不带 `--http`），由你自己的服务直连 MQTT。
 5. ESP32 改指 `broker=<server-ip>` `port=8883` + CA 指纹（见 §8)。
 6. 防火墙：服务器放行 8883/443；**本机测试遇过 Windows 防火墙拦 LAN 入站**。

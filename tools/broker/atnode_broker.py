@@ -1,185 +1,317 @@
 #!/usr/bin/env python3
 """atnode_broker.py — single-file remote broker for ESP32 AT-Node devices.
 
-Runs on a remote server and provides:
+Architecture (one file, layered sections, ~900 lines):
 
-  1. An embedded MQTT broker (amqtt) with TLS + password auth.
-     ESP32 devices connect out to it (works through NAT).
-  2. An HTTP proxy API (Bearer token). Users/agents curl the HTTP API
-     to securely reach any connected device:
-       GET  /api/help
-       GET  /api/devices
-       GET  /api/devices/<id>
-       POST /api/devices/<id>/cmd/<method>?k=v&...
-  3. A client CLI (list devices / show services / call methods).
+  ┌─ serve ────────────────────────────────────────────────────────┐
+  │  BrokerService   amqtt broker :1883/:8883(TLS)                 │
+  │    ├ ApiKeyAuthPlugin   SQLite key auth; localhost bypass      │
+  │    ├ ManageAclPlugin    $manage/# topics restricted to local   │
+  │    └ AccessLog          per-key files (~/.atnode_broker_logs/) │
+  │  ManageService   $manage/cmd endpoint (key CRUD over MQTT)     │
+  │  Bridge+HttpProxy (OPT-IN --http)  curl facade                 │
+  ├─ client  ── pure MQTT client role (device control, any broker) │
+  └─ manager ─ pure MQTT client role (key admin, localhost/SSH) ───┘
 
-MQTT wire protocol (device side is esp32_at_node firmware):
+MQTT wire protocol:
   atnode/<id>/state   retained "online"/"offline" (LWT)
   atnode/<id>/info    retained JSON manifest (services catalog)
   atnode/<id>/cmd     "<reqid> <method> <urlencoded query>"
   atnode/<id>/resp    {"id":..,"ok":.., ...}
+  $manage/cmd|resp    key management (localhost only)
+
+Auth model:
+  - Remote MQTT clients: username = API key (must exist and be 'active'
+    in the SQLite key DB). Localhost clients: no key required.
+  - HTTP proxy: Bearer <api-key>; localhost requests bypass.
+  - manager talks MQTT to localhost (use SSH port-forward from outside).
 
 Usage:
   atnode_broker.py serve [--mqtt-port 1883] [--mqtt-tls-port 8883]
                          [--certs DIR] [--http [PORT]]
-                         (HTTP proxy is OPT-IN: only started with --http)
-  atnode_broker.py client list [--server HOST] [--port N] [--ca FILE]
-  atnode_broker.py client info <device>
-  atnode_broker.py client call <device> <method> [k=v ...]
-  atnode_broker.py client wol  <device> <mac>
-  atnode_broker.py client ping <device> <host> [count]
-
-Roles: 'serve' runs the broker (server role); 'client' is a plain MQTT
-client (client role) that can reach ANY broker - local or remote, TLS
-or plain. Both use the same wire protocol as the devices.
-
-Config (auto-created on first serve): ~/.atnode_broker.json
-  {"token": ..., "mqtt_user": ..., "mqtt_password": ...}
-Point the ESP32 at this broker:
-  AT+MQTT=broker,<server-ip>  AT+MQTT=port,8883  AT+MQTT=ca,<fingerprint>
-  (username/password via AT+CONF=mqtt_user=..., AT+CONF=mqtt_pass=...)
+  atnode_broker.py client list|info|call|wol|ping ... [--server H] [--key K]
+  atnode_broker.py manager add --name alice
+  atnode_broker.py manager list|revoke|enable|remove ...
 """
 
 import argparse
 import asyncio
+import datetime
 import json
 import os
+import re
 import secrets
+import sqlite3
 import ssl
 import sys
 import threading
 import time
 import urllib.parse
 import uuid
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+# ------------------------------------------------------------------
+# Section 0: paths & constants
+# ------------------------------------------------------------------
 
 CONFIG_PATH = os.environ.get("ATNODE_BROKER_CONFIG",
                              os.path.expanduser("~/.atnode_broker.json"))
+KEYS_DB = os.environ.get("ATNODE_KEYS_DB",
+                         os.path.expanduser("~/.atnode_broker_keys.sqlite"))
+LOG_DIR = os.environ.get("ATNODE_LOG_DIR",
+                         os.path.expanduser("~/.atnode_broker_logs"))
 
-HELP_TEXT = """AT-Node remote broker API
+LOCAL_HOSTS = ("127.0.0.1", "::1", "localhost")
+MANAGE_CMD_TOPIC = "_manage/cmd"
+MANAGE_RESP_TOPIC = "_manage/resp"
 
-Auth: header  Authorization: Bearer <token>
+# ==================================================================
+# Section 1: KeyStore — SQLite API key database
+# ==================================================================
 
-  GET  /api/help                          this text (no auth)
-  GET  /api/devices                       list devices + online state
-  GET  /api/devices/<id>                  device detail + services + usage
-  POST /api/devices/<id>/cmd/<method>     run a device method
-       params via query string, form body, or JSON body
+class KeyStore:
+    """API key database. Each key has a name and a status
+    (active / revoked). Safe to open per-operation (SQLite)."""
 
-Common methods (see /api/devices/<id> for the live catalog):
-  keyboard/tap    mods,k,ms        single key press+release
-  keyboard/text   s,ms,gap         type ASCII text
-  keyboard/key    mods,k0..k5      raw HID report state
-  gpio/write      pin,level
-  gpio/read       pin
-  adc/read        ch
-  ble/status                       BLE name/addr/peers/bonds
-  net/wol         mac              Wake-on-LAN magic packet (device LAN)
-  net/ping        host,count       ICMP ping from device LAN
-  sys/info                         device manifest
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS api_keys (
+        key        TEXT PRIMARY KEY,
+        name       TEXT NOT NULL DEFAULT '',
+        status     TEXT NOT NULL DEFAULT 'active',   -- active | revoked
+        created_at TEXT NOT NULL,
+        revoked_at TEXT
+    );
+    """
 
-Examples:
-  curl -H "Authorization: Bearer $TOK" http://server:8080/api/devices
-  curl -X POST -H "Authorization: Bearer $TOK" \\
-       "http://server:8080/api/devices/atnodeesp-5688/cmd/keyboard/text?s=Hello"
-  curl -X POST -H "Authorization: Bearer $TOK" \\
-       "http://server:8080/api/devices/atnodeesp-5688/cmd/net/wol?mac=AA:BB:CC:DD:EE:FF"
-"""
+    def __init__(self, path=KEYS_DB):
+        self.path = path
+        with self._conn() as c:
+            c.execute(self.SCHEMA)
+
+    def _conn(self):
+        return sqlite3.connect(self.path)
+
+    @staticmethod
+    def _row(r):
+        return {"key": r[0], "name": r[1], "status": r[2],
+                "created_at": r[3], "revoked_at": r[4]}
+
+    def add(self, name, key=None):
+        key = key or secrets.token_hex(16)
+        with self._conn() as c:
+            c.execute(
+                "INSERT INTO api_keys(key,name,status,created_at) "
+                "VALUES(?,?, 'active', ?)",
+                (key, name, datetime.datetime.now().isoformat(timespec="seconds")))
+        return key
+
+    def get(self, key):
+        with self._conn() as c:
+            r = c.execute("SELECT * FROM api_keys WHERE key=?", (key,)).fetchone()
+        return self._row(r) if r else None
+
+    def find(self, key_or_name):
+        """Resolve by exact key, or by unique name."""
+        rec = self.get(key_or_name)
+        if rec:
+            return rec
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM api_keys WHERE name=?",
+                             (key_or_name,)).fetchall()
+        return self._row(rows[0]) if len(rows) == 1 else None
+
+    def set_status(self, key_or_name, status):
+        rec = self.find(key_or_name)
+        if not rec:
+            return None
+        revoked_at = (datetime.datetime.now().isoformat(timespec="seconds")
+                      if status == "revoked" else None)
+        with self._conn() as c:
+            c.execute("UPDATE api_keys SET status=?, revoked_at=? WHERE key=?",
+                      (status, revoked_at, rec["key"]))
+        rec["status"] = status
+        rec["revoked_at"] = revoked_at
+        return rec
+
+    def remove(self, key_or_name):
+        rec = self.find(key_or_name)
+        if not rec:
+            return None
+        with self._conn() as c:
+            c.execute("DELETE FROM api_keys WHERE key=?", (rec["key"],))
+        return rec
+
+    def list(self):
+        with self._conn() as c:
+            rows = c.execute("SELECT * FROM api_keys ORDER BY created_at").fetchall()
+        return [self._row(r) for r in rows]
+
+    def valid(self, key):
+        """Key exists AND is active."""
+        rec = self.get(key) if key else None
+        return rec if (rec and rec["status"] == "active") else None
 
 
-# ---------------------------------------------------------------- config
+# ==================================================================
+# Section 2: AccessLog — per-key local log files (no DB)
+# ==================================================================
 
-def load_or_create_config(args):
-    cfg = {}
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, encoding="utf-8") as f:
-            cfg = json.load(f)
-    changed = False
-    for key, gen in (("token", lambda: secrets.token_hex(16)),
-                     ("mqtt_user", lambda: "atnode"),
-                     ("mqtt_password", lambda: secrets.token_hex(12))):
-        if not cfg.get(key):
-            cfg[key] = gen()
-            changed = True
-    if args.token:
-        cfg["token"] = args.token
-    if changed or args.token:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, indent=2)
-        try:
-            os.chmod(CONFIG_PATH, 0o600)
-        except OSError:
-            pass
-    return cfg
+class AccessLog:
+    """Append-only access logs, one file per key name:
+      ~/.atnode_broker_logs/<name>.log      successful access per key
+      ~/.atnode_broker_logs/auth_fail.log   rejected attempts
+      ~/.atnode_broker_logs/local.log       localhost (unauthenticated) access
+    Line format: <iso-time> event=<e> key=<name> <k=v ...>
+    """
+
+    def __init__(self, log_dir=LOG_DIR):
+        self.dir = log_dir
+        os.makedirs(self.dir, exist_ok=True)
+        self._lock = threading.Lock()
+
+    def write(self, key_name, event, **fields):
+        ts = datetime.datetime.now().isoformat(timespec="seconds")
+        parts = " ".join(f"{k}={v}" for k, v in fields.items())
+        line = f"{ts} event={event} key={key_name or '-'} {parts}\n"
+        safe = re.sub(r"[^A-Za-z0-9_.-]", "_", key_name or "")
+        fname = {"": "auth_fail"}.get(safe, safe)
+        with self._lock:
+            with open(os.path.join(self.dir, fname + ".log"), "a",
+                      encoding="utf-8") as f:
+                f.write(line)
 
 
-# ---------------------------------------------------------------- mqtt broker (amqtt, asyncio thread)
+# ==================================================================
+# Section 3: amqtt plugins — key auth + manage-topic ACL
+# ==================================================================
 
-def start_amqtt(cfg, mqtt_port, mqtt_tls_port, certs_dir, loop):
-    from amqtt.broker import Broker
-    from passlib.apps import custom_app_context as pwd_context
+from amqtt.plugins.base import BaseAuthPlugin, BaseTopicPlugin  # noqa: E402
 
-    pw_file = os.path.join(os.path.dirname(CONFIG_PATH) or ".",
-                           ".atnode_broker_passwd")
-    with open(pw_file, "w", encoding="utf-8") as f:
-        f.write("%s:%s\n" % (cfg["mqtt_user"],
-                             pwd_context.hash(cfg["mqtt_password"])))
 
-    listeners = {
-        "default": {"type": "tcp", "bind": f"0.0.0.0:{mqtt_port}"},
-    }
-    cert = os.path.join(certs_dir, "server.crt") if certs_dir else None
-    key = os.path.join(certs_dir, "server.key") if certs_dir else None
-    if cert and key and os.path.exists(cert) and os.path.exists(key):
-        listeners["tls"] = {
-            "type": "tcp", "bind": f"0.0.0.0:{mqtt_tls_port}",
-            "ssl": True, "certfile": cert, "keyfile": key,
+class ApiKeyAuthPlugin(BaseAuthPlugin):
+    """MQTT CONNECT authentication:
+      - localhost sessions: allowed (no key), logged as 'local'
+      - remote sessions: username must be an ACTIVE api key
+    Every decision is written to the access log."""
+
+    @dataclass
+    class Config:
+        db_path: str = KEYS_DB
+        log_dir: str = LOG_DIR
+
+    def __init__(self, context):
+        super().__init__(context)
+        self._db = self._get_config_option("db_path", KEYS_DB)
+        self._log_dir = self._get_config_option("log_dir", LOG_DIR)
+
+    async def authenticate(self, *, session):
+        base = await super().authenticate(session=session)
+        if base is False:
+            return False
+        host = session.remote_address or ""
+        cid = session.client_id or ""
+        log = AccessLog(self._log_dir)
+        if host in LOCAL_HOSTS:
+            log.write("local", "mqtt_connect", client_id=cid, ip=host)
+            return True
+        rec = KeyStore(self._db).valid(session.username or "")
+        if rec:
+            log.write(rec["name"], "mqtt_connect", client_id=cid, ip=host)
+            return True
+        log.write("", "mqtt_connect_deny", client_id=cid, ip=host,
+                  tried_key=(session.username or "")[:8])
+        return False
+
+
+class ManageAclPlugin(BaseTopicPlugin):
+    """$manage/# topics (key administration) are localhost-only."""
+
+    async def topic_filtering(self, *, session=None, topic=None, action=None):
+        if topic and topic.startswith("_manage/"):
+            host = (session.remote_address if session else "") or ""
+            return host in LOCAL_HOSTS
+        return True
+
+
+# ==================================================================
+# Section 4: BrokerService — embedded amqtt broker (thread)
+# ==================================================================
+
+class BrokerService:
+    def __init__(self, mqtt_port, mqtt_tls_port, certs_dir):
+        self.mqtt_port = mqtt_port
+        self.mqtt_tls_port = mqtt_tls_port
+        self.certs_dir = certs_dir
+        self.loop = asyncio.new_event_loop()
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def _config(self):
+        listeners = {"default": {"type": "tcp", "bind": f"0.0.0.0:{self.mqtt_port}"}}
+        cert = key = None
+        if self.certs_dir:
+            cert = os.path.join(self.certs_dir, "server.crt")
+            key = os.path.join(self.certs_dir, "server.key")
+        if cert and key and os.path.exists(cert) and os.path.exists(key):
+            listeners["tls"] = {
+                "type": "tcp", "bind": f"0.0.0.0:{self.mqtt_tls_port}",
+                "ssl": True, "certfile": cert, "keyfile": key,
+            }
+        return {
+            "listeners": listeners,
+            "plugins": {
+                "amqtt.plugins.authentication.AnonymousAuthPlugin": {
+                    "allow_anonymous": True,     # real gating in ApiKeyAuthPlugin
+                },
+                "__main__.ApiKeyAuthPlugin": {
+                    "db_path": KEYS_DB, "log_dir": LOG_DIR,
+                },
+                "__main__.ManageAclPlugin": {},
+                "amqtt.plugins.sys.broker.BrokerSysPlugin": {"sys_interval": 20},
+            },
         }
 
-    config = {
-        "listeners": listeners,
-        "plugins": {
-            "amqtt.plugins.authentication.AnonymousAuthPlugin": {
-                "allow_anonymous": False,
-            },
-            "amqtt.plugins.authentication.FileAuthPlugin": {
-                "password_file": pw_file,
-            },
-            "amqtt.plugins.sys.broker.BrokerSysPlugin": {
-                "sys_interval": 20,
-            },
-        },
-    }
+    def _run(self):
+        from amqtt.broker import Broker
 
-    async def run():
-        broker = Broker(config)
-        await broker.start()
-        binds = [l["bind"] for l in config["listeners"].values()]
-        print(f"[mqtt] broker listening: {', '.join(binds)}")
-        await asyncio.Event().wait()
+        config = self._config()
 
-    loop.run_until_complete(run())
+        async def run():
+            broker = Broker(config)
+            await broker.start()
+            binds = [l["bind"] for l in config["listeners"].values()]
+            print(f"[mqtt] broker listening: {', '.join(binds)} "
+                  f"(key auth: {KEYS_DB})", flush=True)
+            await asyncio.Event().wait()
+
+        self.loop.run_until_complete(run())
 
 
-# ---------------------------------------------------------------- bridge (paho, thread)
+# ==================================================================
+# Section 5: Bridge — MQTT client: device registry + RPC correlation
+# ==================================================================
 
 class Bridge:
-    """MQTT client: device registry + RPC correlation.
+    """Used by the HTTP proxy (localhost) and the client role (any broker)."""
 
-    Used by the HTTP proxy (embedded, localhost) and by client --via mqtt
-    (direct to any reachable broker)."""
-
-    def __init__(self, cfg, host="127.0.0.1", port=1883, ca=None):
+    def __init__(self, host="127.0.0.1", port=1883, ca=None, key=None,
+                 client_id="atnode-broker-bridge"):
         import paho.mqtt.client as mqtt
 
-        self.devices = {}            # id -> {"online": bool, "info": dict, "last_seen": ts}
-        self.pending = {}            # reqid -> {"event": Event, "resp": dict}
+        self.devices = {}            # id -> {"online","info","last_seen"}
+        self.pending = {}            # reqid -> {"event","resp"}
         self.lock = threading.Lock()
         self.connected = threading.Event()
 
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
-                                client_id="atnode-broker-bridge")
-        self.mqtt.username_pw_set(cfg["mqtt_user"], cfg["mqtt_password"])
+                                client_id=client_id)
+        if key:
+            self.mqtt.username_pw_set(key, key)
+        else:   # username only so anonymous-plugin passes; auth bypass is by IP
+            self.mqtt.username_pw_set("local", None)
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_message = self._on_message
         if ca or port == 8883:
@@ -197,7 +329,7 @@ class Bridge:
         client.subscribe("atnode/+/info")
         client.subscribe("atnode/+/resp")
         self.connected.set()
-        print("[bridge] connected to broker")
+        print("[bridge] connected to broker", flush=True)
 
     def _on_message(self, client, userdata, msg):
         parts = msg.topic.split("/")
@@ -222,8 +354,7 @@ class Bridge:
                     data = json.loads(payload)
                 except json.JSONDecodeError:
                     return
-                reqid = data.get("id")
-                p = self.pending.get(reqid)
+                p = self.pending.get(data.get("id"))
                 if p:
                     p["resp"] = data
                     p["event"].set()
@@ -243,10 +374,138 @@ class Bridge:
         return p["resp"]
 
 
-# ---------------------------------------------------------------- HTTP proxy
+# ==================================================================
+# Section 6: ManageService — $manage endpoint (key CRUD over MQTT)
+# ==================================================================
 
-class Handler(BaseHTTPRequestHandler):
-    server_version = "ATNodeBroker/1.0"
+class ManageService:
+    """Always-on localhost MQTT endpoint inside serve:
+    receives "$manage/cmd" -> KeyStore op -> "$manage/resp".
+    Reachable only from localhost (ManageAclPlugin)."""
+
+    OPS = ("add", "revoke", "enable", "remove", "list")
+
+    def __init__(self, port=1883):
+        import paho.mqtt.client as mqtt
+
+        self.ks = KeyStore()
+        self.log = AccessLog()
+        self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                client_id="atnode-manage-service")
+        self.mqtt.username_pw_set("local", None)
+        self.mqtt.on_connect = lambda c, u, f, rc, p: c.subscribe(MANAGE_CMD_TOPIC)
+        self.mqtt.on_message = self._on_message
+        self.mqtt.connect("127.0.0.1", port, keepalive=30)
+        self.mqtt.loop_start()
+
+    def _exec(self, op, arg):
+        if op == "add":
+            if not arg:
+                return {"ok": False, "error": "usage: add <name>"}
+            key = self.ks.add(arg)
+            self.log.write(arg, "key_add")
+            return {"ok": True, "key": key, "name": arg}
+        if op == "list":
+            return {"ok": True, "keys": self.ks.list()}
+        if op in ("revoke", "enable"):
+            if not arg:
+                return {"ok": False, "error": f"usage: {op} <key|name>"}
+            rec = self.ks.set_status(arg, "revoked" if op == "revoke" else "active")
+            if not rec:
+                return {"ok": False, "error": "key not found (or ambiguous name)"}
+            self.log.write(rec["name"], f"key_{op}")
+            return {"ok": True, "key": rec["key"], "name": rec["name"],
+                    "status": rec["status"]}
+        if op == "remove":
+            if not arg:
+                return {"ok": False, "error": "usage: remove <key|name>"}
+            rec = self.ks.remove(arg)
+            if not rec:
+                return {"ok": False, "error": "key not found (or ambiguous name)"}
+            self.log.write(rec["name"], "key_remove")
+            return {"ok": True, "removed": rec}
+        return {"ok": False, "error": f"unknown op {op!r}"}
+
+    def _on_message(self, client, userdata, msg):
+        body = msg.payload.decode("utf-8", "replace")
+        parts = body.split(" ", 2)
+        if len(parts) < 2:
+            return
+        reqid, op = parts[0], parts[1]
+        arg = parts[2].strip() if len(parts) > 2 else ""
+        resp = self._exec(op, arg)
+        resp["id"] = reqid
+        client.publish(MANAGE_RESP_TOPIC, json.dumps(resp))
+
+
+class ManageClient:
+    """manager-role MQTT client (localhost or SSH-forwarded)."""
+
+    def __init__(self, host="127.0.0.1", port=1883):
+        import paho.mqtt.client as mqtt
+
+        self._resp = None
+        self._event = threading.Event()
+        self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
+                                client_id=f"atnode-manager-{uuid.uuid4().hex[:6]}")
+        self.mqtt.username_pw_set("local", None)
+        self.mqtt.on_connect = lambda c, u, f, rc, p: (
+            c.subscribe(MANAGE_RESP_TOPIC), self._event.set())
+        self.mqtt.on_message = self._on_message
+        self.mqtt.connect(host, port, keepalive=15)
+        self.mqtt.loop_start()
+        self._event.wait(5)
+        self._event.clear()
+
+    def _on_message(self, client, userdata, msg):
+        try:
+            self._resp = json.loads(msg.payload.decode())
+        except json.JSONDecodeError:
+            self._resp = {"ok": False, "error": "bad response"}
+        self._event.set()
+
+    def exec(self, op, arg="", timeout=5):
+        reqid = uuid.uuid4().hex[:8]
+        self.mqtt.publish(MANAGE_CMD_TOPIC, f"{reqid} {op} {arg}".strip())
+        if self._event.wait(timeout):
+            self._event.clear()
+            return self._resp
+        return {"ok": False, "error": "manage endpoint timeout "
+                "(is 'serve' running on this host?)"}
+
+    def close(self):
+        self.mqtt.loop_stop()
+        self.mqtt.disconnect()
+
+
+# ==================================================================
+# Section 7: HttpProxy — curl facade (OPT-IN, Bearer = api key)
+# ==================================================================
+
+HELP_TEXT = """AT-Node remote broker API
+
+Auth: header  Authorization: Bearer <api-key>   (localhost bypasses)
+
+  GET  /api/help                          this text (no auth)
+  GET  /api/devices                       list devices + online state
+  GET  /api/devices/<id>                  device detail + services + usage
+  POST /api/devices/<id>/cmd/<method>     run a device method
+       params via query string, form body, or JSON body
+
+Common methods (see /api/devices/<id> for the live catalog):
+  keyboard/tap mods,k,ms | keyboard/text s,ms,gap | keyboard/key mods,k0..k5
+  gpio/write pin,level   | gpio/read pin          | adc/read ch
+  ble/status             | net/wol mac            | net/ping host,count
+  sys/info
+
+Example:
+  curl -H "Authorization: Bearer $KEY" \\
+    -X POST "http://server:8080/api/devices/<id>/cmd/keyboard/text?s=Hello"
+"""
+
+
+class HttpHandler(BaseHTTPRequestHandler):
+    server_version = "ATNodeBroker/2.0"
 
     def log_message(self, fmt, *a):
         print("[http]", fmt % a, flush=True)
@@ -260,9 +519,19 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authed(self):
+    def _client_ip(self):
+        return self.client_address[0]
+
+    def _auth_name(self):
+        """Returns key name if authorized, else None. Localhost bypasses."""
+        if self._client_ip() in LOCAL_HOSTS:
+            return "local"
         h = self.headers.get("Authorization", "")
-        return h == f"Bearer {self.server.cfg['token']}"
+        if h.startswith("Bearer "):
+            rec = KeyStore().valid(h[7:].strip())
+            if rec:
+                return rec["name"]
+        return None
 
     def _params(self, url):
         params = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
@@ -285,7 +554,9 @@ class Handler(BaseHTTPRequestHandler):
         url = urllib.parse.urlparse(self.path)
         if url.path == "/api/help":
             return self._send(200, HELP_TEXT, "text/plain; charset=utf-8")
-        if not self._authed():
+        name = self._auth_name()
+        if not name:
+            AccessLog().write("", "http_deny", path=url.path, ip=self._client_ip())
             return self._send(401, {"ok": False, "error": "unauthorized"})
         if url.path == "/api/devices":
             with self.server.bridge.lock:
@@ -294,6 +565,7 @@ class Handler(BaseHTTPRequestHandler):
                          "info": v.get("info"),
                          "last_seen": v.get("last_seen")}
                         for k, v in sorted(self.server.bridge.devices.items())]
+            AccessLog().write(name, "http", path=url.path, ip=self._client_ip())
             return self._send(200, {"devices": devs})
         if url.path.startswith("/api/devices/"):
             dev = url.path.split("/")[3]
@@ -302,6 +574,7 @@ class Handler(BaseHTTPRequestHandler):
             if not d:
                 return self._send(404, {"ok": False, "error": "unknown device"})
             info = d.get("info") or {}
+            AccessLog().write(name, "http", path=url.path, ip=self._client_ip())
             return self._send(200, {
                 "id": dev,
                 "online": d.get("online", False),
@@ -320,42 +593,61 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlparse(self.path)
-        if not self._authed():
+        name = self._auth_name()
+        if not name:
+            AccessLog().write("", "http_deny", path=url.path, ip=self._client_ip())
             return self._send(401, {"ok": False, "error": "unauthorized"})
         parts = url.path.strip("/").split("/")
-        # /api/devices/<id>/cmd/<method...>
         if len(parts) >= 5 and parts[0] == "api" and parts[1] == "devices" \
                 and parts[3] == "cmd":
-            dev = parts[2]
-            method = "/".join(parts[4:])
+            dev, method = parts[2], "/".join(parts[4:])
             params = self._params(url)
+            AccessLog().write(name, "http_cmd", device=dev, method=method,
+                              ip=self._client_ip())
             return self._send(200, self.server.bridge.rpc(dev, method, params))
         return self._send(404, {"ok": False, "error": "not found"})
 
 
-# ---------------------------------------------------------------- client CLI
+# ==================================================================
+# Section 8: roles — serve / client / manager
+# ==================================================================
 
-def run_client(args):
-    """Client role: talks MQTT directly to any reachable broker.
-
-    Same wire protocol the devices use - no HTTP involved:
-      discovery: retained atnode/+/state + atnode/+/info
-      rpc:       publish atnode/<id>/cmd, wait atnode/<id>/resp
-    """
+def role_serve(args):
     cfg = {}
     if os.path.exists(CONFIG_PATH):
         with open(CONFIG_PATH, encoding="utf-8") as f:
             cfg = json.load(f)
-    creds = {
-        "mqtt_user": args.user or cfg.get("mqtt_user", "atnode"),
-        "mqtt_password": getattr(args, "pass") or cfg.get("mqtt_password", ""),
-    }
-    if not creds["mqtt_password"]:
-        print("error: no MQTT credentials (run 'serve' once to generate, "
-              "or pass --user/--pass)", file=sys.stderr)
-        sys.exit(2)
 
-    bridge = Bridge(creds, host=args.server, port=args.port, ca=args.ca)
+    KeyStore()    # ensure DB exists
+    BrokerService(args.mqtt_port, args.mqtt_tls_port, args.certs).start()
+    time.sleep(1.5)
+
+    manage = ManageService(port=args.mqtt_port)
+    print("[manage] $manage endpoint ready (localhost only)", flush=True)
+
+    if args.http is None:
+        print("[http] proxy disabled (start it with --http [PORT])", flush=True)
+        try:
+            threading.Event().wait()
+        except KeyboardInterrupt:
+            pass
+        return
+
+    bridge = Bridge(port=args.mqtt_port)
+    httpd = ThreadingHTTPServer(("0.0.0.0", args.http), HttpHandler)
+    httpd.bridge = bridge
+    print(f"[http] proxy listening: 0.0.0.0:{args.http} "
+          f"(GET /api/help for docs)", flush=True)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+
+
+def role_client(args):
+    cred_key = args.key or os.environ.get("ATNODE_KEY", "")
+    bridge = Bridge(host=args.server, port=args.port, ca=args.ca,
+                    key=cred_key or None, client_id="atnode-client")
     if not bridge.connected.is_set():
         print(f"error: cannot connect to {args.server}:{args.port}",
               file=sys.stderr)
@@ -363,7 +655,7 @@ def run_client(args):
 
     try:
         if args.what == "list":
-            time.sleep(1.5)   # collect retained state/info
+            time.sleep(1.5)
             with bridge.lock:
                 devs = sorted(bridge.devices.items())
             if not devs:
@@ -406,11 +698,46 @@ def run_client(args):
         bridge.mqtt.disconnect()
 
 
-# ---------------------------------------------------------------- main
+def role_manager(args):
+    mc = ManageClient(host=args.server, port=args.port)
+    try:
+        if args.op == "add":
+            if not args.name:
+                print("error: manager add requires --name", file=sys.stderr)
+                sys.exit(2)
+            resp = mc.exec("add", args.name)
+            if resp.get("ok"):
+                print(f"key created for {resp['name']!r}:\n  {resp['key']}")
+                print("store it now - pass it to clients via --key / $ATNODE_KEY")
+            else:
+                print(json.dumps(resp))
+        elif args.op == "list":
+            resp = mc.exec("list")
+            keys = resp.get("keys", [])
+            if not keys:
+                print("no keys (add one: manager add --name <n>)")
+                return
+            print(f"{'KEY':34} {'NAME':16} {'STATUS':8} CREATED")
+            for k in keys:
+                print(f"{k['key']:34} {k['name']:16} {k['status']:8} {k['created_at']}")
+        else:
+            target = args.target
+            if not target:
+                print(f"error: manager {args.op} requires <key|name>",
+                      file=sys.stderr)
+                sys.exit(2)
+            print(json.dumps(mc.exec(args.op, target), ensure_ascii=False))
+    finally:
+        mc.close()
+
+
+# ==================================================================
+# main
+# ==================================================================
 
 def main():
     try:
-        sys.stdout.reconfigure(line_buffering=True)   # unbuffered service logs
+        sys.stdout.reconfigure(line_buffering=True)
     except Exception:
         pass
     ap = argparse.ArgumentParser(description="AT-Node remote broker")
@@ -419,31 +746,33 @@ def main():
     sp = sub.add_parser("serve", help="run MQTT broker (+ optional HTTP proxy)")
     sp.add_argument("--http", nargs="?", const=8080, default=None, type=int,
                     metavar="PORT",
-                    help="also start the HTTP proxy (default port 8080); "
-                         "omit to run MQTT broker only")
+                    help="also start the HTTP proxy (default port 8080)")
     sp.add_argument("--mqtt-port", type=int, default=1883)
     sp.add_argument("--mqtt-tls-port", type=int, default=8883)
-    sp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"),
-                    help="dir with server.crt/server.key for MQTT TLS")
-    sp.add_argument("--token", default=None, help="override HTTP bearer token")
+    sp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"))
 
-    cp = sub.add_parser("client", help="talk MQTT directly to any broker")
+    cp = sub.add_parser("client", help="device control (MQTT client role)")
     cp.add_argument("what", choices=["list", "info", "call", "wol", "ping"])
     cp.add_argument("device", nargs="?")
     cp.add_argument("method", nargs="?")
     cp.add_argument("params", nargs="*")
     cp.add_argument("--server", default="127.0.0.1", help="broker host")
-    cp.add_argument("--port", type=int, default=1883, help="broker port")
+    cp.add_argument("--port", type=int, default=1883)
     cp.add_argument("--ca", default=None, help="CA cert for TLS (port 8883)")
-    cp.add_argument("--user", default=None, help="MQTT username")
-    cp.add_argument("--pass", dest="pass", default=None, help="MQTT password")
+    cp.add_argument("--key", default=None, help="API key (or $ATNODE_KEY)")
     cp.add_argument("--count", default="4")
+
+    mp = sub.add_parser("manager", help="API key admin (MQTT, localhost/SSH)")
+    mp.add_argument("op", choices=["add", "list", "revoke", "enable", "remove"])
+    mp.add_argument("target", nargs="?", help="key or name (revoke/enable/remove)")
+    mp.add_argument("--name", default=None, help="name for 'add'")
+    mp.add_argument("--server", default="127.0.0.1")
+    mp.add_argument("--port", type=int, default=1883)
 
     args = ap.parse_args()
 
     if args.mode == "client":
         # positional mapping: wol <device> <mac> / ping <device> <host> [count]
-        # (second positional lands in 'method', third in params[0])
         if args.what == "wol":
             args.mac = args.method
         if args.what == "ping":
@@ -458,40 +787,12 @@ def main():
             ap.error("client wol requires <device> <mac>")
         if args.what == "ping" and not args.host:
             ap.error("client ping requires <device> <host>")
-        return run_client(args)
+        return role_client(args)
 
-    # serve
-    cfg = load_or_create_config(args)
-    print(f"[cfg] {CONFIG_PATH}")
-    print(f"[cfg] MQTT credentials  : {cfg['mqtt_user']} / {cfg['mqtt_password']}")
+    if args.mode == "manager":
+        return role_manager(args)
 
-    loop = asyncio.new_event_loop()
-    t = threading.Thread(target=start_amqtt,
-                         args=(cfg, args.mqtt_port, args.mqtt_tls_port,
-                               args.certs, loop), daemon=True)
-    t.start()
-    time.sleep(1.5)   # let the broker come up
-
-    if args.http is None:
-        print("[http] proxy disabled (start it with --http [PORT])")
-        try:
-            threading.Event().wait()
-        except KeyboardInterrupt:
-            pass
-        return
-
-    print(f"[cfg] HTTP bearer token : {cfg['token']}")
-    bridge = Bridge(cfg, args.mqtt_port)
-
-    httpd = ThreadingHTTPServer(("0.0.0.0", args.http), Handler)
-    httpd.cfg = cfg
-    httpd.bridge = bridge
-    print(f"[http] proxy listening: 0.0.0.0:{args.http} "
-          f"(GET /api/help for docs)")
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
+    return role_serve(args)
 
 
 if __name__ == "__main__":
