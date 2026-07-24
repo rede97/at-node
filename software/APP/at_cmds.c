@@ -514,8 +514,11 @@ static int keystr_map(char c, uint8_t *mods, uint8_t *key)
         case '.':  *key = 55; return 1;
         case '/':  *key = 56; return 1;
     }
-    {   /* shifted digit row: !@<#>$%^&*() -> Shift+1..0 */
-        static const char sym[] = "!@<#>$%^&*()";
+    {   /* shifted digit row: !@#$%^&*() -> Shift+1..0
+           (2026-07-24 bug: table was "!@<#>$%^&*()" — 12 entries with
+           stray < >, so $( -> 6, ( -> 40 = Enter, ) -> 41 = Esc;
+           typing "echo $(date)" literally newline-executed itself) */
+        static const char sym[] = "!@#$%^&*()";
         for (int i = 0; sym[i]; i++)
             if (c == sym[i]) { *mods = 2; *key = (i == 9) ? 39 : (uint8_t)(30 + i); return 1; }
     }
