@@ -56,10 +56,43 @@ description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoo
 ## Windows 主机侧 BLE（bleak/WinRT 教训）
 
 - Windows 一旦把 BLE 设备认领为 HID（键盘）,**第三方 GATT 全被挡**:
-  设备停止广播，bleak 按地址连接报 "not found"。要 bleak 能连：
+  设备停止广播，bleak 按地址连接报 "not found"。要 bleak 能连:
   先在 Windows 蓝牙设置里**删除该设备**（解除 HID 占用），让它回广播。
 - 换固件新增 GATT 服务后，主机端要"忘记设备"重连刷新服务缓存，
   否则看不到新服务（NUS 事件的教训）。
+
+## Windows 配对 BLE HID 键盘（2026-07-24 实测）
+
+- **Windows HID-over-GATT 驱动只认 Report 特征 (0x2A4D)**:boot-only
+  键盘（仅 0x2A22/0x2A32）能配对但报**驱动程序错误**。必须:
+  Report Map 带 Report ID + `getInputReport(id)/getOutputReport(id)`
+  （自动创建 0x2908 Report Reference 描述符）。
+- **Windows 按 BLE MAC 缓存 GATT 表和绑定**:固件改了 GATT 结构后，
+  不同 MAC 照旧必现驱动错误/无法连接，必须先删设备重配对。
+- **COM3 假死**(PermissionError 13，无进程占用）:C3 原生 USB 在
+  上传中断后常见，拔插 USB 线恢复，Disable-PnpDevice 需管理员。
+- **删除绑定后主机自动重新配对**:Just Works 下主机回连即重绑。
+  对策是主机侧同步删除（Windows 可用 WinRT 脚本解绑，见下）。
+- **勿做"配对窗口"门控（亲测反模式）**:运行时切换
+  `setSecurityAuth(false,...)`(sm_bonding=0）会让 Windows 配对变成
+  "只加密不绑定"(encrypted=1 bonded=0)；主动 disconnect 未绑定主机
+  会把 Windows 配对流程打断成重连风暴，设备被归类"其他设备"。
+  正确做法 = demo 模型：始终 `setSecurityAuth(true,false,false)`。
+- **随机静态地址是坑**:`setOwnAddr` 必须在 `NimBLEDevice::init()` 之后
+  （之前调用会 assert 死机重启）；且改用随机静态地址后 Windows 出现
+  encrypted-but-not-bonded，原因未明，已回退公共地址。
+- **onDisconnect 里直接 startAdvertising 在 unpair 场景会撞 EBUSY**:
+  用标志位延迟到 loop() 里重启广播（500ms)。
+- 判定 Windows HID 驱动初始化成功的设备侧信号：主机写入 LED
+  output report(CapsLock 状态）→ output 特征 onWrite 触发。
+- **Windows 侧清理残留绑定**(bleak 依赖已带 winrt):
+  `BluetoothLEDevice.from_bluetooth_address_async(mac_int)` →
+  `.device_information.pairing.unpair_async()`，按 MAC 解绑无需连接。
+- 排查"设备在广播但看不见":用 bleak 扫空中包区分设备侧/主机侧问题；
+  HCI 断连原因 0x13(NimBLE 打印 0x213)= 对端主动断开（常见于旧绑定
+  密钥不匹配的回连风暴）。
+- 对照 demo:`tools/c3_demo_nimble`(NimBLE 最小键盘，带配对日志）
+  和 `tools/c3_demo_tvk`(Bluedroid T-vK，已打 3.3.10 兼容补丁）。
 
 ## C3 可编程键盘 bench（tools/esp32c3_kbd）
 

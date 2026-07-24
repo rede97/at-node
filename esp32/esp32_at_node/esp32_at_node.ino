@@ -63,9 +63,8 @@ static String get_default_hostname(void)
 /* --- BLE globals ------------------------------------------------------ */
 static NimBLEServer*        g_server        = nullptr;
 static NimBLEHIDDevice*     g_hid           = nullptr;
-static NimBLECharacteristic* g_bootInput   = nullptr;
-static NimBLECharacteristic* g_bootOutput   = nullptr;
-static NimBLECharacteristic* g_protocolMode = nullptr;
+static NimBLECharacteristic* g_inputReport  = nullptr;
+static NimBLECharacteristic* g_outputReport = nullptr;
 
 static struct {
     uint8_t mods;
@@ -102,22 +101,37 @@ static int      g_type_gap  = 30;
 static uint32_t g_type_next = 0;
 static bool     g_type_busy = false;
 
-/* --- standard boot keyboard report map -------------------------------- */
+/* --- keyboard report map (report protocol, Report IDs) ---------------- */
+/* ID 1 = keyboard input (8 bytes: mods, reserved, 6 keys)                 */
+/* ID 2 = LED output (1 byte)                                             */
 static const uint8_t REPORT_MAP[] = {
     0x05, 0x01, 0x09, 0x06, 0xA1, 0x01,
+    0x85, 0x01,                     /* Report ID 1 */
     0x05, 0x07, 0x19, 0xE0, 0x29, 0xE7,
     0x15, 0x00, 0x25, 0x01, 0x75, 0x01, 0x95, 0x08, 0x81, 0x02,
     0x95, 0x01, 0x75, 0x08, 0x81, 0x01,
+    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65,
+    0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00,
+    0x85, 0x02,                     /* Report ID 2 */
     0x95, 0x05, 0x75, 0x01, 0x05, 0x08, 0x19, 0x01, 0x29, 0x05, 0x91, 0x02,
     0x95, 0x01, 0x75, 0x03, 0x91, 0x01,
-    0x95, 0x06, 0x75, 0x08, 0x15, 0x00, 0x25, 0x65,
-    0x05, 0x07, 0x19, 0x00, 0x29, 0x65, 0x81, 0x00, 0xC0
+    0xC0
 };
 
 /* --- modifier table ---------------------------------------------------- */
 static const uint8_t MOD_KEYS[8] = {
     0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7
 };
+
+/* Own BLE address as string (random static, derived from efuse MAC).
+ * Set in ble_init(); used for status display because
+ * NimBLEDevice::getAddress() always reports the public address.       */
+static char g_ble_addr_str[18] = "";
+
+/* Advertising restart is deferred out of the NimBLE host-task context:
+ * calling startAdvertising() directly inside onDisconnect can fail with
+ * BLE_HS_EBUSY when the disconnect was caused by unpair/bond-clear.    */
+static volatile uint32_t g_adv_restart_at = 0;   /* millis() deadline, 0=none */
 
 /* --- BLE callbacks ---------------------------------------------------- */
 class AtNodeServerCallbacks : public NimBLEServerCallbacks {
@@ -127,12 +141,26 @@ public:
     }
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo,
                        int reason) override {
-        Serial.println("BLE disconnected");
-        NimBLEDevice::startAdvertising();
+        Serial.printf("BLE disconnected, reason=0x%02X bonded=%d\n",
+                      reason, connInfo.isBonded());
+        g_adv_restart_at = millis() + 500;
+    }
+    void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
+        Serial.printf("BLE auth: bonded=%d encrypted=%d\n",
+                      connInfo.isBonded(), connInfo.isEncrypted());
     }
 };
 
-/* --- helpers ----------------------------------------------------------- */
+class LedOutputCallbacks : public NimBLECharacteristicCallbacks {
+public:
+    void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) override {
+        NimBLEAttValue v = pChar->getValue();
+        if (v.size() > 0) {
+            Serial.printf("LED state: 0x%02X\n", v.data()[0]);
+        }
+    }
+};
+
 static uint8_t parse_uint8(const String& s)
 {
     if (s.length() == 0) return 0;
@@ -145,8 +173,8 @@ static void send_report(void)
     report[0] = g_key_state.mods;
     report[1] = 0;
     for (int i = 0; i < 6; i++) report[i + 2] = g_key_state.keys[i];
-    if (g_bootInput) g_bootInput->setValue(report, sizeof(report));
-    if (g_bootInput) g_bootInput->notify();
+    if (g_inputReport) g_inputReport->setValue(report, sizeof(report));
+    if (g_inputReport) g_inputReport->notify();
 }
 
 static void clear_keys(void)
@@ -182,16 +210,21 @@ static void key_tap(uint8_t mods, uint8_t k, int ms)
 {
     if (ms <= 0) ms = 100;
 
+    /* save current state, press mods+key, then restore.
+     * NOTE: clear_keys() must not be used here - it also zeroes mods. */
     uint8_t old_mods = g_key_state.mods;
-    g_key_state.mods |= mods;
+    uint8_t old_keys[6];
+    memcpy(old_keys, g_key_state.keys, sizeof(old_keys));
 
-    clear_keys();
-    key_press(k);
+    memset(g_key_state.keys, 0, sizeof(g_key_state.keys));
+    g_key_state.keys[0] = k;
+    g_key_state.mods = old_mods | mods;
+    send_report();
     delay(ms);
-    clear_keys();
 
+    memcpy(g_key_state.keys, old_keys, sizeof(old_keys));
     g_key_state.mods = old_mods;
-    if (g_key_state.mods) send_report();
+    send_report();
 }
 
 static bool is_connected(void)
@@ -244,8 +277,10 @@ static void type_poll(void)
         key_tap(0x02, 0x04 + (c - 'A'), g_type_ms);
     } else if (c == ' ') {
         key_tap(0, 0x2C, g_type_ms);
-    } else if (c >= '0' && c <= '9') {
-        key_tap(0, 0x1E + (c - '0'), g_type_ms);
+    } else if (c >= '1' && c <= '9') {
+        key_tap(0, 0x1E + (c - '1'), g_type_ms);   /* '1'..'9' = 0x1E..0x26 */
+    } else if (c == '0') {
+        key_tap(0, 0x27, g_type_ms);               /* '0' = 0x27 */
     } else if (c == '\n') {
         key_tap(0, 0x28, g_type_ms);
     } else {
@@ -276,26 +311,33 @@ static void handle_root(void)
 
 static void handle_status_html(void)
 {
-    String json = "{";
-    json += "\"device\":\"" + g_device_name + "\"";
-    json += ",\"hostname\":\"" + g_hostname + "\"";
-    json += ",\"connected\":" + String(is_connected() ? "true" : "false");
-    json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
-    json += ",\"ble_addr\":\"" + String(NimBLEDevice::getAddress().toString().c_str()) + "\"";
-    json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
-    json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
-    json += "}";
+    String ble_state = is_connected()
+        ? "<span class='ok'>connected</span>"
+        : "<span class='bad'>not connected</span>";
 
     String html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>AT-Node Status</title>";
     html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-    html += "<style>body{font-family:monospace;padding:16px;max-width:600px;margin:auto;}";
-    html += "pre{background:#f5f5f5;padding:12px;border-radius:6px;overflow:auto;}";
-    html += "a{color:#007aff;}</style></head><body>";
+    html += "<style>body{font-family:monospace;padding:16px;max-width:560px;margin:auto;}"
+            "table{border-collapse:collapse;width:100%;margin:8px 0;}"
+            "th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;}"
+            "th{background:#f5f5f5;width:38%;}"
+            ".ok{color:#0a0;}.bad{color:#d33;}"
+            "a{color:#007aff;}</style></head><body>";
     html += "<h1>AT-Node Status</h1>";
-    html += "<pre>" + json + "</pre>";
-    html += "<p><a href=\"/at-node/help\">API Help</a> | ";
+    html += "<table>";
+    html += "<tr><th>Device</th><td>" + g_device_name + "</td></tr>";
+    html += "<tr><th>Hostname</th><td>" + g_hostname + ".local</td></tr>";
+    html += "<tr><th>IP</th><td>" + WiFi.localIP().toString() + "</td></tr>";
+    html += "<tr><th>BLE Address</th><td>" + String(g_ble_addr_str) + "</td></tr>";
+    html += "<tr><th>BLE Host</th><td>" + ble_state + "</td></tr>";
+    html += "<tr><th>Bonded Hosts</th><td>" + String(NimBLEDevice::getNumBonds()) + "</td></tr>";
+    html += "<tr><th>Typing</th><td>" + String(g_type_busy ? "yes" : "no") + "</td></tr>";
+    html += "<tr><th>MQTT</th><td>" + String(g_mqtt_connected ? "connected" : "disconnected") + "</td></tr>";
+    html += "<tr><th>AP Mode</th><td>" + String(ap_portal_active() ? "active" : "off") + "</td></tr>";
+    html += "</table>";
+    html += "<p><a href=\"/at-node/pair\">BLE Pairing</a> | ";
+    html += "<a href=\"/at-node/help\">API Help</a> | ";
     html += "<a href=\"/at-node/cmd/status\">JSON</a></p>";
-    html += "<p><small>HTTP interface is primarily for agents (JSON API). Use /at-node/* endpoints.</small></p>";
     html += "</body></html>";
     send_html(html);
 }
@@ -325,7 +367,7 @@ static const char* HELP_PAGE_HTML = R"HTML(
 <div class="note">
   <strong>mDNS</strong>: This device advertises itself via mDNS as <code>&lt;hostname&gt;.local</code>.
   Agents can discover the device IP by resolving the mDNS hostname or by scanning the local network.
-  The hostname is configurable via <code>AT+CONF=hostname=...</code> or <code>/at-node/cmd/config/set</code>.
+  The hostname is configurable via <code>AT+CONF=hostname=...</code> (raw AT, persisted to NVS).
   Default: <code>atnodeesp-&lt;chipid&gt;.local</code> (e.g., <code>atnodeesp-c842.local</code>).
 </div>
 
@@ -335,6 +377,7 @@ static const char* HELP_PAGE_HTML = R"HTML(
   <tr><td>GET</td><td><code>/at-node/status</code></td><td>HTML</td><td>Device status page</td></tr>
   <tr><td>GET</td><td><code>/at-node/cmd/status</code></td><td>JSON</td><td>Device status (pure JSON)</td></tr>
   <tr><td>GET</td><td><code>/at-node/help</code></td><td>HTML</td><td>This help page</td></tr>
+  <tr><td>GET</td><td><code>/at-node/pair</code></td><td>HTML</td><td>BLE pairing page (browser)</td></tr>
 </table>
 
 <h2>Raw AT Command</h2>
@@ -342,6 +385,22 @@ static const char* HELP_PAGE_HTML = R"HTML(
   <tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
   <tr><td>POST</td><td><code>/at-node/at</code></td><td><code>AT+...</code></td><td>Execute raw AT command (text/plain)</td></tr>
 </table>
+<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> (persisted to NVS).</p>
+
+<h2>BLE Keyboard / Pairing</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/ble/status</code></td><td></td><td>BLE name, address, connected peers, bonded host list</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ble/advertise</code></td><td><code>start=1|0</code></td><td>Start / stop BLE advertising (make device discoverable for pairing)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/delete</code></td><td><code>idx</code></td><td>Remove one bonded host (idx from ble/status)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/clear</code></td><td></td><td>Remove ALL bonded hosts</td></tr>
+</table>
+<p>Browser UI: <a href="/at-node/pair">/at-node/pair</a> &mdash; shows connection state,
+controls advertising, lists and removes bonded hosts.
+Pairing flow: make sure the device is advertising, then select
+<code>AT-Node-ESP-XXXX</code> in the host OS Bluetooth settings (Just Works, no PIN).
+After a firmware update that changes GATT services, remove the device in the
+host OS first (hosts cache the GATT table per MAC).</p>
 
 <h2>Keyboard</h2>
 <table>
@@ -366,9 +425,10 @@ static const char* HELP_PAGE_HTML = R"HTML(
 <h2>Configuration</h2>
 <table>
   <tr><th>Method</th><th>Path</th><th>Params</th></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>ca_cert or fp</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>plain (PEM) or fp</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td></tr>
@@ -388,6 +448,11 @@ curl -X POST -d "AT+TAP=100,0,4" http://atnodeesp-c842.local/at-node/at
 
 # Get JSON status
 curl http://atnodeesp-c842.local/at-node/cmd/status
+
+# BLE: check status, start advertising, clear bonds
+curl http://atnodeesp-c842.local/at-node/cmd/ble/status
+curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/advertise?start=1"
+curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/bonds/clear"
 </pre>
 
 <p><a href="/at-node/status">Back to Status</a></p>
@@ -400,6 +465,185 @@ static void handle_help_html(void)
     send_html(HELP_PAGE_HTML);
 }
 
+/* --- BLE status / pairing ---------------------------------------------- */
+static String build_ble_status_json(void)
+{
+    String json = "{";
+    json += "\"name\":\"" + g_device_name + "\"";
+    json += ",\"addr\":\"" + String(g_ble_addr_str) + "\"";
+    json += ",\"connected\":" + String(is_connected() ? "true" : "false");
+    json += ",\"advertising\":" + String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false");
+    json += ",\"peers\":[";
+    uint8_t n = g_server ? g_server->getConnectedCount() : 0;
+    for (uint8_t i = 0; i < n; i++) {
+        NimBLEConnInfo info = g_server->getPeerInfo(i);
+        if (i) json += ",";
+        json += "{\"addr\":\"" + String(info.getAddress().toString().c_str()) + "\"";
+        json += ",\"bonded\":" + String(info.isBonded() ? "true" : "false");
+        json += ",\"encrypted\":" + String(info.isEncrypted() ? "true" : "false");
+        json += "}";
+    }
+    json += "],\"bonds\":[";
+    int nb = NimBLEDevice::getNumBonds();
+    for (int i = 0; i < nb; i++) {
+        NimBLEAddress a = NimBLEDevice::getBondedAddress(i);
+        if (i) json += ",";
+        json += "{\"idx\":" + String(i) + ",\"addr\":\"" + String(a.toString().c_str()) + "\"}";
+    }
+    json += "]}";
+    return json;
+}
+
+static void handle_ble_status(void)
+{
+    send_json(build_ble_status_json());
+}
+
+static void handle_ble_advertise(void)
+{
+    String start = g_http.arg("start");
+    if (start == "1" || start == "true") {
+        NimBLEDevice::getAdvertising()->start();
+    } else if (start == "0" || start == "false") {
+        NimBLEDevice::getAdvertising()->stop();
+    }
+    send_json("{\"ok\":true,\"cmd\":\"ble/advertise\",\"advertising\":" +
+              String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false") + "}");
+}
+
+static void handle_ble_bonds_delete(void)
+{
+    String idxStr = g_http.arg("idx");
+    if (idxStr.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing idx\"}", 400);
+        return;
+    }
+    int idx = idxStr.toInt();
+    int nb  = NimBLEDevice::getNumBonds();
+    if (idx < 0 || idx >= nb) {
+        send_json("{\"ok\":false,\"error\":\"invalid idx\"}", 400);
+        return;
+    }
+    NimBLEAddress addr = NimBLEDevice::getBondedAddress(idx);
+    bool ok = NimBLEDevice::deleteBond(addr);
+    Serial.printf("BLE bond delete idx=%d addr=%s ok=%d\n",
+                  idx, addr.toString().c_str(), ok);
+    if (!ok) {
+        send_json("{\"ok\":false,\"error\":\"unpair failed\"}", 500);
+        return;
+    }
+    send_json("{\"ok\":true,\"cmd\":\"ble/bonds/delete\",\"addr\":\"" +
+              String(addr.toString().c_str()) + "\"}");
+}
+
+static void handle_ble_bonds_clear(void)
+{
+    bool ok = NimBLEDevice::deleteAllBonds();
+    Serial.printf("BLE bonds cleared ok=%d\n", ok);
+    send_json("{\"ok\":" + String(ok ? "true" : "false") + ",\"cmd\":\"ble/bonds/clear\"}");
+}
+
+static const char* PAIR_PAGE_HTML = R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AT-Node BLE Pairing</title>
+<style>
+  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
+  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
+  table{border-collapse:collapse;width:100%;margin:8px 0;}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
+  th{background:#f5f5f5;width:38%;}
+  button{padding:8px 14px;margin:4px 4px 4px 0;border:1px solid #007aff;
+         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:14px;}
+  button.ghost{background:#fff;color:#007aff;}
+  button.danger{border-color:#d33;background:#d33;}
+  button:active{opacity:.8;}
+  .ok{color:#0a0;} .bad{color:#d33;}
+  a{color:#007aff;}
+  #msg{margin-top:10px;color:#555;min-height:1.2em;}
+</style>
+</head>
+<body>
+<h1>AT-Node BLE Pairing</h1>
+
+<h2>Device</h2>
+<table>
+  <tr><th>BLE Name</th><td id="name">-</td></tr>
+  <tr><th>BLE Address</th><td id="addr">-</td></tr>
+  <tr><th>Advertising</th><td id="adv">-</td></tr>
+</table>
+<button onclick="setAdv(1)">Start Advertising</button>
+<button class="ghost" onclick="setAdv(0)">Stop Advertising</button>
+
+<h2>Connected Host</h2>
+<div id="peers">none</div>
+
+<h2>Bonded Hosts</h2>
+<div id="bonds">none</div>
+<button class="danger" onclick="clearBonds()">Clear All Bonds</button>
+<p><small>Removing a bond here does not remove it on the host &mdash; also remove
+&quot;AT-Node-ESP&quot; in your OS Bluetooth settings, otherwise the host will
+re-pair automatically on reconnect.</small></p>
+
+<p id="msg"></p>
+<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/help">API Help</a></p>
+
+<script>
+function msg(t){ document.getElementById('msg').textContent = t; }
+function refresh(){
+  fetch('/at-node/cmd/ble/status').then(r=>r.json()).then(s=>{
+    document.getElementById('name').textContent = s.name;
+    document.getElementById('addr').textContent = s.addr;
+    document.getElementById('adv').innerHTML = s.advertising
+      ? '<span class="ok">yes</span>' : '<span class="bad">no</span>';
+    document.getElementById('peers').innerHTML = s.peers.length
+      ? s.peers.map(p => p.addr + (p.bonded ? ' (bonded)' : ' (not bonded)') +
+                       (p.encrypted ? ' [encrypted]' : '')).join('<br>')
+      : 'none &mdash; pair from your host now';
+    document.getElementById('bonds').innerHTML = s.bonds.length
+      ? '<table><tr><th>Address</th><th></th></tr>' + s.bonds.map(b =>
+          '<tr><td>'+b.addr+'</td><td><button class="danger" onclick="delBond('+b.idx+')">Remove</button></td></tr>'
+        ).join('') + '</table>'
+      : 'none';
+  }).catch(()=>{ msg('refresh failed'); });
+}
+function setAdv(on){
+  fetch('/at-node/cmd/ble/advertise?start='+(on?1:0), {method:'POST'})
+    .then(r=>r.json()).then(()=>{ msg('advertising '+(on?'started':'stopped')); refresh(); });
+}
+function delBond(i){
+  if(!confirm('Remove this bond?')) return;
+  fetch('/at-node/cmd/ble/bonds/delete?idx='+i, {method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      msg(d.ok ? 'bond removed &mdash; also remove the device in the host OS Bluetooth settings'
+               : 'remove failed: '+(d.error||'unknown'));
+      refresh();
+    });
+}
+function clearBonds(){
+  if(!confirm('Remove ALL bonded hosts?')) return;
+  fetch('/at-node/cmd/ble/bonds/clear', {method:'POST'})
+    .then(r=>r.json()).then(d=>{
+      msg(d.ok ? 'all bonds cleared'
+               : 'clear failed: '+(d.error||'unknown'));
+      refresh();
+    });
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
+)HTML";
+
+static void handle_pair_html(void)
+{
+    send_html(PAIR_PAGE_HTML);
+}
+
 static void handle_cmd_status(void)
 {
     String json = "{";
@@ -407,7 +651,7 @@ static void handle_cmd_status(void)
     json += ",\"hostname\":\"" + g_hostname + "\"";
     json += ",\"connected\":" + String(is_connected() ? "true" : "false");
     json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
-    json += ",\"ble_addr\":\"" + String(NimBLEDevice::getAddress().toString().c_str()) + "\"";
+    json += ",\"ble_addr\":\"" + String(g_ble_addr_str) + "\"";
     json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
     json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
@@ -1192,6 +1436,22 @@ static void handle_mqtt_subscribe(void)
               ",\"cmd\":\"mqtt/subscribe\"}");
 }
 
+static void handle_ap(void)
+{
+    String val = g_http.arg("plain");
+    if (val.length() == 0) val = g_http.arg("v");
+    val.trim();
+    if (val == "1") {
+        ap_portal_start();
+        send_json("{\"ok\":true,\"cmd\":\"ap\",\"active\":true}");
+    } else if (val == "0") {
+        ap_portal_stop();
+        send_json("{\"ok\":true,\"cmd\":\"ap\",\"active\":false}");
+    } else {
+        send_json("{\"ok\":false,\"error\":\"expected 1=start,0=stop\"}", 400);
+    }
+}
+
 static void handle_not_found(void)
 {
     send_json("{\"ok\":false,\"error\":\"not found\"}", 404);
@@ -1201,6 +1461,10 @@ static void handle_not_found(void)
 static bool ble_init(void)
 {
     NimBLEDevice::init(g_device_name.c_str());
+    String pub = NimBLEDevice::getAddress().toString().c_str();
+    strncpy(g_ble_addr_str, pub.c_str(), sizeof(g_ble_addr_str) - 1);
+    /* Bonding always allowed (same as the verified demo): bonding,
+     * no MITM, no secure connections -> Just Works pairing.           */
     NimBLEDevice::setSecurityAuth(true, false, false);
 
     g_server = NimBLEDevice::createServer();
@@ -1210,20 +1474,21 @@ static bool ble_init(void)
     g_hid = new NimBLEHIDDevice(g_server);
     g_hid->setManufacturer("AT-Node");
     g_hid->setPnp(0x02, 0xE502, 0xA111, 0x0210);
-    g_hid->setHidInfo(0x00, 0x01);
+    g_hid->setHidInfo(0x00, 0x03);
+    g_hid->setBatteryLevel(100);
     g_hid->setReportMap(const_cast<uint8_t*>(REPORT_MAP), sizeof(REPORT_MAP));
 
-    g_protocolMode = g_hid->getProtocolMode();
-    g_protocolMode->setValue(0);
 
-    NimBLEService* hidSvc = g_hid->getHidService();
-    g_bootInput = hidSvc->createCharacteristic(
-        (uint16_t)0x2A22,
-        NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-    g_bootInput->setValue((uint8_t*)"\x00\x00\x00\x00\x00\x00\x00\x00", 8);
+    /* Report characteristics (0x2A4D) with Report Reference (0x2908)
+     * descriptors - required by Windows HID-over-GATT driver.
+     * getInputReport/getOutputReport create them automatically. */
+    g_inputReport = g_hid->getInputReport(1);
+    uint8_t empty_report[8] = {0};
+    g_inputReport->setValue(empty_report, sizeof(empty_report));
 
-    g_bootOutput = g_hid->getBootOutput();
-    g_bootOutput->setCallbacks(nullptr);
+    g_outputReport = g_hid->getOutputReport(2);
+    g_outputReport->setCallbacks(new LedOutputCallbacks());
+
 
     g_hid->startServices();
 
@@ -1538,10 +1803,15 @@ void setup(void)
         g_http.on("/at-node/status", HTTP_GET, handle_status_html);
         g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
         g_http.on("/at-node/help", HTTP_GET, handle_help_html);
+        g_http.on("/at-node/pair", HTTP_GET, handle_pair_html);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
         g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
+        g_http.on("/at-node/cmd/ble/status", HTTP_GET, handle_ble_status);
+        g_http.on("/at-node/cmd/ble/advertise", HTTP_POST, handle_ble_advertise);
+        g_http.on("/at-node/cmd/ble/bonds/delete", HTTP_POST, handle_ble_bonds_delete);
+        g_http.on("/at-node/cmd/ble/bonds/clear", HTTP_POST, handle_ble_bonds_clear);
         g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
         g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
         g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
@@ -1556,6 +1826,7 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
         g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
+        g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
@@ -1586,5 +1857,13 @@ void loop(void)
     type_poll();
     mqtt_poll();
     ap_portal_poll();
+    if (g_adv_restart_at && (int32_t)(millis() - g_adv_restart_at) >= 0) {
+        g_adv_restart_at = 0;
+        if (!is_connected()) {
+            NimBLEDevice::getAdvertising()->stop();   /* clear stale state */
+            NimBLEDevice::startAdvertising();
+            Serial.println("advertising restarted");
+        }
+    }
     delay(2);
 }
