@@ -37,6 +37,9 @@
 - ✅ 串口全功能：与 HTTP 等价的完整 AT 命令集
 - ✅ 测试脚本：`tools/test_esp32_at_node.py` 全 PASS
 - ✅ WiFi 凭据：NVS 持久化，HTTP/串口可配置
+- ✅ AP 配网：GPIO10 触发（3 秒）或 `AT+AP=1`，Captive Portal 页面
+- ✅ 设备名/hostname：默认含芯片 ID 后缀（如 `AT-Node-ESP-5688`），可配置
+- ✅ HTTP 页面：`/` 重定向到 `/at-node/status`（HTML），`/at-node/cmd/status`（JSON），`/at-node/help`（API 文档）
 - ✅ MQTT：本地 TLS broker 连接/发布成功，自签名 CA 验证；plain TCP (1883) 和 TLS (8883) 双模式；CA 证书/SHA256 指纹可配置
 - 下一步：远程 MQTT broker 实测、connect 阻塞优化、更多外设
 

@@ -27,7 +27,7 @@ extern String g_device_name;
 extern String g_hostname;
 extern void save_config(const String& key, const String& value);
 
-static WebServer   g_ap_http(80);
+static WebServer   g_ap_http(8080);
 static DNSServer   g_ap_dns;
 static bool        g_ap_active = false;
 static String      g_ap_ssid;
@@ -146,7 +146,7 @@ static void handle_save(void)
 static void handle_not_found(void)
 {
     /* Redirect all unknown paths to root for captive portal */
-    g_ap_http.sendHeader("Location", "http://" + AP_IP.toString());
+    g_ap_http.sendHeader("Location", "http://" + AP_IP.toString() + ":8080");
     g_ap_http.send(302, "text/plain", "");
 }
 
@@ -174,7 +174,7 @@ void ap_portal_start(void)
 
     g_ap_active = true;
     Serial.printf("AP mode started: %s (pwd: %s)\n", g_ap_ssid.c_str(), AP_PASSWORD);
-    Serial.printf("Connect to http://%s\n", AP_IP.toString().c_str());
+    Serial.printf("Connect to http://%s:8080\n", AP_IP.toString().c_str());
 }
 
 void ap_portal_stop(void)
