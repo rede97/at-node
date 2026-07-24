@@ -95,8 +95,8 @@ run_tests() {
     fi
     cd "$PROJECT_ROOT"
     # Run encoding check (if script exists)
-    if [ -f tools/batch_utf8.py ]; then
-        uv run python tools/batch_utf8.py software --check || error "Encoding check failed"
+    if [ -f tools/utils/batch_utf8.py ]; then
+        uv run python tools/utils/batch_utf8.py software --check || error "Encoding check failed"
         log "Encoding check OK"
     else
         warn "Encoding check script not found, skipping"

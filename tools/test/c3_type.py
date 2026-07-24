@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 r"""Type text via the ESP32-C3 BLE keyboard bench.
 
-  The C3 runs tools/esp32c3_kbd/esp32c3_kbd.ino (BLE HID keyboard + HTTP).
+  The C3 runs tools/demo/esp32c3_kbd/esp32c3_kbd.ino (BLE HID keyboard + HTTP).
   This script sends the text to the C3, which transmits key reports over BLE.
   If a CH582 dongle is paired and listening, the text appears as USB HID
   keystrokes on the host PC.
 
   Example:
-      .venv\Scripts\python tools/c3_type.py --host 192.168.1.27 "Hello World"
+      .venv\Scripts\python tools/test/c3_type.py --host 192.168.1.27 "Hello World"
 """
 import argparse
 import sys

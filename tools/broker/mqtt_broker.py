@@ -2,12 +2,12 @@
 r"""Local MQTT broker for ESP32 AT Node testing.
 
   Uses amqtt to run a lightweight broker on localhost:1883 (plain) and
-  localhost:8883 (TLS, if certs are present in tools/certs/).
+  localhost:8883 (TLS, if certs are present in tools/broker/certs/).
 
   No authentication — suitable for local development only.
 
   Usage:
-      uv run python tools/mqtt_broker.py
+      uv run python tools/broker/mqtt_broker.py
 """
 import asyncio
 import logging

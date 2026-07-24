@@ -190,19 +190,19 @@ print(s.read(s.in_waiting or 1).decode())
 **测试:**
 
 ```bash
-uv run python tools/test_at.py [port]     # AT 回归 6 项(自动找第一块板,可指定端口)
-uv run python tools/test_dongle_loop.py   # 双板闭环:扫描→配对→订阅→按键转发
-uv run python tools/test_dongle_hardening.py  # 阶段二:回连/BT_LIST/hold(需已绑定)
-uv run python tools/send_key.py 0x04 --mode BLE
+uv run python tools/test/test_at.py [port]     # AT 回归 6 项(自动找第一块板,可指定端口)
+uv run python tools/test/test_dongle_loop.py   # 双板闭环:扫描→配对→订阅→按键转发
+uv run python tools/test/test_dongle_hardening.py  # 阶段二:回连/BT_LIST/hold(需已绑定)
+uv run python tools/test/send_key.py 0x04 --mode BLE
 ```
 
 **日常操作:**
 
 ```bash
 # at_cli.py — 按角色/端口发 AT 命令(最常用)
-uv run python tools/at_cli.py --role kbd "AT+VER"
-uv run python tools/at_cli.py --role dongle "AT+BT_AUTO=0" "AT+BT_PAIR"
-uv run python tools/at_cli.py --role dongle --listen 6 "AT+BT_SCAN=3"
+uv run python tools/test/at_cli.py --role kbd "AT+VER"
+uv run python tools/test/at_cli.py --role dongle "AT+BT_AUTO=0" "AT+BT_PAIR"
+uv run python tools/test/at_cli.py --role dongle --listen 6 "AT+BT_SCAN=3"
 
 uv run python tools/ci/board_roles.py     # 列出全部板子 端口→角色(--wait/--require)
 ```

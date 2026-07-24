@@ -2,10 +2,10 @@
 r"""Send AT commands to a board by role or port.
 
   usage:
-    uv run python tools/at_cli.py --role kbd "AT+VER"
-    uv run python tools/at_cli.py --role dongle "AT+BT_AUTO=0" "AT+BT_PAIR"
-    uv run python tools/at_cli.py --port /dev/ttyACM0 "AT+KEY=0,4" "AT+KEY=0"
-    uv run python tools/at_cli.py --role dongle --listen 6 "AT+BT_SCAN=3"
+    uv run python tools/test/at_cli.py --role kbd "AT+VER"
+    uv run python tools/test/at_cli.py --role dongle "AT+BT_AUTO=0" "AT+BT_PAIR"
+    uv run python tools/test/at_cli.py --port /dev/ttyACM0 "AT+KEY=0,4" "AT+KEY=0"
+    uv run python tools/test/at_cli.py --role dongle --listen 6 "AT+BT_SCAN=3"
 
   --role TAG   find the board whose AT+VER reports [TAG] (kbd|dongle)
   --port DEV   use a fixed serial port instead

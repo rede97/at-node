@@ -12,7 +12,7 @@
 | `esp32/API.md` | HTTP API 参考文档（agent 集成用） |
 | `.pi/skills/esp32-windows/` | Windows/ESP32-C3 开发踩坑要点（pi skill） |
 | `esp32/esp32_at_node/` | ESP32-C3 AT Node 主 sketch |
-| `tools/esp32c3_kbd/` | 现有 C3 BLE 键盘测试台（保留，作为 dongle 陪练） |
+| `tools/demo/esp32c3_kbd/` | 现有 C3 BLE 键盘测试台（保留，作为 dongle 陪练） |
 
 ## 与 CH582 版的关系
 
@@ -36,7 +36,7 @@
 - ✅ I2C：扫描/读写，SDA=GPIO8, SCL=GPIO9
 - ✅ IR：RMT 38kHz 载波，NEC/SIRC/RAW，GPIO4
 - ✅ 串口全功能：与 HTTP 等价的完整 AT 命令集
-- ✅ 测试脚本：`tools/test_esp32_at_node.py` 全 PASS
+- ✅ 测试脚本：`tools/test/test_esp32_at_node.py` 全 PASS
 - ✅ WiFi 凭据：NVS 持久化，HTTP/串口可配置
 - ✅ AP 配网：GPIO10 触发（3 秒）或 `AT+AP=1`，Captive Portal 页面
 - ✅ 设备名/hostname：默认含芯片 ID 后缀（如 `AT-Node-ESP-5688`），可配置

@@ -1,11 +1,11 @@
 ---
 name: esp32-windows
-description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoot, port conflicts, BLE keyboard bench build/upload, HTTP control plane, and common pitfalls when working with ESP32-C3 sketches or the tools/esp32c3_kbd test bench.
+description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoot, port conflicts, BLE keyboard bench build/upload, HTTP control plane, and common pitfalls when working with ESP32-C3 sketches or the tools/demo/esp32c3_kbd test bench.
 ---
 
 # ESP32-C3 开发踩坑要点（Windows 环境）
 
-> 面向本仓库的 ESP32-C3 参考主机开发（tools/esp32c3_probe、tools/rk_recon）。
+> 面向本仓库的 ESP32-C3 参考主机开发（tools/demo/esp32c3_probe、tools/demo/rk_recon）。
 > 全是实测踩过的坑，按主题分组，新会话先读这份再动手。
 
 ## 工具链与下载
@@ -91,10 +91,10 @@ description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoo
 - 排查"设备在广播但看不见":用 bleak 扫空中包区分设备侧/主机侧问题；
   HCI 断连原因 0x13(NimBLE 打印 0x213)= 对端主动断开（常见于旧绑定
   密钥不匹配的回连风暴）。
-- 对照 demo:`tools/c3_demo_nimble`(NimBLE 最小键盘，带配对日志）
-  和 `tools/c3_demo_tvk`(Bluedroid T-vK，已打 3.3.10 兼容补丁）。
+- 对照 demo:`tools/demo/c3_demo_nimble`(NimBLE 最小键盘，带配对日志）
+  和 `tools/demo/c3_demo_tvk`(Bluedroid T-vK，已打 3.3.10 兼容补丁）。
 
-## C3 可编程键盘 bench（tools/esp32c3_kbd）
+## C3 可编程键盘 bench（tools/demo/esp32c3_kbd）
 
 > 2026-07-22 实测记录。把 C3 当成 BLE HID 键盘，经 CH582 dongle
 > 转发为 USB HID，供自动化输入/回归测试用。

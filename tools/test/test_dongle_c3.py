@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 r"""Dongle closed-loop test using ESP32-C3 as BLE keyboard peer.
 
-  The C3 runs tools/esp32c3_kbd/esp32c3_kbd.ino (BLE HID keyboard + HTTP).
+  The C3 runs tools/demo/esp32c3_kbd/esp32c3_kbd.ino (BLE HID keyboard + HTTP).
   The CH582 dongle is driven over its CDC port (AT commands).
 
   Flow:

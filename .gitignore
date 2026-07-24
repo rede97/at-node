@@ -61,7 +61,7 @@ __pycache__/
 tools/ci/out/
 
 # === ESP32-C3 keyboard bench credentials ===
-tools/esp32c3_kbd/wifi_config.h
+tools/demo/esp32c3_kbd/wifi_config.h
 esp32/esp32_at_node/wifi_config.h
 
 # === logs ===

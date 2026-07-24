@@ -83,7 +83,7 @@ Base path：`/at-node`
 
 ## 4. BLE HID 键盘
 
-- 基于现有 `tools/esp32c3_kbd/esp32c3_kbd.ino` 的 NimBLE boot keyboard 实现。
+- 基于现有 `tools/demo/esp32c3_kbd/esp32c3_kbd.ino` 的 NimBLE boot keyboard 实现。
 - 设备名默认 `AT-Node-ESP`，可通过 `/at-node/cmd/config/name` 修改（预留）。
 - 暴露 Boot Keyboard Input Report (0x2A22, READ|NOTIFY)、
   Boot Keyboard Output Report (0x2A32)、Protocol Mode (0x2A4E, 默认 0)。
@@ -142,7 +142,7 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | ✅ 已完成（HTTP/串口/AT 全通，测试通过） |
 | E5 | IR (RMT) | `/at-node/cmd/ir/send` | ✅ 已完成（RMT 38kHz 载波，NEC/SIRC/RAW 全通） |
 | E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | ✅ 已完成（AT/TAP/TEXT/CONF/GPIO/ADC/I2C/IR/MQTT 全通） |
-| E7 | 测试脚本 | `tools/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
+| E7 | 测试脚本 | `tools/test/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
 | E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | ✅ 已完成（本地 TLS broker 连接/发布成功，自签名 CA） |
 
 ## 10. 与 CH582 版的命令语义对齐

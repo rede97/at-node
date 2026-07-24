@@ -148,9 +148,9 @@ cfg.writeFlashCB  = Lib_Write_Flash;
 ## 11. Encoding Standards
 
 - All `.c`/`.h`/`.S` are **UTF-8 without BOM**, pure ASCII comments
-- Original WCH SDK was GB2312; converted via `tools/batch_utf8.py`
-- Verify: `uv run python tools/batch_utf8.py software`
-- CI check: `uv run python tools/check_encoding.py`
+- Original WCH SDK was GB2312; converted via `tools/utils/batch_utf8.py`
+- Verify: `uv run python tools/utils/batch_utf8.py software`
+- CI check: `uv run python tools/utils/batch_utf8.py software --check`
 
 ## 12. IR Transmitter Design (planned)
 

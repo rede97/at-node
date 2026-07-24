@@ -27,7 +27,7 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 
 - **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` (runtime role in DUAL) — distinguishes identical boards.
 - **RAM budget**: kbd 19076 B (58%) / dongle 19740 B (60%) / dual ~21000 B (64%). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
-- **Two-board dev rig**: kbd board (test keyboard, inject keys via `AT+KEY`) + dongle board (receiver). `tools/test_dongle_loop.py` + `tools/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
+- **Two-board dev rig**: kbd board (test keyboard, inject keys via `AT+KEY`) + dongle board (receiver). `tools/test/test_dongle_loop.py` + `tools/test/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
 - **ESP32-C3 variant**: `esp32/esp32_at_node/` — WiFi HTTP (`/at-node/*`) + MQTT + BLE HID keyboard, full AT command parity with CH582. Build with `esp32/esp32_at_node/build.ps1`.
 
 ## Commands
@@ -44,27 +44,33 @@ Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) —
 
 Encoding check:
 ```bash
-uv run python tools/check_encoding.py
-uv run python tools/batch_utf8.py software   # GB2312 → UTF-8
+uv run python tools/utils/batch_utf8.py software --check
+uv run python tools/utils/batch_utf8.py software   # GB2312 → UTF-8
 ```
 
 AT test:
 ```bash
-uv run python tools/test_at.py
-uv run python tools/send_key.py 0x39 --mode BLE          # CapsLock via BLE
-uv run python tools/send_key.py 0x04 --mode USB --seq "Hi"  # 'a' / text via KEY_SEQ
+uv run python tools/test/test_at.py
+uv run python tools/test/send_key.py 0x39 --mode BLE          # CapsLock via BLE
+uv run python tools/test/send_key.py 0x04 --mode USB --seq "Hi"  # 'a' / text via KEY_SEQ
 ```
 
 Dongle loop test:
 ```bash
-uv run python tools/test_dongle_loop.py          # two CH582 boards
-uv run python tools/test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27  # C3 keyboard
+uv run python tools/test/test_dongle_loop.py          # two CH582 boards
+uv run python tools/test/test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27  # C3 keyboard
 ```
 
 C3 typing:
 ```bash
-uv run python tools/c3_type.py --ip 192.168.1.27 "Hello World"
-uv run python tools/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
+uv run python tools/test/c3_type.py --ip 192.168.1.27 "Hello World"
+uv run python tools/test/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
+```
+
+Remote broker (MQTT + HTTP proxy for remote device access):
+```bash
+uv run python tools/broker/atnode_broker.py serve          # MQTT broker + HTTP proxy
+uv run python tools/broker/atnode_broker.py client list    # list devices
 ```
 
 ## Architecture
@@ -144,7 +150,7 @@ LED self-schedules blink timing outside the table.
 - **Feature conflicts are compile errors**: `config.h` uses first-class macros (`USB_ENABLE`, `HWS_SLEEP`, `BLE_DONGLE`); invalid combos (#error): USB+sleep, dongle without USB.
 - **BLE SNV**: Flash at `0x77E00` (last 512B of Data Flash), 1 bonded device, new pairing overwrites.
 - **BLE heap**: `MEM_BUF[BLE_MEMHEAP_SIZE/4]` at top of RAM, default 5KB (hard floor 4KB, checked in `ble_stack_init`).
-- **Tools** under `tools/` use Python + `uv` venv.
+- **Tools** under `tools/` use Python + `uv` venv. Layout: `broker/` (application services: remote MQTT+HTTP broker), `test/` (test scripts), `demo/` (demo/recon sketches), `utils/`, `ci/` — see `tools/README.md`.
 
 ## Notes
 

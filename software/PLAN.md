@@ -48,7 +48,7 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 - **已验证（2026-07-21 双板）**：自动回连连环（断→回连→转发）✅、BT_LIST 地址 ✅、
   hold/恢复 ✅、开机自动回连 ✅、**绑定失配退避保护**（连断 5 次自动 hold,
   AT 不再被淹没）✅、**量产模式 `BLE_DONGLE_DEBUG=FALSE`**（信道干净无诊断行,
-  扫描/连接/armed 全通）✅。测试固化：`tools/test_dongle_hardening.py`。
+  扫描/连接/armed 全通）✅。测试固化：`tools/test/test_dongle_hardening.py`。
 
 ## 3. 阶段三：RK 真机验证（❌ 不实现）
 
@@ -175,9 +175,9 @@ dongle 走 wlink——dongle 板 ISP 握手实测不稳（kbd 板每次都成，
 
 | 测试 | 工具 | 通过标准 |
 |------|------|---------|
-| AT 回归 | `tools/test_at.py` | 6/6 PASS |
+| AT 回归 | `tools/test/test_at.py` | 6/6 PASS |
 | KEY_SEQ 长命令 | 内嵌 loop 脚本 | 完整回显 + queued |
-| 双板闭环 | `tools/test_dongle_loop.py` | 2/2 键转发字节一致 |
+| 双板闭环 | `tools/test/test_dongle_loop.py` | 2/2 键转发字节一致 |
 | 断开/配对 | AT+BT_DISC / BT_PAIR + C3 probe | 重连/重配对成功 |
 
 ---
@@ -230,7 +230,7 @@ ESP32-C3 作为**可编程模拟键盘**（BLE HID Peripheral），获得：
 
 | # | 内容 | 产出 | 解锁的测试 |
 |---|------|------|-----------|
-| ① | 最简键盘 sketch（**NimBLE-Arduino 直接实现 boot keyboard**，8 字节报告）放 `tools/esp32c3_kbd/` | 替代 kbd 板跑通 loop/hardening | ✅ 闭环实测通过（COM3 C3 + COM4 dongle） |
+| ① | 最简键盘 sketch（**NimBLE-Arduino 直接实现 boot keyboard**，8 字节报告）放 `tools/demo/esp32c3_kbd/` | 替代 kbd 板跑通 loop/hardening | ✅ 闭环实测通过（COM3 C3 + COM4 dongle） |
 | ② | LE Privacy RPA 周期轮换 | RPA 键盘模拟 | dongle RPA 重连（TEST-TODO C 区） |
 | ③ | ~~手工 Report Map 变体~~ | ~~F1.22 黄金测试键盘~~ | **不实现**（RK/复杂键盘支持已废弃，见 §3） |
 | ④ | 射频硬关断模拟"断电消失" | 监督超时触发器 | C1/C2 精确复现（通用连接可靠性） |
