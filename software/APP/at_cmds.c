@@ -123,16 +123,20 @@ static uint8_t    seq_buf[SEQ_MAX_REPORTS][7];   /* mods + 6 keys per report */
 static int        seq_count    = 0;
 static int        seq_idx      = 0;
 static uint16_t   seq_delay_ms = 0;
-/* KEY_STR inter-report pacing, AT+PACE configurable. 15 ms suits USB /
-   fast links; BLE hosts with long conn intervals (phones) need 60-150.
-   RAM-only, no persistence. */
-static uint16_t   keystr_pace_ms = 15;
 
 /* KEY_STR state — full definitions live after at_cmd_KEY_SEQ */
 static char    keystr_buf[];
 static int     keystr_len, keystr_idx;
 static uint8_t keystr_active;
 static int keystr_map(char c, uint8_t *mods, uint8_t *key);
+
+/* KEY_STR pace follows the ACTIVE slot (per-slot, persisted). */
+static uint16_t keystr_cur_pace(void)
+{
+    extern int8_t kb_ble_active_slot(void);
+    int8_t s = kb_ble_active_slot();
+    return (s >= 0) ? kb_ble_slot_pace((uint8_t)s) : 15;
+}
 
 static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
 {
@@ -157,7 +161,7 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
                 }
             }
             keystr_idx++;
-            tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(keystr_pace_ms));
+            tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(keystr_cur_pace()));
             return evt ^ SEQ_EVENT;
         }
         if (seq_idx < seq_count) {
@@ -304,7 +308,7 @@ static int at_cmd_DEV(int argc, char *argv[])
             if (a) {
                 uint16_t iv = 0, lt = 0;
                 kb_ble_slot_params(s, &iv, &lt);
-                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s%s%s%s,err=%02X,int=%u.%02ums/lat%u",
+                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s%s%s%s,err=%02X,int=%u.%02ums/lat%u%s%s",
                             s + 2, s + 1,
                             a[5], a[4], a[3], a[2], a[1], a[0],
                             kb_ble_slot_secure(s) ? ",secure" : ",INSECURE",
@@ -312,15 +316,19 @@ static int at_cmd_DEV(int argc, char *argv[])
                             (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "",
                             kb_ble_drops[s] ? ",drops" : "",
                             kb_ble_lasterr[s],
-                            iv * 125 / 100, (iv * 125) % 100, lt);
+                            iv * 125 / 100, (iv * 125) % 100, lt,
+                            kb_ble_slot_name(s)[0] ? ",name=" : "",
+                            kb_ble_slot_name(s));
             }
             else {
                 const uint8_t *b = kb_ble_slot_bound_addr(s);
                 if (b)
-                    AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,reserved%s",
+                    AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,reserved%s%s%s",
                                 s + 2, s + 1,
                                 b[5], b[4], b[3], b[2], b[1], b[0],
-                                (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
+                                (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "",
+                                kb_ble_slot_name(s)[0] ? ",name=" : "",
+                                kb_ble_slot_name(s));
                 else
                     AT_Response("%d,BLE%d,-,free%s", s + 2, s + 1,
                                 (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
@@ -539,17 +547,51 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 }
 
 
-/* AT+PACE[=<ms>] — KEY_STR inter-report pacing (default 15).
-   Set 60-150 for BLE hosts with long connection intervals (phones):
-   the link drains ~1 report per conn event, so bursting at 15 ms
-   overruns its queue and releases get lost (field 2026-07-24). */
+/* AT+PACE[=<ms>] — KEY_STR pacing of the ACTIVE BLE slot (per-slot,
+   persisted with the reservation). Phones need >= 2x conn interval. */
 static int at_cmd_PACE(int argc, char *argv[]) {
-    if (argc < 2) { AT_Response("pace=%ums", keystr_pace_ms); return 0; }
+    extern int8_t kb_ble_active_slot(void);
+    int8_t s = kb_ble_active_slot();
+    if (s < 0) { AT_Response("pace: no BLE slot active (AT+DEV=BLEn first)"); return -1; }
+    if (argc < 2) {
+        AT_Response("BLE%d pace=%ums", s + 1, kb_ble_slot_pace((uint8_t)s));
+        return 0;
+    }
     int v = atoi(argv[1]);
-    if (v < 5 || v > 2000) { AT_Response("usage: AT+PACE=<ms 5-2000>"); return -1; }
-    keystr_pace_ms = (uint16_t)v;
-    AT_Response("pace=%ums", keystr_pace_ms);
+    if (kb_ble_slot_set_pace((uint8_t)s, (uint16_t)v) < 0) {
+        AT_Response("usage: AT+PACE=<ms 5-2000>");
+        return -1;
+    }
+    AT_Response("BLE%d pace=%dms", s + 1, v);
     return 0;
+}
+
+/* AT+NAME[=<slot>,<label>] — mnemonic label for a slot (max 11 chars,
+   A-Z a-z 0-9 - _). Helps agents address hosts by name, not MAC. */
+static int at_cmd_NAME(int argc, char *argv[]) {
+    if (argc < 2) {
+        for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+            AT_Response("%d,BLE%d,%s", s + 1, s + 1,
+                        kb_ble_slot_name(s)[0] ? kb_ble_slot_name(s) : "-");
+        return 0;
+    }
+    if (argc < 3) { AT_Response("usage: AT+NAME=<BLE1|BLE2|BLE3>,<label>"); return -1; }
+    uint8_t m = dev_target_parse(argv[1]);
+    if (!m || !(m & KB_TGT_BLE_ALL)) {
+        AT_Response("usage: AT+NAME=<BLE1|BLE2|BLE3>,<label>");
+        return -1;
+    }
+    for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
+        if (m & (KB_TGT_BLE1 << s)) {
+            if (kb_ble_slot_set_name(s, argv[2]) < 0) {
+                AT_Response("ERROR: label chars A-Z a-z 0-9 - _ (max 11)");
+                return -1;
+            }
+            AT_Response("BLE%d name=%s", s + 1, kb_ble_slot_name(s));
+            return 0;
+        }
+    }
+    return -1;
 }
 
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
@@ -1136,7 +1178,8 @@ const at_cmd_t cmd_table[] = {
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     { "AT+KEY_STR", "type text <string> (US layout)", at_cmd_KEY_STR },
-    { "AT+PACE",    "KEY_STR pacing <ms>",          at_cmd_PACE },
+    { "AT+PACE",    "KEY_STR pacing <ms> (per-slot)", at_cmd_PACE },
+    { "AT+NAME",    "slot label <BLEn>,<name>",   at_cmd_NAME },
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },

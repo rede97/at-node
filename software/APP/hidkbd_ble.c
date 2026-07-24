@@ -172,15 +172,22 @@ static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
  * connected but never bonded are dropped on disconnect (unbonded RPA
  * addresses are throwaway). */
 #define SLOTMAP_MAGIC  0xA77E0001
-static uint8_t slotmap[KBD_MAX_CONN][6];   /* all-0xFF = free */
+#define SLOTNAME_LEN   12
+#define SLOTPACE_DFLT  15
+static uint8_t  slotmap[KBD_MAX_CONN][6];             /* all-0xFF = free */
+static char     slotname[KBD_MAX_CONN][SLOTNAME_LEN]; /* "" = unnamed */
+static uint16_t slotpace[KBD_MAX_CONN];               /* KEY_STR pace ms */
 static void kbd_name_update(void);          /* defined after slotmap_find */
 
 static void slotmap_save(void)
 {
-    uint8_t buf[32];
+    uint8_t buf[64];
     uint32_t magic = SLOTMAP_MAGIC;
     tmos_memcpy(buf, &magic, 4);
     tmos_memcpy(buf + 4, slotmap, KBD_MAX_CONN * 6);
+    tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6, slotname, KBD_MAX_CONN * SLOTNAME_LEN);
+    tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6 + KBD_MAX_CONN * SLOTNAME_LEN,
+                slotpace, KBD_MAX_CONN * sizeof(uint16_t));
     EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, sizeof(buf));
     EEPROM_WRITE(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
     kbd_name_update();   /* slot suffix in the advertised name changed */
@@ -188,13 +195,30 @@ static void slotmap_save(void)
 
 static void slotmap_load(void)
 {
-    uint8_t buf[32];
+    uint8_t buf[64];
     uint32_t magic = 0;
     tmos_memset(slotmap, 0xFF, sizeof(slotmap));
+    tmos_memset(slotname, 0, sizeof(slotname));
+    for (int s = 0; s < KBD_MAX_CONN; s++) slotpace[s] = SLOTPACE_DFLT;
     EEPROM_READ(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
     tmos_memcpy(&magic, buf, 4);
-    if (magic == SLOTMAP_MAGIC)
+    if (magic == SLOTMAP_MAGIC) {
         tmos_memcpy(slotmap, buf + 4, KBD_MAX_CONN * 6);
+        /* name area is 0xFF on pages written before AT+NAME existed —
+           treat all-0xFF as unnamed, keep the reservations */
+        const uint8_t *nm = buf + 4 + KBD_MAX_CONN * 6;
+        for (int s = 0; s < KBD_MAX_CONN; s++)
+            if (nm[s * SLOTNAME_LEN] != 0xFF)
+                tmos_memcpy(slotname[s], nm + s * SLOTNAME_LEN, SLOTNAME_LEN);
+        const uint8_t *pc = nm + KBD_MAX_CONN * SLOTNAME_LEN;
+        for (int s = 0; s < KBD_MAX_CONN; s++) {
+            uint16_t v;
+            tmos_memcpy(&v, pc + s * sizeof(uint16_t), sizeof(uint16_t));
+            if (v != 0xFFFF && v >= 5 && v <= 2000) slotpace[s] = v;
+        }
+    }
+    for (int s = 0; s < KBD_MAX_CONN; s++)
+        slotname[s][SLOTNAME_LEN - 1] = 0;   /* belt and braces */
 }
 
 static int slotmap_find(const uint8_t *addr)
@@ -306,6 +330,42 @@ uint8_t kb_ble_slot_notify(uint8_t slot)
            ? ble_hid_dev_conn_notify(kbd_conns[slot].handle) : 0;
 }
 
+/* Per-slot label + pace accessors (AT+NAME / AT+PACE). */
+const char *kb_ble_slot_name(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN) ? slotname[slot] : "";
+}
+
+int kb_ble_slot_set_name(uint8_t slot, const char *name)
+{
+    if (slot >= KBD_MAX_CONN) return -1;
+    int n = 0;
+    while (name[n] && n < SLOTNAME_LEN - 1) {
+        char c = name[n];
+        uint8_t ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                     (c >= '0' && c <= '9') || c == '-' || c == '_';
+        if (!ok) return -1;
+        slotname[slot][n] = c;
+        n++;
+    }
+    slotname[slot][n] = 0;
+    slotmap_save();
+    return 0;
+}
+
+uint16_t kb_ble_slot_pace(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN) ? slotpace[slot] : SLOTPACE_DFLT;
+}
+
+int kb_ble_slot_set_pace(uint8_t slot, uint16_t ms)
+{
+    if (slot >= KBD_MAX_CONN || ms < 5 || ms > 2000) return -1;
+    slotpace[slot] = ms;
+    slotmap_save();
+    return 0;
+}
+
 /* Reserved address for a slot (from the persistent table), or NULL. */
 const uint8_t *kb_ble_slot_bound_addr(uint8_t slot)
 {
@@ -319,6 +379,8 @@ int kb_ble_unbind_slot(uint8_t slot)
     uint8_t addr[6];
     tmos_memcpy(addr, slotmap[slot], 6);
     tmos_memset(slotmap[slot], 0xFF, 6);
+    slotname[slot][0] = 0;
+    slotpace[slot] = SLOTPACE_DFLT;
     slotmap_save();
     if (kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
         GAPRole_TerminateLink(kbd_conns[slot].handle);
