@@ -135,19 +135,30 @@ static uint8_t advertData[] = {
     LO_UINT16(GAP_APPEARE_HID_KEYBOARD),
     HI_UINT16(GAP_APPEARE_HID_KEYBOARD),
 
-    0x08,                           // length: AD type(1) + name(7) = 8
+    0x0D,                           // length: AD type(1) + name(12) = 13
     GAP_ADTYPE_LOCAL_NAME_COMPLETE, // AD Type = Complete local name
-    'A',
-    'T',
-    '-',
-    'N',
-    'o',
-    'd',
-    'e',
+    'A','T','-','N','o','d','e','-', 0,0,0,0,  // XXXX filled by kbd_name_init()
 };
 
-// Device name attribute value
-static const uint8_t attDeviceName[GAP_DEVICE_NAME_LEN] = "AT-Node";
+/* Device name attribute value — built at runtime by kbd_name_init() as
+   "AT-Node-XXXX" (XXXX = last 2 bytes of the chip MAC). Boards are
+   distinguishable in host pairing lists without encoding the firmware
+   variant — the BLE function is always "keyboard" (2026-07-24). */
+static uint8_t attDeviceName[GAP_DEVICE_NAME_LEN];
+
+static void kbd_name_init(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uint8_t mac[6];
+    GetMACAddress(mac);
+    tmos_memcpy(attDeviceName, "AT-Node-", 8);
+    attDeviceName[8]  = hex[(mac[1] >> 4) & 0xF];
+    attDeviceName[9]  = hex[mac[1] & 0xF];
+    attDeviceName[10] = hex[(mac[0] >> 4) & 0xF];
+    attDeviceName[11] = hex[mac[0] & 0xF];
+    attDeviceName[12] = 0;
+    tmos_memcpy(&advertData[sizeof(advertData) - 12], &attDeviceName[0], 12);
+}
 
 // HID Dev configuration
 static ble_hid_dev_cfg_t ble_hid_emu_cfg = {
@@ -316,6 +327,8 @@ static ble_hid_dev_cb_t ble_hid_emu_cbs = {
 void ble_hid_emu_init(void)
 {
     ble_hid_emu_task_id = TMOS_ProcessEventRegister(ble_hid_emu_process_event);
+
+    kbd_name_init();   /* build "AT-Node-XXXX" before advert data is set */
 
     // Setup the GAP Peripheral Role Profile
     {
