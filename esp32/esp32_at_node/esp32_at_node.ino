@@ -1437,11 +1437,11 @@ static bool mqtt_connect(void)
         } else {
             g_mqtt_wifi_secure.setInsecure();
         }
-        g_mqtt_wifi_secure.setTimeout(1000);
+        g_mqtt_wifi_secure.setTimeout(15);   /* seconds (ESP32 Arduino) */
     } else {
         /* Plain TCP mode */
         g_mqtt.setClient(g_mqtt_wifi_plain);
-        g_mqtt_wifi_plain.setTimeout(1000);
+        g_mqtt_wifi_plain.setTimeout(5);     /* seconds */
     }
     g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
     g_mqtt.setCallback(mqtt_callback);
@@ -1490,13 +1490,20 @@ static void mqtt_task_func(void* arg)
 static void mqtt_poll(void)
 {
     static uint32_t last_attempt = 0;
-    if (g_mqtt_connect_pending) {
+    /* Auto-(re)connect whenever a broker is configured and WiFi is up.
+     * Manual connect (mqtt/connect endpoint) retries fast (1s);
+     * unattended reconnect backs off to 10s. mqtt_connect() republishes
+     * state/info and resubscribes, so the broker registry self-heals.  */
+    bool want = (g_mqtt_broker.length() > 0) && g_wifi_ready;
+    if (want && !g_mqtt_connected) {
         uint32_t now = millis();
-        if (now - last_attempt > 1000) {  /* retry at most once per second */
+        uint32_t interval = g_mqtt_connect_pending ? 1000 : 10000;
+        if (now - last_attempt > interval) {
             last_attempt = now;
             g_mqtt_connect_pending = false;
             mqtt_connect();
         }
+        return;
     }
     if (!g_mqtt_connected) return;
     if (!g_mqtt.loop()) {

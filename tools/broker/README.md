@@ -166,6 +166,8 @@ uv run python tools/broker/atnode_broker.py client ping atnodeesp-5688 192.168.1
   （`AT+MQTT=ca,<fingerprint>`；查指纹：`openssl x509 -in server.crt -noout -fingerprint -sha256`）。
 - 设备上线后 broker 立即可见（retained `state=online` + `info` 清单）；
   掉线由 LWT 置 `offline`。
+- **自动重连**：配置了 broker 且 WiFi 在线时，设备每 10s 重试直至连上；
+  重连成功会重新发布 state/info，broker 重启后注册表自愈。
 
 ## 9. 远程部署清单
 
@@ -183,7 +185,7 @@ uv run python tools/broker/atnode_broker.py client ping atnodeesp-5688 192.168.1
 |------|----------|
 | ESP32 connect 卡住无响应 | 端口被其他 broker 占用（杀残留 `mqtt_broker.py` 进程）；或防火墙拦 LAN 入站 |
 | `mqtt_port` 配置不生效 | 曾有的 NVS 类型 bug 已修；确认固件为最新 |
-| `client list` 空 | 设备未连上（`AT+MQTT=status` 查）；broker 重启后 retained 清空，设备重连一次 |
+| `client list` 空 | 设备未连上（`AT+MQTT=status` 查）；设备带自动重连，broker 重启后 ~10s 内会自动恢复注册 |
 | RPC timeout | 设备离线 / MQTT 断开；`GET /api/devices/<id>` 看 `online` |
 | keyboard 返回 BLE not connected | 设备 BLE 未连主机，先在主机侧连接（或用 `/at-node/pair` 页面管理） |
 | TLS 连接失败 | 指纹/CA 不匹配：`AT+MQTT=ca,status` 查当前验证方式 |
