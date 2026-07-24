@@ -84,6 +84,13 @@
 - **修法**:slotmap_load 开头把 slotmac 也 memset 成 0xFF,统一"未设置"语义
 - **教训**:多维持久数组的"空"语义要统一(0xFF),BSS 零是陷阱;出厂路径必须实测
 
+### F16. 同名设备劫持按名连接（AT-Node-ESP)
+
+- **现象**:dongle `AT+BT_CONN=AT-Node` 连到了 ESP32 设备(AT-Node-ESP-5688),
+  kbd 侧毫无动静；ESP 与 kbd 的 RSSI 相近时按名/按 index 连接结果随机
+- **修法**:`AT+BT_CONN=<完整MAC>` 显式寻址，不要用名字也不要用扫描 index
+- **教训**:测试环境多设备重名前缀时，名字匹配是陷阱；脚本一律用 MAC
+
 ## 2026-07-24 Linux 蓝牙主机测试环境(VMware)
 
 ### F9. BlueZ uhid 抖动(不可根治,环境级)
