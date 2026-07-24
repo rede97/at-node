@@ -22,7 +22,9 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <WiFiUdp.h>
 #include <WebServer.h>
+#include <ping/ping_sock.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <Wire.h>
@@ -167,6 +169,41 @@ static uint8_t parse_uint8(const String& s)
     return (uint8_t)strtoul(s.c_str(), NULL, 0);
 }
 
+/* --- URL query helpers (for MQTT cmd channel) ---------------------------- */
+static String url_decode(const String& s)
+{
+    String out;
+    out.reserve(s.length());
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (c == '%' && i + 2 < s.length()) {
+            char hex[3] = { s[i + 1], s[i + 2], 0 };
+            out += (char)strtoul(hex, NULL, 16);
+            i += 2;
+        } else if (c == '+') {
+            out += ' ';
+        } else {
+            out += c;
+        }
+    }
+    return out;
+}
+
+/* get (decoded) value of key from "k=v&k=v" query string */
+static String query_get(const String& q, const char* key)
+{
+    String k = String(key) + "=";
+    int i = q.indexOf(k);
+    if (i < 0 || (i > 0 && q[i - 1] != '&')) {
+        i = q.indexOf('&' + k);
+        if (i < 0) return "";
+        i += 1;
+    }
+    int start = i + k.length();
+    int amp = q.indexOf('&', start);
+    return url_decode((amp > 0) ? q.substring(start, amp) : q.substring(start));
+}
+
 static void send_report(void)
 {
     uint8_t report[8];
@@ -241,7 +278,10 @@ static void load_config(void)
     g_wifi_ssid   = prefs.getString("wifi_ssid", WIFI_SSID);
     g_wifi_pass   = prefs.getString("wifi_pass", WIFI_PASSWORD);
     g_mqtt_broker = prefs.getString("mqtt_broker", "");
-    g_mqtt_port   = prefs.getInt("mqtt_port", 8883);
+    /* stored as string via save_config(); parse as int (getInt would
+     * fail the NVS type check and silently return the default).      */
+    g_mqtt_port   = prefs.getString("mqtt_port", "8883").toInt();
+    if (g_mqtt_port <= 0) g_mqtt_port = 8883;
     g_mqtt_user   = prefs.getString("mqtt_user", "");
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_cert = prefs.getString("mqtt_ca_cert", "");
@@ -422,6 +462,13 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>POST</td><td><code>/at-node/cmd/ir/send</code></td><td><code>protocol,data,bits</code></td></tr>
 </table>
 
+<h2>Network</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/net/wol</code></td><td><code>mac</code></td><td>Send Wake-on-LAN magic packet on the device LAN</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/net/ping</code></td><td><code>host,count</code></td><td>ICMP ping from the device LAN, returns avg RTT</td></tr>
+</table>
+
 <h2>Configuration</h2>
 <table>
   <tr><th>Method</th><th>Path</th><th>Params</th></tr>
@@ -497,6 +544,27 @@ static String build_ble_status_json(void)
 static void handle_ble_status(void)
 {
     send_json(build_ble_status_json());
+}
+
+/* System info manifest - also published to MQTT atnode/<id>/info.
+ * The "services" list doubles as the remote API catalog.            */
+static String build_sys_info_json(void)
+{
+    String json = "{";
+    json += "\"device\":\"" + g_device_name + "\"";
+    json += ",\"hostname\":\"" + g_hostname + "\"";
+    json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+    json += ",\"ble_addr\":\"" + String(g_ble_addr_str) + "\"";
+    json += ",\"ble_connected\":" + String(is_connected() ? "true" : "false");
+    json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
+    json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
+    json += ",\"services\":[\"keyboard/tap\",\"keyboard/text\",\"keyboard/key\",";
+    json += "\"gpio/write\",\"gpio/read\",\"adc/read\",";
+    json += "\"i2c/scan\",\"i2c/read\",\"i2c/write\",\"ir/send\",";
+    json += "\"ble/status\",\"ble/advertise\",\"ble/bonds/delete\",\"ble/bonds/clear\",";
+    json += "\"net/wol\",\"net/ping\",\"sys/info\"]";
+    json += "}";
+    return json;
 }
 
 static void handle_ble_advertise(void)
@@ -1222,11 +1290,114 @@ dcHklz6t6u/6dLL/gDCbE4sAFO2opEBnPw==
 -----END CERTIFICATE-----
 )EOF";
 
+/* forward declaration - defined after the network helpers below */
+static String mqtt_exec(const String& method, const String& query);
+
+/* --- Wake-on-LAN --------------------------------------------------------- */
+static bool wol_send(const String& macStr)
+{
+    unsigned int mac[6];
+    if (sscanf(macStr.c_str(), "%02x:%02x:%02x:%02x:%02x:%02x",
+               &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]) != 6) {
+        return false;
+    }
+    uint8_t pkt[102];
+    memset(pkt, 0xFF, 6);
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 6; j++) pkt[6 + i * 6 + j] = (uint8_t)mac[j];
+    }
+    WiFiUDP udp;
+    udp.begin(0);
+    bool ok = false;
+    if (udp.beginPacket(IPAddress(255, 255, 255, 255), 9) == 1) {
+        udp.write(pkt, sizeof(pkt));
+        ok = udp.endPacket() == 1;
+    }
+    if (udp.beginPacket(WiFi.broadcastIP(), 9) == 1) {
+        udp.write(pkt, sizeof(pkt));
+        ok = (udp.endPacket() == 1) || ok;
+    }
+    udp.stop();
+    return ok;
+}
+
+/* --- ICMP ping (esp-idf ping component) ----------------------------------- */
+struct PingCtx {
+    volatile int      recv;
+    volatile uint32_t total_ms;
+    volatile bool     done;
+};
+
+static void ping_on_success(esp_ping_handle_t hdl, void* args)
+{
+    PingCtx* ctx = (PingCtx*)args;
+    uint32_t elapsed = 0;
+    esp_ping_get_profile(hdl, ESP_PING_PROF_TIMEGAP, &elapsed, sizeof(elapsed));
+    ctx->recv++;
+    ctx->total_ms += elapsed;
+}
+
+static void ping_on_end(esp_ping_handle_t hdl, void* args)
+{
+    ((PingCtx*)args)->done = true;
+}
+
+/* Blocking ping, up to ~count*1.5s. Returns avg RTT ms, or -1 on failure. */
+static float ping_host(IPAddress ip, int count, int* out_recv)
+{
+    if (count < 1) count = 1;
+    if (count > 10) count = 10;
+
+    PingCtx ctx = { 0, 0, false };
+
+    esp_ping_config_t cfg = ESP_PING_DEFAULT_CONFIG();
+    ip_addr_t target;
+    if (!ipaddr_aton(ip.toString().c_str(), &target)) return -1;
+    cfg.target_addr  = target;
+    cfg.count        = count;
+    cfg.interval_ms  = 500;
+    cfg.timeout_ms   = 1000;
+
+    esp_ping_callbacks_t cbs = {};
+    cbs.on_ping_success = ping_on_success;
+    cbs.on_ping_end     = ping_on_end;
+    cbs.cb_args         = &ctx;
+
+    esp_ping_handle_t ping;
+    if (esp_ping_new_session(&cfg, &cbs, &ping) != ESP_OK) return -1;
+    esp_ping_start(ping);
+
+    uint32_t deadline = millis() + (uint32_t)count * 1500 + 2000;
+    while (!ctx.done && (int32_t)(millis() - deadline) < 0) delay(10);
+    if (!ctx.done) esp_ping_stop(ping);
+    esp_ping_delete_session(ping);
+
+    *out_recv = ctx.recv;
+    if (ctx.recv == 0) return -1;
+    return (float)ctx.total_ms / ctx.recv;
+}
+
 static void mqtt_callback(char* topic, byte* payload, unsigned int length)
 {
-    Serial.printf("MQTT [%s] ", topic);
-    for (unsigned int i = 0; i < length; i++) Serial.print((char)payload[i]);
-    Serial.println();
+    String t(topic);
+    String body;
+    body.reserve(length + 1);
+    for (unsigned int i = 0; i < length; i++) body += (char)payload[i];
+
+    /* command channel: atnode/<id>/cmd, payload "<reqid> <method> <query>" */
+    if (t == g_mqtt_topic_prefix + "/cmd") {
+        int sp1 = body.indexOf(' ');
+        if (sp1 < 0) return;
+        String reqid  = body.substring(0, sp1);
+        int sp2 = body.indexOf(' ', sp1 + 1);
+        String method = (sp2 > 0) ? body.substring(sp1 + 1, sp2) : body.substring(sp1 + 1);
+        String query  = (sp2 > 0) ? body.substring(sp2 + 1) : "";
+        String inner  = mqtt_exec(method, query);
+        String resp   = "{\"id\":\"" + reqid + "\"," + inner + "}";
+        g_mqtt.publish((g_mqtt_topic_prefix + "/resp").c_str(), resp.c_str());
+        return;
+    }
+    Serial.printf("MQTT [%s] %s\n", topic, body.c_str());
 }
 
 static bool verify_fingerprint(const mbedtls_x509_crt* cert, const String& fp_hex)
@@ -1274,12 +1445,16 @@ static bool mqtt_connect(void)
     }
     g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
     g_mqtt.setCallback(mqtt_callback);
+    g_mqtt.setBufferSize(1024);   /* sys/info manifest ~400B */
 
+    String willTopic = g_mqtt_topic_prefix + "/state";
     bool ok;
     if (g_mqtt_user.length() > 0) {
-        ok = g_mqtt.connect(g_mqtt_client_id.c_str(), g_mqtt_user.c_str(), g_mqtt_pass.c_str());
+        ok = g_mqtt.connect(g_mqtt_client_id.c_str(), g_mqtt_user.c_str(), g_mqtt_pass.c_str(),
+                            willTopic.c_str(), 0, true, "offline");
     } else {
-        ok = g_mqtt.connect(g_mqtt_client_id.c_str());
+        ok = g_mqtt.connect(g_mqtt_client_id.c_str(),
+                            willTopic.c_str(), 0, true, "offline");
     }
 
     /* verify fingerprint if configured (TLS only) */
@@ -1289,6 +1464,14 @@ static bool mqtt_connect(void)
             g_mqtt.disconnect();
             ok = false;
         }
+    }
+
+    if (ok) {
+        /* presence + manifest + command subscription */
+        g_mqtt.subscribe((g_mqtt_topic_prefix + "/cmd").c_str());
+        g_mqtt.publish(willTopic.c_str(), "online", true);
+        String info = build_sys_info_json();
+        g_mqtt.publish((g_mqtt_topic_prefix + "/info").c_str(), info.c_str(), true);
     }
 
     g_mqtt_connected = ok;
@@ -1319,6 +1502,88 @@ static void mqtt_poll(void)
     if (!g_mqtt.loop()) {
         g_mqtt_connected = false;
     }
+}
+
+static String mqtt_exec(const String& method, const String& query)
+{
+    auto err = [](const char* e) { return String("\"ok\":false,\"error\":\"") + e + "\""; };
+
+    if (method == "keyboard/tap") {
+        if (!is_connected()) return err("BLE not connected");
+        uint8_t mods = parse_uint8(query_get(query, "mods"));
+        uint8_t key  = parse_uint8(query_get(query, "k"));
+        int ms       = query_get(query, "ms").toInt();
+        key_tap(mods, key, ms > 0 ? ms : 100);
+        return "\"ok\":true";
+    }
+    if (method == "keyboard/text") {
+        if (!is_connected()) return err("BLE not connected");
+        if (g_type_busy)     return err("typing in progress");
+        String text = query_get(query, "s");
+        if (text.length() == 0) return err("missing s");
+        int ms  = query_get(query, "ms").toInt();
+        int gap = query_get(query, "gap").toInt();
+        g_type_ms   = (ms > 0) ? ms : 40;
+        g_type_gap  = (gap > 0) ? gap : 30;
+        g_type_text = text;
+        g_type_idx  = 0;
+        g_type_next = 0;
+        g_type_busy = true;
+        return "\"ok\":true,\"queued\":true";
+    }
+    if (method == "keyboard/key") {
+        if (!is_connected()) return err("BLE not connected");
+        g_key_state.mods = parse_uint8(query_get(query, "mods"));
+        for (int i = 0; i < 6; i++) {
+            g_key_state.keys[i] = parse_uint8(query_get(query, ("k" + String(i)).c_str()));
+        }
+        send_report();
+        return "\"ok\":true";
+    }
+    if (method == "gpio/write") {
+        int pin   = query_get(query, "pin").toInt();
+        int level = query_get(query, "level").toInt();
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, level ? HIGH : LOW);
+        return "\"ok\":true";
+    }
+    if (method == "gpio/read") {
+        int pin = query_get(query, "pin").toInt();
+        pinMode(pin, INPUT_PULLUP);
+        return String("\"ok\":true,\"level\":") + digitalRead(pin);
+    }
+    if (method == "adc/read") {
+        int ch = query_get(query, "ch").toInt();
+        int mv = analogReadMilliVolts(ch);
+        return String("\"ok\":true,\"mv\":") + mv;
+    }
+    if (method == "ble/status") {
+        return String("\"ok\":true,\"ble\":") + build_ble_status_json();
+    }
+    if (method == "sys/info") {
+        return String("\"ok\":true,\"info\":") + build_sys_info_json();
+    }
+    if (method == "net/wol") {
+        String mac = query_get(query, "mac");
+        if (mac.length() == 0) return err("missing mac");
+        return wol_send(mac) ? "\"ok\":true" : err("wol send failed");
+    }
+    if (method == "net/ping") {
+        String host = query_get(query, "host");
+        if (host.length() == 0) return err("missing host");
+        int count = query_get(query, "count").toInt();
+        IPAddress ip;
+        if (WiFi.hostByName(host.c_str(), ip) != 1) return err("dns failed");
+        int recv = 0;
+        float avg = ping_host(ip, count > 0 ? count : 4, &recv);
+        if (avg < 0) {
+            return String("\"ok\":false,\"error\":\"no reply\",\"ip\":\"") + ip.toString() +
+                   "\",\"recv\":" + recv;
+        }
+        return String("\"ok\":true,\"ip\":\"") + ip.toString() + "\",\"recv\":" + recv +
+               ",\"avg_ms\":" + String(avg, 1);
+    }
+    return err("unknown method");
 }
 
 static void handle_mqtt_status(void)
@@ -1450,6 +1715,42 @@ static void handle_ap(void)
     } else {
         send_json("{\"ok\":false,\"error\":\"expected 1=start,0=stop\"}", 400);
     }
+}
+
+static void handle_net_wol(void)
+{
+    String mac = g_http.arg("mac");
+    if (mac.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing mac\"}", 400);
+        return;
+    }
+    bool ok = wol_send(mac);
+    send_json("{\"ok\":" + String(ok ? "true" : "false") +
+              ",\"cmd\":\"net/wol\",\"mac\":\"" + mac + "\"}");
+}
+
+static void handle_net_ping(void)
+{
+    String host = g_http.arg("host");
+    if (host.length() == 0) {
+        send_json("{\"ok\":false,\"error\":\"missing host\"}", 400);
+        return;
+    }
+    int count = g_http.arg("count").toInt();
+    IPAddress ip;
+    if (WiFi.hostByName(host.c_str(), ip) != 1) {
+        send_json("{\"ok\":false,\"error\":\"dns failed\"}", 500);
+        return;
+    }
+    int recv = 0;
+    float avg = ping_host(ip, count > 0 ? count : 4, &recv);
+    String json = "{\"ok\":" + String(avg >= 0 ? "true" : "false");
+    json += ",\"cmd\":\"net/ping\",\"ip\":\"" + ip.toString() + "\"";
+    json += ",\"sent\":" + String(count > 0 ? count : 4);
+    json += ",\"recv\":" + String(recv);
+    if (avg >= 0) json += ",\"avg_ms\":" + String(avg, 1);
+    json += "}";
+    send_json(json, avg >= 0 ? 200 : 500);
 }
 
 static void handle_not_found(void)
@@ -1923,6 +2224,8 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
         g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
         g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
+        g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
+        g_http.on("/at-node/cmd/net/ping", HTTP_POST, handle_net_ping);
         g_http.onNotFound(handle_not_found);
         g_http.begin();
         Serial.println("HTTP server on port 80");
