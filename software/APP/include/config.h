@@ -378,17 +378,25 @@
  *                              flag (AT+ROLE=KBD|DONGLE writes the flag
  *                              and soft-resets — switch time ≈ one
  *                              reboot, <1 s).
+ *   BLE_MODE_KBD_MULTI (3):    multi-mode keyboard. Peripheral role
+ *                              with 3 concurrent host links
+ *                              (PERIPHERAL_MAX_CONNECTION=3,
+ *                              BLE_SNV_NUM=3). AT+DEV=<target> routes
+ *                              output (USB|BLE1|BLE2|BLE3|ALL),
+ *                              no reset needed. See PLAN.md §10.
  *
  *   Legacy: -DBLE_DONGLE=TRUE (make DONGLE=1) maps to BLE_MODE_DONGLE.
  *
  *   Derived gates for #if:
- *     BLE_HAS_KBD    — kbd role compiled in
+ *     BLE_HAS_KBD    — kbd role compiled in (KBD / DUAL / KBD_MULTI)
  *     BLE_HAS_DONGLE — dongle role compiled in
  *     BLE_DONGLE     — normalized legacy alias of BLE_HAS_DONGLE
+ *     KBD_MAX_CONN   — per-host connection slots (3 in KBD_MULTI, else 1)
  */
-#define BLE_MODE_KBD     0
-#define BLE_MODE_DONGLE  1
-#define BLE_MODE_DUAL    2
+#define BLE_MODE_KBD        0
+#define BLE_MODE_DONGLE     1
+#define BLE_MODE_DUAL       2
+#define BLE_MODE_KBD_MULTI  3
 
 #ifndef BLE_MODE
   #if defined(BLE_DONGLE) && (BLE_DONGLE == TRUE)
@@ -398,7 +406,7 @@
   #endif
 #endif
 
-#if (BLE_MODE == BLE_MODE_KBD) || (BLE_MODE == BLE_MODE_DUAL)
+#if (BLE_MODE == BLE_MODE_KBD) || (BLE_MODE == BLE_MODE_DUAL) || (BLE_MODE == BLE_MODE_KBD_MULTI)
 #define BLE_HAS_KBD     TRUE
 #else
 #define BLE_HAS_KBD     FALSE
@@ -412,6 +420,15 @@
 
 #undef BLE_DONGLE
 #define BLE_DONGLE  BLE_HAS_DONGLE
+
+/* KBD_MAX_CONN — per-host connection slots. 3 in multi-mode keyboard
+   builds (BLE1/BLE2/BLE3), 1 in all single-host builds. Used to size
+   the connection table and per-slot AT commands. */
+#if (BLE_MODE == BLE_MODE_KBD_MULTI)
+#define KBD_MAX_CONN  3
+#else
+#define KBD_MAX_CONN  1
+#endif
 
 /*********************************************************************
  * APP_ROLE_FLASH_ADDR — DataFlash offset of the runtime-role flag
@@ -475,7 +492,10 @@
  *   room for the Central connection context).
  */
 #ifndef BLE_MEMHEAP_SIZE
-  #if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+/* 3 concurrent links: 5 KB base + ~1 KB/connection (F1.15) */
+#define BLE_MEMHEAP_SIZE  (1024 * 8)
+  #elif(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
 #define BLE_MEMHEAP_SIZE  (1024 * 6)
   #else
 #define BLE_MEMHEAP_SIZE  (1024 * 5)
@@ -583,7 +603,11 @@
  *   multiple hosts (e.g., desktop + laptop + tablet).
  */
 #ifndef BLE_SNV_NUM
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+#define BLE_SNV_NUM  3   /* one bond slot per host: BLE1/BLE2/BLE3 */
+  #else
 #define BLE_SNV_NUM  1
+  #endif
 #endif
 
 /* ====================================================================
@@ -620,7 +644,11 @@
  *   keyboard — one host at a time.
  */
 #ifndef PERIPHERAL_MAX_CONNECTION
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+#define PERIPHERAL_MAX_CONNECTION  3   /* 3 concurrent host links */
+  #else
 #define PERIPHERAL_MAX_CONNECTION  1
+  #endif
 #endif
 
 /*********************************************************************
