@@ -148,6 +148,10 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
             int ci = keystr_idx / 2;
             if (ci >= keystr_len) {
                 keystr_active = 0;
+                /* playback finished — agents synchronize on this URC
+                   instead of guessing char_count x pace (2026-07-24:
+                   an Enter fired mid-playback landed inside the text) */
+                AT_Response("+KEY_DONE");
                 return evt ^ SEQ_EVENT;
             }
             if (keystr_idx & 1) {
@@ -169,6 +173,8 @@ static tmosEvents kb_seq_process_event(tmosTaskID tid, tmosEvents evt)
             seq_idx++;
             if (seq_idx < seq_count)
                 tmos_start_task(seq_task_id, SEQ_EVENT, MS1_TO_SYSTEM_TIME(seq_delay_ms));
+            else
+                AT_Response("+KEY_DONE");
         }
         return evt ^ SEQ_EVENT;
     }

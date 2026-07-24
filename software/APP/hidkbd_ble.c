@@ -173,7 +173,7 @@ static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
  * addresses are throwaway). */
 #define SLOTMAP_MAGIC  0xA77E0001
 #define SLOTNAME_LEN   12
-#define SLOTPACE_DFLT  15
+#define SLOTPACE_DFLT  30   /* matches the typical 30 ms conn interval */
 static uint8_t  slotmap[KBD_MAX_CONN][6];             /* host addrs, all-0xFF = free */
 static char     slotname[KBD_MAX_CONN][SLOTNAME_LEN]; /* "" = unnamed */
 static uint16_t slotpace[KBD_MAX_CONN];               /* KEY_STR pace ms */
