@@ -28,8 +28,10 @@ void kb_ble_forget_bonds(void);
 int      kb_ble_conn_count(void);                 /* active host links */
 uint16_t kb_ble_slot_handle(uint8_t slot);        /* GAP_CONNHANDLE_INIT if free */
 const uint8_t *kb_ble_slot_addr(uint8_t slot);    /* host MAC (LSB-first) or NULL */
+uint8_t  kb_ble_slot_secure(uint8_t slot);
+uint8_t  kb_ble_slot_notify(uint8_t slot);        /* CCCD subscribed? */       /* encrypted/bonded? */
 int      kb_ble_disconnect_slot(uint8_t slot);    /* drop one host link */
-void     kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
+uint8_t  kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
 
 #ifdef __cplusplus
 }

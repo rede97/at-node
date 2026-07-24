@@ -41,13 +41,19 @@
 #define DEFAULT_HID_IDLE_TIMEOUT             60000
 
 // Minimum connection interval (units of 1.25ms)
+/* Connection parameters requested from hosts. Single-host kbd keeps the
+   aggressive 10 ms/0-latency profile. KBD_MULTI relaxes to 30-60 ms with
+   latency 2: two links at 10 ms + advertising oversubscribe the airtime
+   and hosts drop with LL supervision timeout 0x08 (field 2026-07-24). */
+#if(BLE_MODE == BLE_MODE_KBD_MULTI)
+#define DEFAULT_DESIRED_MIN_CONN_INTERVAL    24
+#define DEFAULT_DESIRED_MAX_CONN_INTERVAL    48
+#define DEFAULT_DESIRED_SLAVE_LATENCY        2
+#else
 #define DEFAULT_DESIRED_MIN_CONN_INTERVAL    8
-
-// Maximum connection interval (units of 1.25ms)
 #define DEFAULT_DESIRED_MAX_CONN_INTERVAL    8
-
-// Slave latency to use if parameter update request
 #define DEFAULT_DESIRED_SLAVE_LATENCY        0
+#endif
 
 // Supervision timeout value (units of 10ms)
 #define DEFAULT_DESIRED_CONN_TIMEOUT         500
@@ -197,6 +203,18 @@ uint16_t kb_ble_slot_handle(uint8_t slot)
     return (slot < KBD_MAX_CONN) ? kbd_conns[slot].handle : GAP_CONNHANDLE_INIT;
 }
 
+uint8_t kb_ble_slot_notify(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN && kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
+           ? ble_hid_dev_conn_notify(kbd_conns[slot].handle) : 0;
+}
+
+uint8_t kb_ble_slot_secure(uint8_t slot)
+{
+    return (slot < KBD_MAX_CONN && kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
+           ? ble_hid_dev_conn_secure(kbd_conns[slot].handle) : 0;
+}
+
 const uint8_t *kb_ble_slot_addr(uint8_t slot)
 {
     return (slot < KBD_MAX_CONN && kbd_conns[slot].handle != GAP_CONNHANDLE_INIT)
@@ -232,17 +250,21 @@ void kb_ble_forget_bonds(void)
     GAPBondMgr_SetParameter(GAPBOND_ERASE_ALLBONDS, 0, NULL);
 }
 
-/* Send to one host slot (silent drop if slot free). */
-void kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count)
+/* Send to one host slot. Returns the GATT status (SUCCESS when the
+   notification was queued; blePending/bleMemAllocError when the link
+   TX path is momentarily full — caller may retry; bleNotReady when the
+   slot is free or not yet secure/subscribed). */
+uint8_t kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count)
 {
     uint8_t buf[8];
     if (slot >= KBD_MAX_CONN || kbd_conns[slot].handle == GAP_CONNHANDLE_INIT)
-        return;
+        return bleNotReady;
     buf[0] = mods;
     buf[1] = 0;
     for (int j = 0; j < 6; j++) buf[2+j] = (j < count) ? keys[j] : 0;
-    ble_hid_dev_report(kbd_conns[slot].handle,
-                       BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT, 8, buf);
+    return ble_hid_dev_report(kbd_conns[slot].handle,
+                              BLE_HID_RPT_ID_KEY_IN, BLE_HID_REPORT_TYPE_INPUT,
+                              8, buf);
 }
 
 /* Broadcast to every connected host slot (DEV=ALL / single-build BLE). */

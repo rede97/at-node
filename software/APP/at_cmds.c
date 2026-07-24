@@ -14,6 +14,10 @@
 #include <stdlib.h>
 
 /* ===== Keyboard router ===== */
+/* Per-slot report drop counter (AT+DEV diagnostics). A drop means the
+   link TX queue stayed full for a whole retry budget. */
+static uint16_t kb_ble_drops[KBD_MAX_CONN];
+
 /* Output target bitmask (F1.11/F1.12). Single-host builds have only
    slot 0 (BLE1); BLE2/BLE3 bits are accepted but never route. */
 #define KB_TGT_USB      0x01
@@ -35,7 +39,7 @@ kb_mode_t kb_get_mode(void) {
     return KB_BLE;
 }
 
-extern void kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
+extern uint8_t kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 
 /* Dispatch one HID report to the selected output target(s).
@@ -50,8 +54,26 @@ static int kb_flush(uint8_t mods, uint8_t *keys, int count)
                 kb_ble_slot_handle(s) != GAP_CONNHANDLE_INIT) {
                 PRINT("KB> BLE%d:%02X%02X%02X%02X%02X%02X mods=%02X\n", s+1,
                       keys[0],keys[1],keys[2],keys[3],keys[4],keys[5], mods);
-                kb_ble_send_report_slot(s, mods, keys, count);
+                /* Flow control with budgeted retry: with multi-link
+                   latency the ATT TX queue drains only one report per
+                   effective conn event (interval × (latency+1) — up to
+                   ~200 ms on the relaxed KBD_MULTI params). The LL runs
+                   on its own IRQ so the queue drains even while we spin
+                   (field 2026-07-24: phone got "hewo" of "helloworld"
+                   with a 20 ms budget — way below one conn event). */
+                uint8_t st = SUCCESS;
+                for (int budget = 0; budget < 60; budget++) {  /* ~240 ms */
+                    st = kb_ble_send_report_slot(s, mods, keys, count);
+                    if (st != blePending && st != bleMemAllocError) break;
+                    for (volatile uint32_t d = 0; d < 80000; d++) __nop();
+                }
+                if (st != SUCCESS && st != bleNotReady) kb_ble_drops[s]++;
                 sent = 1;
+                /* Back-to-back GATT notifications on different links in the
+                   same TMOS tick corrupt each other in the WCH stack — a
+                   broadcast (DEV=ALL) loses BOTH reports (field 2026-07-24).
+                   ~3 ms spacing lets each link's ATT transaction clear. */
+                for (volatile uint32_t d = 0; d < 60000; d++) __nop();
             }
         }
     }
@@ -276,9 +298,12 @@ static int at_cmd_DEV(int argc, char *argv[])
         for (uint8_t s = 0; s < KBD_MAX_CONN; s++) {
             const uint8_t *a = kb_ble_slot_addr(s);
             if (a)
-                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s",
+                AT_Response("%d,BLE%d,%02X:%02X:%02X:%02X:%02X:%02X,connected%s%s",
                             s + 2, s + 1,
                             a[5], a[4], a[3], a[2], a[1], a[0],
+                            kb_ble_slot_secure(s) ? ",secure" : ",INSECURE",
+                            kb_ble_slot_notify(s) ? ",notify" : ",NO-CCCD",
+                            kb_ble_drops[s] ? ",drops" : "",
                             (kb_target & (KB_TGT_BLE1 << s)) ? ",active" : "");
             else
                 AT_Response("%d,BLE%d,-,free%s", s + 2, s + 1,

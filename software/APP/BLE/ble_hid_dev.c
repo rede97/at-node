@@ -20,6 +20,7 @@
 #include "ble_dev_info.h"
 #include "hidkbd.h"
 #include "ble_hid_dev.h"
+#include "ble_hid_kbd.h"
 
 /*********************************************************************
  * MACROS
@@ -109,6 +110,13 @@ static int hiddev_slot_alloc(uint16_t handle)
     return -1;
 }
 
+/* Query whether a given connection is encrypted/bonded (AT debug). */
+uint8_t ble_hid_dev_conn_secure(uint16_t conn)
+{
+    int s = hiddev_slot_of(conn);
+    return (s >= 0) ? hidDevConnSecure[s] : 0;
+}
+
 static int hiddev_conn_count(void)
 {
     int n = 0;
@@ -148,6 +156,21 @@ static void hidDevBattPeriodicTask(void);
 
 static ble_hid_rpt_map_t *hidDevRptByHandle(uint16_t handle);
 static ble_hid_rpt_map_t *hidDevRptById(uint8_t id, uint8_t type);
+
+/* Query whether a connection has enabled notifications on the keyboard
+   input report CCCD (AT debug — explains silent hosts). */
+uint8_t ble_hid_dev_conn_notify(uint16_t conn)
+{
+    ble_hid_rpt_map_t *pRpt = hidDevRptById(BLE_HID_RPT_ID_KEY_IN,
+                                            BLE_HID_REPORT_TYPE_INPUT);
+    gattAttribute_t *pAttr;
+    uint16_t retHandle;
+    if (!pRpt) return 0;
+    pAttr = GATT_FindHandle(pRpt->cccdHandle, &retHandle);
+    if (!pAttr) return 0;
+    return (GATTServApp_ReadCharCfg(conn, (gattCharCfg_t *)pAttr->pValue)
+            & GATT_CLIENT_CFG_NOTIFY) ? 1 : 0;
+}
 static ble_hid_rpt_map_t *hidDevRptByCccdHandle(uint16_t handle);
 
 static uint8_t hidDevSendReport(uint16_t conn, uint8_t id, uint8_t type, uint8_t len, uint8_t *pData);
@@ -814,12 +837,13 @@ static void hidDevGapStateCB(gapRole_States_t newState, gapRoleEvent_t *pEvent)
         if (slot >= 0)
             hidDevConnSecure[slot] = FALSE;   /* not secure yet */
 
-        /* Stop advertising only when every slot is taken; otherwise stay
-           connectable so hosts 2/3 can still find us (KBD_MULTI). */
-        if (hiddev_conn_count() >= KBD_MAX_CONN) {
-            param = FALSE;
-            GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
-        }
+        /* The GAPRole lib stops advertising on every connect. With free
+           slots we must explicitly re-enable it so hosts 2/3 can still
+           find us (KBD_MULTI); only when the table is full do we stay
+           quiet. Single-host builds: count(1) >= MAX(1) -> stops,
+           identical to the old behavior. */
+        param = (hiddev_conn_count() >= KBD_MAX_CONN) ? FALSE : TRUE;
+        GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &param);
     }
     else if(pEvent->gap.opcode == GAP_LINK_TERMINATED_EVENT)
     {

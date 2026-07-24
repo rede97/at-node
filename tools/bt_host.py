@@ -121,11 +121,23 @@ def cmd_status(args):
 
 
 def listen_events(node, secs):
-    """Yield (code, value) EV_KEY events for secs seconds."""
-    fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+    """Yield (code, value) EV_KEY events for secs seconds.
+
+    Follows evdev node re-creation: BlueZ on this VM flaps the uhid
+    device every minute or two (kernel log shows input16->17->18...),
+    so a held fd silently dies. Re-lookup + reopen on any error."""
     end = time.time() + secs
+    fd = None
     try:
         while time.time() < end:
+            if fd is None:
+                node = find_evdev()
+                if not node:
+                    time.sleep(0.2); continue
+                try:
+                    fd = os.open(node, os.O_RDONLY | os.O_NONBLOCK)
+                except OSError:
+                    fd = None; time.sleep(0.2); continue
             try:
                 data = os.read(fd, 24)
                 if len(data) == 24:
@@ -134,8 +146,11 @@ def listen_events(node, secs):
                         yield code, val
             except BlockingIOError:
                 time.sleep(0.05)
+            except OSError:
+                os.close(fd); fd = None   # node vanished — re-follow
     finally:
-        os.close(fd)
+        if fd is not None:
+            os.close(fd)
 
 
 def cmd_listen(args):
