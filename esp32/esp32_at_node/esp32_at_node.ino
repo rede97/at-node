@@ -58,7 +58,7 @@ static WebServer g_http(80);
 static bool      g_wifi_ready = false;
 
 /* --- MQTT client ------------------------------------------------------- */
-static WiFiClient       g_mqtt_wifi;
+static WiFiClientSecure g_mqtt_wifi;
 static PubSubClient     g_mqtt(g_mqtt_wifi);
 static bool             g_mqtt_connected = false;
 static bool             g_mqtt_connect_pending = false;
@@ -731,6 +731,28 @@ static void handle_ir_send(void)
 }
 
 /* --- MQTT client ------------------------------------------------------- */
+static const char* MQTT_CA_CERT = R"EOF(
+-----BEGIN CERTIFICATE-----
+MIIDFTCCAf2gAwIBAgIUeR4LwVptVWTNmEFJT+rG6+1MGm4wDQYJKoZIhvcNAQEL
+BQAwGjEYMBYGA1UEAwwPYXRub2RlLWxvY2FsLWNhMB4XDTI2MDcyNDAyMzYxOFoX
+DTM2MDcyMTAyMzYxOFowGjEYMBYGA1UEAwwPYXRub2RlLWxvY2FsLWNhMIIBIjAN
+BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7FZZ0kDppbeuzBIHdmeqFOreWxX7
+/cRlk6xdh80E1LAwEYs2iby/JxQNauqLZ1BsFOf86wzTkuEmSy/qcsR9yyNwEz2+
+RFQRwEF3FGI/y02TCEgl1RCkKcM9eaGJp2DdtI5+Rib8IISiszM9JP9WfVxvMkrG
+qtccp67H2GpKVtNFt08QbEeCObEma26VFsnFMRDEU6zewb3GOXpKFjTXkf0UbkYM
+cBaRn3rCYtP3dF3YnNXNnRJsDFNcO2DSQtWT0wlz2uQYrcJtKiDN+gzY+6ulCRlk
+G4iwAFnOQVSRw7lMHfJPb85Nxo5/U+zsbrY6bE60ERIYDqgAnwcptyHVdQIDAQAB
+o1MwUTAdBgNVHQ4EFgQUu7bfD4HnVOGCIqoAzl5/L1Tf8mowHwYDVR0jBBgwFoAU
+u7bfD4HnVOGCIqoAzl5/L1Tf8mowDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B
+AQsFAAOCAQEADrl5eLSenj2Zkh4PbimN2eNAmQDZrE3t6jdqjF5Q8VIhFwJVPHad
+zSHuvWa6ZN9W2rgkoe+/XP1SwxUfPJJQBaQoESvYiajZ9A2nqRDqGR4qk5J8G79c
+IwlkYviYJLnIqDq+apb3LC/6bdvUAuwILerIc7CqancynFrZva1S9Ggn0RQ00Rhv
++SKierZMW+Xk9ED5J60yzl9qcydKAG+XVTUGO8oC7aNVuArMfbTQ5WlxEMaUueys
+cZzQ5YIW0qBqzAp812DkzAvqzIOzI4C2zOpq1LxzxlxVmoIY8gEIN6a9XBNnLTiC
+dcHklz6t6u/6dLL/gDCbE4sAFO2opEBnPw==
+-----END CERTIFICATE-----
+)EOF";
+
 static void mqtt_callback(char* topic, byte* payload, unsigned int length)
 {
     Serial.printf("MQTT [%s] ", topic);
@@ -747,7 +769,10 @@ static bool mqtt_connect(void)
     g_mqtt_client_id = "atnode-" + g_hostname;
     g_mqtt_topic_prefix = "atnode/" + g_hostname;
 
-    /* For local testing use plain TCP; use WiFiClientSecure for TLS. */
+    if (g_mqtt_port == 8883) {
+        g_mqtt_wifi.setCACert(MQTT_CA_CERT);
+    }
+
     bool ok;
     if (g_mqtt_user.length() > 0) {
         ok = g_mqtt.connect(g_mqtt_client_id.c_str(), g_mqtt_user.c_str(), g_mqtt_pass.c_str());
