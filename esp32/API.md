@@ -72,6 +72,7 @@ Execute raw AT command.
 - `AT+MQTT=<sub>,<value>`
 - `AT+WIFI=<sub>,<value>`
 - `AT+HTTP=<status|enable,<0|1>|clear|0|1>`
+- `AT+PAIR=<1|0|status>`
 - `AT+NVS=clear`
 - `AT+AP=<0|1>`
 
@@ -363,7 +364,41 @@ Reset the HTTP setting to default (enabled) and remove it from NVS.
 
 ---
 
-## 8. NVS / Factory Reset
+## 8. BLE Advertising
+
+Public BLE advertising is **off by default** for security. The device is not discoverable until you explicitly enter pairing mode.
+
+### GET /at-node/cmd/ble/status
+
+Returns BLE state including `advertising` (currently broadcasting publicly), `pairing_mode`, and `pair_timeout_ms` when public pairing mode is running.
+
+### POST /at-node/cmd/ble/pair
+
+Enter or exit **public pairing mode**.
+
+**Params**:
+- `enable` (int): `1` to enter pairing mode, `0` to exit
+
+**Response**:
+```json
+{"ok": true, "cmd": "ble/pair", "advertising": true, "pairing_mode": true}
+```
+
+**Behavior**:
+- Pairing mode is a **runtime state only**; it is not persisted to NVS.
+- Public advertising automatically stops after **60 seconds** if no host connects/pairs.
+- Once a host is bonded, the device advertises **privately/directed** to that bonded host after disconnect (or on boot). Only that host can reconnect; the device is not publicly discoverable.
+
+**AT equivalents**:
+- `AT+PAIR=1` — enter public pairing mode for 60s
+- `AT+PAIR=0` — exit pairing mode immediately
+- `AT+PAIR=status`
+
+**MQTT equivalent**: `ble/pair?enable=1|0`
+
+---
+
+## 9. NVS / Factory Reset
 
 ### POST /at-node/cmd/nvs/clear
 
@@ -380,7 +415,7 @@ Erase all persisted settings in the `atnode` NVS namespace and restart the devic
 
 ---
 
-## 9. Device Configuration
+## 10. Device Configuration
 
 ### POST /at-node/cmd/config/set
 
@@ -403,7 +438,7 @@ Set device configuration (NVS persistent).
 
 ---
 
-## 10. AP Portal
+## 11. AP Portal
 
 ### POST /at-node/cmd/ap
 

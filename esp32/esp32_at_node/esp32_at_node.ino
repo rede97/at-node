@@ -77,6 +77,8 @@ static struct {
 static WebServer g_http(80);
 static bool      g_wifi_ready = false;
 static bool      g_http_enabled = true;
+static bool      g_pairing_mode = false;   /* default off for security */
+static uint32_t  g_pair_timeout_at = 0;    /* auto-stop advertising deadline */
 
 /* deferred restart (used by NVS clear / factory reset) */
 static uint32_t  g_restart_at = 0;
@@ -138,18 +140,35 @@ static char g_ble_addr_str[18] = "";
  * calling startAdvertising() directly inside onDisconnect can fail with
  * BLE_HS_EBUSY when the disconnect was caused by unpair/bond-clear.    */
 static volatile uint32_t g_adv_restart_at = 0;   /* millis() deadline, 0=none */
+static bool              g_directed_adv_pending = false;
+static NimBLEAddress     g_directed_adv_addr;
 
 /* --- BLE callbacks ---------------------------------------------------- */
 class AtNodeServerCallbacks : public NimBLEServerCallbacks {
 public:
     void onConnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo) override {
         Serial.println("BLE connected");
+        /* Public pairing mode ends once a host connects. */
+        g_pairing_mode = false;
+        g_pair_timeout_at = 0;
+        g_adv_restart_at = 0;
+        g_directed_adv_pending = false;
     }
     void onDisconnect(NimBLEServer* pServer, NimBLEConnInfo& connInfo,
                        int reason) override {
         Serial.printf("BLE disconnected, reason=0x%02X bonded=%d\n",
                       reason, connInfo.isBonded());
-        g_adv_restart_at = millis() + 500;
+        /* After disconnect: public pairing mode is over.
+         * If the peer is bonded, advertise privately/directed to it so only
+         * that host can reconnect. Otherwise stop advertising. */
+        if (connInfo.isBonded()) {
+            g_directed_adv_addr = connInfo.getAddress();
+            g_directed_adv_pending = true;
+            g_adv_restart_at = millis() + 500;
+        } else {
+            g_directed_adv_pending = false;
+            NimBLEDevice::getAdvertising()->stop();
+        }
     }
     void onAuthenticationComplete(NimBLEConnInfo& connInfo) override {
         Serial.printf("BLE auth: bonded=%d encrypted=%d\n",
@@ -312,6 +331,43 @@ static void set_http_enabled(bool enable, bool persist = true)
     } else {
         g_http.stop();
         Serial.println("HTTP server stopped");
+    }
+}
+
+/* Start/stop public pairing-mode advertising.
+ * This is a runtime state only; it is NOT persisted to NVS.
+ * When enabled, public advertising runs for 60s and then stops automatically
+ * if no host connects. After a connection/disconnection, the device falls
+ * back to directed advertising to the bonded peer (or stops if unpaired). */
+static void set_ble_adv_enabled(bool enable)
+{
+    g_pairing_mode = enable;
+    g_adv_restart_at = 0;
+    NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+    if (enable) {
+        adv->stop();
+        adv->start();
+        g_pair_timeout_at = millis() + 60000;
+        Serial.println("BLE public advertising started (60s pairing timeout)");
+    } else {
+        adv->stop();
+        g_pair_timeout_at = 0;
+        Serial.println("BLE advertising stopped");
+    }
+}
+
+static void ble_adv_poll(void)
+{
+    if (!g_pairing_mode) return;
+    if (is_connected()) {
+        g_pair_timeout_at = 0;
+        return;
+    }
+    if (g_pair_timeout_at && (int32_t)(millis() - g_pair_timeout_at) >= 0) {
+        g_pair_timeout_at = 0;
+        Serial.println("BLE pairing timeout, stopping public advertising");
+        g_pairing_mode = false;
+        NimBLEDevice::getAdvertising()->stop();
     }
 }
 
@@ -492,13 +548,21 @@ MQTT subcommands: <code>AT+MQTT=broker|port|ca,&lt;val&gt;</code> and <code>AT+M
 <table>
   <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
   <tr><td>GET</td><td><code>/at-node/cmd/ble/status</code></td><td></td><td>BLE name, address, connected peers, bonded host list</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ble/advertise</code></td><td><code>start=1|0</code></td><td>Start / stop BLE advertising (make device discoverable for pairing)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ble/pair</code></td><td><code>enable=1|0</code></td><td>Enter / exit BLE pairing mode (public advertising, 60s timeout)</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/delete</code></td><td><code>idx</code></td><td>Remove one bonded host (idx from ble/status)</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/clear</code></td><td></td><td>Remove ALL bonded hosts</td></tr>
 </table>
+<p><strong>Public advertising is OFF by default</strong> for security. To pair a new host,
+manually enter pairing mode via <code>AT+PAIR=1</code>,
+<code>POST /at-node/cmd/ble/pair?enable=1</code>, or MQTT <code>ble/pair?enable=1</code>.
+Public advertising runs for <strong>60&nbsp;seconds</strong>; if no host connects within that window,
+it automatically stops and the device becomes undiscoverable again.</p>
+<p>Once a host is bonded, the device will advertise <strong>privately/directed</strong> to that
+bonded host after disconnect (or on boot), so only that host can reconnect. It does <em>not</em>
+broadcast publicly in that state.</p>
 <p>Browser UI: <a href="/at-node/pair">/at-node/pair</a> &mdash; shows connection state,
 controls advertising, lists and removes bonded hosts.
-Pairing flow: make sure the device is advertising, then select
+Pairing flow: make sure the device is in pairing mode, then select
 <code>AT-Node-ESP-XXXX</code> in the host OS Bluetooth settings (Just Works, no PIN).
 After a firmware update that changes GATT services, remove the device in the
 host OS first (hosts cache the GATT table per MAC).</p>
@@ -562,9 +626,9 @@ curl -X POST -d "AT+TAP=100,0,4" http://atnodeesp-c842.local/at-node/at
 # Get JSON status
 curl http://atnodeesp-c842.local/at-node/cmd/status
 
-# BLE: check status, start advertising, clear bonds
+# BLE: check status, enter pairing mode, clear bonds
 curl http://atnodeesp-c842.local/at-node/cmd/ble/status
-curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/advertise?start=1"
+curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/pair?enable=1"
 curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/bonds/clear"
 </pre>
 
@@ -586,6 +650,12 @@ static String build_ble_status_json(void)
     json += ",\"addr\":\"" + String(g_ble_addr_str) + "\"";
     json += ",\"connected\":" + String(is_connected() ? "true" : "false");
     json += ",\"advertising\":" + String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false");
+    json += ",\"pairing_mode\":" + String(g_pairing_mode ? "true" : "false");
+    if (g_pairing_mode && !is_connected() && g_pair_timeout_at) {
+        int32_t remaining = (int32_t)(g_pair_timeout_at - millis());
+        if (remaining < 0) remaining = 0;
+        json += ",\"pair_timeout_ms\":" + String(remaining);
+    }
     json += ",\"peers\":[";
     uint8_t n = g_server ? g_server->getConnectedCount() : 0;
     for (uint8_t i = 0; i < n; i++) {
@@ -627,22 +697,26 @@ static String build_sys_info_json(void)
     json += ",\"services\":[\"keyboard/tap\",\"keyboard/text\",\"keyboard/key\",";
     json += "\"gpio/write\",\"gpio/read\",\"adc/read\",";
     json += "\"i2c/scan\",\"i2c/read\",\"i2c/write\",\"ir/send\",";
-    json += "\"ble/status\",\"ble/advertise\",\"ble/bonds/delete\",\"ble/bonds/clear\",";
+    json += "\"ble/status\",\"ble/pair\",\"ble/bonds/delete\",\"ble/bonds/clear\",";
     json += "\"net/wol\",\"net/ping\",\"sys/info\"]";
     json += "}";
     return json;
 }
 
-static void handle_ble_advertise(void)
+static void handle_ble_pair(void)
 {
-    String start = g_http.arg("start");
-    if (start == "1" || start == "true") {
-        NimBLEDevice::getAdvertising()->start();
-    } else if (start == "0" || start == "false") {
-        NimBLEDevice::getAdvertising()->stop();
+    String val = g_http.arg("enable");
+    if (val.length() == 0) val = g_http.arg("start");
+    if (val == "1" || val == "true") {
+        set_ble_adv_enabled(true);
+    } else if (val == "0" || val == "false") {
+        set_ble_adv_enabled(false);
     }
-    send_json("{\"ok\":true,\"cmd\":\"ble/advertise\",\"advertising\":" +
-              String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false") + "}");
+    String json = "{\"ok\":true,\"cmd\":\"ble/pair\"";
+    json += ",\"advertising\":" + String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false");
+    json += ",\"pairing_mode\":" + String(g_pairing_mode ? "true" : "false");
+    json += "}";
+    send_json(json);
 }
 
 static void handle_ble_bonds_delete(void)
@@ -745,7 +819,7 @@ function refresh(){
   }).catch(()=>{ msg('refresh failed'); });
 }
 function setAdv(on){
-  fetch('/at-node/cmd/ble/advertise?start='+(on?1:0), {method:'POST'})
+  fetch('/at-node/cmd/ble/pair?enable='+(on?1:0), {method:'POST'})
     .then(r=>r.json()).then(()=>{ msg('advertising '+(on?'started':'stopped')); refresh(); });
 }
 function delBond(i){
@@ -1059,6 +1133,16 @@ static void handle_at(void)
             resp = "OK";
         } else if (args == "1" || args == "0") {
             set_http_enabled(args == "1");
+            resp = "OK";
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+PAIR=") || cmd == "AT+PAIR") {
+        String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
+        if (args == "status") {
+            resp = "+PAIR:" + String(g_pairing_mode ? "enabled" : "disabled");
+        } else if (args == "1" || args == "0") {
+            set_ble_adv_enabled(args == "1");
             resp = "OK";
         } else {
             resp = "ERROR";
@@ -1674,6 +1758,20 @@ static String mqtt_exec(const String& method, const String& query)
     if (method == "ble/status") {
         return String("\"ok\":true,\"ble\":") + build_ble_status_json();
     }
+    if (method == "ble/pair") {
+        String val = query_get(query, "enable");
+        if (val.length() == 0) val = query_get(query, "start");
+        if (val == "1" || val == "true") {
+            set_ble_adv_enabled(true);
+            return "\"ok\":true,\"advertising\":" + String(NimBLEDevice::getAdvertising()->isAdvertising() ? "true" : "false") +
+                   ",\"pairing_mode\":true";
+        }
+        if (val == "0" || val == "false") {
+            set_ble_adv_enabled(false);
+            return "\"ok\":true,\"advertising\":false,\"pairing_mode\":false";
+        }
+        return err("missing enable");
+    }
     if (method == "sys/info") {
         return String("\"ok\":true,\"info\":") + build_sys_info_json();
     }
@@ -1952,7 +2050,18 @@ static bool ble_init(void)
     adv->setAppearance(HID_KEYBOARD);
     adv->addServiceUUID(g_hid->getHidService()->getUUID());
     adv->enableScanResponse(false);
-    adv->start();
+
+    /* Never auto-advertise on disconnect; we manage public/directed modes ourselves. */
+    g_server->advertiseOnDisconnect(false);
+
+    /* On boot, if we have a bonded host, advertise privately (directed) to it.
+     * This lets the bonded host reconnect without making us publicly discoverable. */
+    int nb = NimBLEDevice::getNumBonds();
+    if (nb > 0) {
+        NimBLEAddress addr = NimBLEDevice::getBondedAddress(nb - 1);
+        adv->start(0, &addr);
+        Serial.printf("BLE directed advertising started to bonded peer %s\n", addr.toString().c_str());
+    }
 
     Serial.println("BLE keyboard started: " + g_device_name);
     return true;
@@ -1981,6 +2090,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
+        Serial.println("  AT+PAIR=<1|0|status>       BLE public pairing advertising (60s timeout)");
         Serial.println("  AT+NVS=clear                 erase all NVS settings and restart");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
@@ -2313,6 +2423,17 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+PAIR=") || line == "AT+PAIR") {
+        String args = (line.length() > 8) ? line.substring(8) : String("status");
+        if (args == "status") {
+            Serial.println("+PAIR:" + String(g_pairing_mode ? "enabled" : "disabled"));
+            Serial.println("OK");
+        } else if (args == "1" || args == "0") {
+            set_ble_adv_enabled(args == "1");
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
     } else if (line.startsWith("AT+NVS=")) {
         String sub = line.substring(7);
         if (sub == "clear") {
@@ -2404,7 +2525,7 @@ void setup(void)
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
         g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
         g_http.on("/at-node/cmd/ble/status", HTTP_GET, handle_ble_status);
-        g_http.on("/at-node/cmd/ble/advertise", HTTP_POST, handle_ble_advertise);
+        g_http.on("/at-node/cmd/ble/pair", HTTP_POST, handle_ble_pair);
         g_http.on("/at-node/cmd/ble/bonds/delete", HTTP_POST, handle_ble_bonds_delete);
         g_http.on("/at-node/cmd/ble/bonds/clear", HTTP_POST, handle_ble_bonds_clear);
         g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
@@ -2462,12 +2583,20 @@ void loop(void)
     type_poll();
     mqtt_poll();
     ap_portal_poll();
+    ble_adv_poll();
     if (g_adv_restart_at && (int32_t)(millis() - g_adv_restart_at) >= 0) {
         g_adv_restart_at = 0;
         if (!is_connected()) {
-            NimBLEDevice::getAdvertising()->stop();   /* clear stale state */
-            NimBLEDevice::startAdvertising();
-            Serial.println("advertising restarted");
+            NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+            adv->stop();   /* clear stale state */
+            if (g_directed_adv_pending) {
+                g_directed_adv_pending = false;
+                adv->start(0, &g_directed_adv_addr);
+                Serial.println("BLE directed advertising restarted");
+            } else if (g_pairing_mode) {
+                adv->start();
+                Serial.println("BLE public advertising restarted");
+            }
         }
     }
     if (g_restart_at && (int32_t)(millis() - g_restart_at) >= 0) {
