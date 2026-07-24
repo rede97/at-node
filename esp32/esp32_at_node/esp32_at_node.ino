@@ -1504,14 +1504,28 @@ static bool ble_init(void)
 }
 
 /* --- serial AT parser --------------------------------------------------- */
-static void handle_serial(void)
+static void serial_exec(const String& line)
 {
-    if (!Serial.available()) return;
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-    if (line.length() == 0) return;
-
     if (line == "AT") {
+        Serial.println("OK");
+    } else if (line == "AT+HELP") {
+        Serial.println("AT-Node ESP32 commands:");
+        Serial.println("  AT / AT+STATUS / AT+VER / AT+HELP");
+        Serial.println("  AT+TAP=<ms>,<mods>,<key>     press+release");
+        Serial.println("  AT+KEY=<mods>,<k1>..<k6>     raw HID report");
+        Serial.println("  AT+MOD=<mask>                modifiers only");
+        Serial.println("  AT+KEY_SEQ=<ms>,<mods>,<k1..6>,... batch reports");
+        Serial.println("  AT+TEXT=<text>               type ASCII text");
+        Serial.println("  AT+CONF=<key>=<val>          name/hostname (NVS)");
+        Serial.println("  AT+BT_LIST / AT+BT_DISC / AT+BT_PAIR");
+        Serial.println("  AT+GPIO_W=<pin>,<level> / AT+GPIO_R=<pin>");
+        Serial.println("  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R / AT+I2C_W");
+        Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
+        Serial.println("  AT+WIFI=ssid|pass|status,<val>");
+        Serial.println("  AT+MQTT=broker|port|connect|status|ca,<val>");
+        Serial.println("  AT+AP=<1|0>                  provisioning AP");
+    } else if (line == "AT+VER") {
+        Serial.println("AT-Node v1.0 [esp32]");
         Serial.println("OK");
     } else if (line == "AT+STATUS") {
         Serial.print("role=esp32_at_node connected=");
@@ -1542,6 +1556,66 @@ static void handle_serial(void)
         }
         send_report();
         Serial.println("OK");
+    } else if (line.startsWith("AT+MOD=")) {
+        g_key_state.mods = parse_uint8(line.substring(7));
+        send_report();
+        Serial.println("OK");
+    } else if (line.startsWith("AT+KEY_SEQ=")) {
+        /* AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,... (groups of 7) */
+        String args = line.substring(11);
+        int vals[128];
+        int n = 0;
+        int start = 0;
+        while (n < 128) {
+            int comma = args.indexOf(',', start);
+            String part = (comma > 0) ? args.substring(start, comma) : args.substring(start);
+            vals[n++] = (int)parse_uint8(part);
+            if (comma < 0) break;
+            start = comma + 1;
+        }
+        if (n < 8 || ((n - 1) % 7) != 0) {
+            Serial.println("ERROR: usage AT+KEY_SEQ=<ms>,<mods>,<k1..6>,...");
+        } else {
+            int d = vals[0];
+            if (d < 1) d = 1;
+            if (d > 200) d = 200;
+            int reports = (n - 1) / 7;
+            for (int r = 0; r < reports; r++) {
+                g_key_state.mods = (uint8_t)vals[1 + r * 7];
+                for (int i = 0; i < 6; i++)
+                    g_key_state.keys[i] = (uint8_t)vals[1 + r * 7 + 1 + i];
+                send_report();
+                delay(d);
+            }
+            Serial.printf("%d reports sent\n", reports);
+            Serial.println("OK");
+        }
+    } else if (line == "AT+BT_LIST") {
+        int nb = NimBLEDevice::getNumBonds();
+        if (nb == 0) {
+            Serial.println("+BT_LIST:none");
+        }
+        for (int i = 0; i < nb; i++) {
+            Serial.printf("+BT_LIST:%d %s\n", i,
+                          NimBLEDevice::getBondedAddress(i).toString().c_str());
+        }
+        Serial.println("OK");
+    } else if (line == "AT+BT_DISC") {
+        if (is_connected()) {
+            std::vector<uint16_t> peers = g_server->getPeerDevices();
+            for (uint16_t h : peers) g_server->disconnect(h);
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR: not connected");
+        }
+    } else if (line == "AT+BT_PAIR") {
+        if (is_connected()) {
+            std::vector<uint16_t> peers = g_server->getPeerDevices();
+            for (uint16_t h : peers) g_server->disconnect(h);
+        }
+        bool ok = NimBLEDevice::deleteAllBonds();
+        Serial.printf("bonds erased: %d\n", ok);
+        Serial.println(ok ? "OK" : "ERROR");
     } else if (line.startsWith("AT+TEXT=")) {
         String text = line.substring(8);
         g_type_text = text;
@@ -1762,6 +1836,28 @@ static void handle_serial(void)
         }
     } else {
         Serial.println("ERROR");
+    }
+}
+
+/* Non-blocking serial reader: accumulates chars, executes on CR or LF.
+ * (readStringUntil has a 1000ms default timeout - any command sent
+ * without LF, e.g. CR-only terminals, stalled 1s per command.)
+ * CRLF terminals: CR executes, the following LF is an empty line and
+ * is skipped.                                                    */
+static void handle_serial(void)
+{
+    static String line;
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\r' || c == '\n') {
+            line.trim();
+            if (line.length() > 0) serial_exec(line);
+            line = "";
+        } else if (line.length() < 255) {
+            line += c;
+        } else {
+            line = "";   /* overflow: drop garbage */
+        }
     }
 }
 
