@@ -18,9 +18,10 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 
 | Variant | Build | Notes |
 |---------|------|-------|
-| kbd | `make main-build` (default) | Production keyboard (Peripheral) |
+| kbd | `make main-build` (default) | Production keyboard (Peripheral, single-mode) |
+| kbd_multi | `make main-build MODE=KBD_MULTI` | Multi-mode keyboard (Peripheral, 3 hosts, seamless `AT+DEV=<target>` switch: target=USB\|BLE1\|BLE2\|BLE3\|ALL) |
 | dongle | `make main-build DONGLE=1` | BLE HID receiver (Central) — verified on two-board rig |
-| dual | `make main-build MODE=DUAL` | Both roles, `AT+ROLE=KBD\|DONGLE` runtime switch (DataFlash flag + soft reset) |
+| dual | `make main-build MODE=DUAL` | Single-mode keyboard + dongle (debug only, `AT+ROLE=KBD\|DONGLE` runtime switch) |
 
 `BLE_MODE` tri-state in `config.h`; `BLE_DONGLE` kept as normalized alias.
 
@@ -34,9 +35,10 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 Build:
 ```bash
 cd software/obj && make --no-print-directory main-build          # kbd (default)
+cd software/obj && make --no-print-directory main-build MODE=KBD_MULTI # kbd_multi: 3-host keyboard
 cd software/obj && make --no-print-directory main-build DONGLE=1 # dongle (after make clean)
-cd software/obj && make --no-print-directory main-build MODE=DUAL # dual: AT+ROLE runtime switch
-tools/ci/build_all.sh                                            # all three -> tools/ci/out/
+cd software/obj && make --no-print-directory main-build MODE=DUAL # dual: single-mode keyboard + dongle (debug)
+tools/ci/build_all.sh                                            # all variants -> tools/ci/out/
 ```
 Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first. xPack/upstream GCC builds broken firmware (interrupt attr) — see `tools/ci/TOOLCHAIN.md`.
 
