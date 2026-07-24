@@ -362,6 +362,13 @@ uint8_t kb_ble_advert_wanted(void)
 {
     return (kb_target & KB_TGT_BLE_ALL) ? 1 : 0;
 }
+/* Active BLE slot index for pair-directed assignment, -1 when USB-only. */
+int8_t kb_ble_active_slot(void)
+{
+    for (uint8_t s = 0; s < KBD_MAX_CONN; s++)
+        if (kb_target & (KB_TGT_BLE1 << s)) return (int8_t)s;
+    return -1;
+}
 #endif /* BLE_HAS_KBD */
 /* AT+KEY=<mods>,<k1>,..,<k6> — raw HID report. Missing args = 0. */
 static int at_cmd_KEY(int argc, char *argv[])  {

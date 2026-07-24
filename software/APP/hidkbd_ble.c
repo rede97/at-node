@@ -125,7 +125,7 @@ static uint8_t scanRspData[] = {
     0 // 0dBm
 };
 
-// Advertising data
+// Advertising data — name field built at runtime by kbd_name_update()
 static uint8_t advertData[] = {
     // flags
     0x02, // length of this data
@@ -138,30 +138,14 @@ static uint8_t advertData[] = {
     LO_UINT16(GAP_APPEARE_HID_KEYBOARD),
     HI_UINT16(GAP_APPEARE_HID_KEYBOARD),
 
-    0x0D,                           // length: AD type(1) + name(12) = 13
-    GAP_ADTYPE_LOCAL_NAME_COMPLETE, // AD Type = Complete local name
-    'A','T','-','N','o','d','e','-', 0,0,0,0,  // XXXX filled by kbd_name_init()
+    0x01,                           // name field length — set at runtime
+    GAP_ADTYPE_LOCAL_NAME_COMPLETE,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,    // up to 14 name chars
 };
 
-/* Device name attribute value — built at runtime by kbd_name_init() as
-   "AT-Node-XXXX" (XXXX = last 2 bytes of the chip MAC). Boards are
-   distinguishable in host pairing lists without encoding the firmware
-   variant — the BLE function is always "keyboard" (2026-07-24). */
+/* Device name attribute value — built at runtime by kbd_name_update()
+   (defined below the slot table, which it reads). */
 static uint8_t attDeviceName[GAP_DEVICE_NAME_LEN];
-
-static void kbd_name_init(void)
-{
-    static const char hex[] = "0123456789ABCDEF";
-    uint8_t mac[6];
-    GetMACAddress(mac);
-    tmos_memcpy(attDeviceName, "AT-Node-", 8);
-    attDeviceName[8]  = hex[(mac[1] >> 4) & 0xF];
-    attDeviceName[9]  = hex[mac[1] & 0xF];
-    attDeviceName[10] = hex[(mac[0] >> 4) & 0xF];
-    attDeviceName[11] = hex[mac[0] & 0xF];
-    attDeviceName[12] = 0;
-    tmos_memcpy(&advertData[sizeof(advertData) - 12], &attDeviceName[0], 12);
-}
 
 // HID Dev configuration
 static ble_hid_dev_cfg_t ble_hid_emu_cfg = {
@@ -189,6 +173,7 @@ static kbd_conn_t kbd_conns[KBD_MAX_CONN] = {
  * addresses are throwaway). */
 #define SLOTMAP_MAGIC  0xA77E0001
 static uint8_t slotmap[KBD_MAX_CONN][6];   /* all-0xFF = free */
+static void kbd_name_update(void);          /* defined after slotmap_find */
 
 static void slotmap_save(void)
 {
@@ -198,6 +183,7 @@ static void slotmap_save(void)
     tmos_memcpy(buf + 4, slotmap, KBD_MAX_CONN * 6);
     EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, sizeof(buf));
     EEPROM_WRITE(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
+    kbd_name_update();   /* slot suffix in the advertised name changed */
 }
 
 static void slotmap_load(void)
@@ -220,6 +206,50 @@ static int slotmap_find(const uint8_t *addr)
     return -1;
 }
 
+/* Where a NEW pairing lands: the AT+DEV-targeted slot if it is truly
+   free (user said "pair into this slot"), else the lowest free one. */
+int8_t kb_ble_active_slot(void);   /* at_cmds.c: target BLE slot, -1=USB */
+
+static int kbd_next_pair_slot(void)
+{
+    int8_t act = kb_ble_active_slot();
+    if (act >= 0 && act < KBD_MAX_CONN &&
+        kbd_conns[act].handle == GAP_CONNHANDLE_INIT &&
+        slotmap[act][0] == 0xFF)
+        return act;
+    for (int s = 0; s < KBD_MAX_CONN; s++)
+        if (kbd_conns[s].handle == GAP_CONNHANDLE_INIT && slotmap[s][0] == 0xFF)
+            return s;
+    return -1;
+}
+
+/* Device name: "AT-Node-XXXX[-N]" — XXXX = last 2 bytes of the chip
+   MAC (boards distinguishable in pairing lists); N = the slot a NEW
+   pairing will land on, so the user sees it before connecting.
+   Rebuilt on every slotmap change (2026-07-24). */
+static void kbd_name_update(void)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    uint8_t mac[6];
+    GetMACAddress(mac);
+    tmos_memset(attDeviceName, 0, GAP_DEVICE_NAME_LEN);
+    tmos_memcpy(attDeviceName, "AT-Node-", 8);
+    int n = 8;
+    attDeviceName[n++] = hex[(mac[1] >> 4) & 0xF];
+    attDeviceName[n++] = hex[mac[1] & 0xF];
+    attDeviceName[n++] = hex[(mac[0] >> 4) & 0xF];
+    attDeviceName[n++] = hex[mac[0] & 0xF];
+    int next = kbd_next_pair_slot();
+    if (next >= 0) {
+        attDeviceName[n++] = '-';
+        attDeviceName[n++] = (uint8_t)('0' + next + 1);
+    }
+    attDeviceName[n] = 0;
+    /* rewrite the advertising name field (offset 7: after flags+appearance) */
+    advertData[7] = (uint8_t)(1 + n);
+    tmos_memcpy(&advertData[8], attDeviceName, (uint8_t)n);
+}
+
 static int kbd_slot_of(uint16_t handle)
 {
     for (int i = 0; i < KBD_MAX_CONN; i++)
@@ -240,20 +270,17 @@ static int kbd_slot_alloc(uint16_t handle, const uint8_t *addr)
             return s;
         }
     }
-    /* new host: lowest TRULY free slot (no live link AND no reservation),
-       then remember it. Reserved-but-absent slots belong to their host
-       and are never handed out (2026-07-24). */
-    for (s = 0; s < KBD_MAX_CONN; s++) {
-        if (kbd_conns[s].handle == GAP_CONNHANDLE_INIT &&
-            slotmap[s][0] == 0xFF) {
-            kbd_conns[s].handle = handle;
-            if (addr) {
-                tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
-                tmos_memcpy(slotmap[s], addr, 6);
-                slotmap_save();
-            }
-            return s;
+    /* new host: pair-directed slot (active target if free), else the
+       lowest truly-free slot; a reservation is remembered. */
+    s = kbd_next_pair_slot();
+    if (s >= 0) {
+        kbd_conns[s].handle = handle;
+        if (addr) {
+            tmos_memcpy(kbd_conns[s].addr, (void *)addr, 6);
+            tmos_memcpy(slotmap[s], addr, 6);
+            slotmap_save();
         }
+        return s;
     }
     return -1;  /* no free slot — all reserved or connected */
 }
@@ -454,8 +481,9 @@ void ble_hid_emu_init(void)
 {
     ble_hid_emu_task_id = TMOS_ProcessEventRegister(ble_hid_emu_process_event);
 
-    kbd_name_init();   /* build "AT-Node-XXXX" before advert data is set */
+    kbd_name_update(); /* build "AT-Node-XXXX[-N]" before advert data is set */
     slotmap_load();    /* restore persistent host->slot bindings */
+    kbd_name_update(); /* ...then apply the real next-pair slot */
 
     // Setup the GAP Peripheral Role Profile
     {
