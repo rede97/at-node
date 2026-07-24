@@ -296,6 +296,29 @@ void save_config(const String& key, const String& value)
     prefs.end();
 }
 
+/* Clear all MQTT settings (NVS + runtime) and disconnect. */
+static void mqtt_clear_config(void)
+{
+    prefs.begin("atnode", false);
+    prefs.remove("mqtt_broker");
+    prefs.remove("mqtt_port");
+    prefs.remove("mqtt_user");
+    prefs.remove("mqtt_pass");
+    prefs.remove("mqtt_ca_cert");
+    prefs.remove("mqtt_ca_fp");
+    prefs.end();
+    if (g_mqtt_connected) {
+        g_mqtt.disconnect();
+        g_mqtt_connected = false;
+    }
+    g_mqtt_broker  = "";
+    g_mqtt_port    = 8883;
+    g_mqtt_user    = "";
+    g_mqtt_pass    = "";
+    g_mqtt_ca_cert = "";
+    g_mqtt_ca_fp   = "";
+}
+
 /* --- typing queue ------------------------------------------------------ */
 static void type_poll(void)
 {
@@ -916,6 +939,9 @@ static void handle_at(void)
             } else if (sub == "connect") {
                 bool ok = mqtt_connect();
                 resp = ok ? "OK" : "ERROR";
+            } else if (sub == "clear") {
+                mqtt_clear_config();
+                resp = "OK";
             } else if (sub == "status") {
                 resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected");
             } else if (sub == "ca") {
@@ -1830,7 +1856,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R / AT+I2C_W");
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
-        Serial.println("  AT+MQTT=broker|port|connect|status|ca,<val>");
+        Serial.println("  AT+MQTT=broker|port|connect|status|ca|clear,<val>");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
@@ -2070,6 +2096,9 @@ static void serial_exec(const String& line)
             if (sub == "broker") {
                 g_mqtt_broker = val;
                 save_config("mqtt_broker", val);
+                Serial.println("OK");
+            } else if (sub == "clear") {
+                mqtt_clear_config();
                 Serial.println("OK");
             } else if (sub == "port") {
                 g_mqtt_port = val.toInt();
