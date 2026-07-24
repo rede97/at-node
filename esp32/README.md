@@ -36,7 +36,8 @@
 - ✅ IR：RMT 38kHz 载波，NEC/SIRC/RAW，GPIO4
 - ✅ 串口全功能：与 HTTP 等价的完整 AT 命令集
 - ✅ 测试脚本：`tools/test_esp32_at_node.py` 全 PASS
-- ✅ MQTT：本地 TLS broker 连接/发布成功，自签名 CA 验证；plain TCP (1883) 和 TLS (8883) 双模式
+- ✅ WiFi 凭据：NVS 持久化，HTTP/串口可配置
+- ✅ MQTT：本地 TLS broker 连接/发布成功，自签名 CA 验证；plain TCP (1883) 和 TLS (8883) 双模式；CA 证书/SHA256 指纹可配置
 - 下一步：远程 MQTT broker 实测、connect 阻塞优化、更多外设
 
 ## 快速开始
