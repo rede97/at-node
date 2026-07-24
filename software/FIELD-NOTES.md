@@ -75,6 +75,15 @@
   按 MAC 不过滤地扫,确认"在广播但数据坏"
 - **教训**:手写 AD 结构偏移极易错;改完立刻用 nrfConnect/dongle 双端验证广播名
 
+### F15. BSS 零值 ≠ "未设置"（出厂态名字 0000)
+
+- **现象**:AT+FACTORY 后广播名变成 `AT-Node-0000-1`(MAC 后缀全零)
+- **根因**:slotmac 在 BSS 里零初始化,而"派生默认 MAC"的判定条件是
+  `== 0xFF`;出厂擦页重启后 slotmac=0x00 不满足条件,默认值永远不派生,
+  名字按全零 MAC 生成(GAP_ConfigDeviceAddr 拒绝零地址才没把空中 MAC 也搞坏)
+- **修法**:slotmap_load 开头把 slotmac 也 memset 成 0xFF,统一"未设置"语义
+- **教训**:多维持久数组的"空"语义要统一(0xFF),BSS 零是陷阱;出厂路径必须实测
+
 ## 2026-07-24 Linux 蓝牙主机测试环境(VMware)
 
 ### F9. BlueZ uhid 抖动(不可根治,环境级)

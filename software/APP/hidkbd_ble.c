@@ -203,6 +203,9 @@ static void slotmap_load(void)
     uint32_t magic = 0;
     tmos_memset(slotmap, 0xFF, sizeof(slotmap));
     tmos_memset(slotname, 0, sizeof(slotname));
+    tmos_memset(slotmac, 0xFF, sizeof(slotmac));   /* BSS zero != "unset":
+        fresh boot on an erased page must still hit the derive branch
+        below (bug 2026-07-24: name came out "AT-Node-0000-1") */
     for (int s = 0; s < KBD_MAX_CONN; s++) slotpace[s] = SLOTPACE_DFLT;
     EEPROM_READ(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
     tmos_memcpy(&magic, buf, 4);
