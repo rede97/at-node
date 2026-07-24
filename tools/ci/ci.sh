@@ -33,7 +33,7 @@ setup_toolchain() {
     fi
     
     # Download xPack toolchain if not present
-    XPACK_VERSION="8.2.0-3.1"
+    XPACK_VERSION="15.2.0-1"
     XPACK_NAME="xpack-riscv-none-elf-gcc-${XPACK_VERSION}-linux-x64"
     XPACK_URL="https://github.com/xpack-dev-tools/riscv-none-elf-gcc-xpack/releases/download/v${XPACK_VERSION}/${XPACK_NAME}.tar.gz"
     
