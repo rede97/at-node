@@ -30,6 +30,7 @@
 #include <NimBLEDevice.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/x509_crt.h>
+#include "ap_portal.h"
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLECharacteristic.h>
@@ -39,9 +40,25 @@
 #define DEFAULT_DEVICE_NAME "AT-Node-ESP"
 #define DEFAULT_HOSTNAME    "atnodeesp"
 
-static Preferences prefs;
-static String g_device_name;
-static String g_hostname;
+Preferences prefs;
+String g_device_name;
+String g_hostname;
+
+static String get_default_name(void)
+{
+    uint64_t mac = ESP.getEfuseMac();
+    char suffix[8];
+    sprintf(suffix, "%04X", (uint16_t)(mac & 0xFFFF));
+    return String(DEFAULT_DEVICE_NAME) + "-" + String(suffix);
+}
+
+static String get_default_hostname(void)
+{
+    uint64_t mac = ESP.getEfuseMac();
+    char suffix[8];
+    sprintf(suffix, "%04X", (uint16_t)(mac & 0xFFFF));
+    return String(DEFAULT_HOSTNAME) + "-" + String(suffix);
+}
 
 /* --- BLE globals ------------------------------------------------------ */
 static NimBLEServer*        g_server        = nullptr;
@@ -185,8 +202,8 @@ static bool is_connected(void)
 static void load_config(void)
 {
     prefs.begin("atnode", false);
-    g_device_name = prefs.getString("name", DEFAULT_DEVICE_NAME);
-    g_hostname    = prefs.getString("hostname", DEFAULT_HOSTNAME);
+    g_device_name = prefs.getString("name", get_default_name());
+    g_hostname    = prefs.getString("hostname", get_default_hostname());
     g_wifi_ssid   = prefs.getString("wifi_ssid", WIFI_SSID);
     g_wifi_pass   = prefs.getString("wifi_pass", WIFI_PASSWORD);
     g_mqtt_broker = prefs.getString("mqtt_broker", "");
@@ -198,7 +215,7 @@ static void load_config(void)
     prefs.end();
 }
 
-static void save_config(const String& key, const String& value)
+void save_config(const String& key, const String& value)
 {
     prefs.begin("atnode", false);
     prefs.putString(key.c_str(), value);
@@ -244,7 +261,19 @@ static void send_json(const String& json, int code = 200)
     g_http.send(code, "application/json", json);
 }
 
-static void handle_status(void)
+static void send_html(const String& html, int code = 200)
+{
+    g_http.sendHeader("Access-Control-Allow-Origin", "*");
+    g_http.send(code, "text/html", html);
+}
+
+static void handle_root(void)
+{
+    g_http.sendHeader("Location", "/at-node/status");
+    g_http.send(302, "text/plain", "");
+}
+
+static void handle_status_html(void)
 {
     String json = "{";
     json += "\"device\":\"" + g_device_name + "\"";
@@ -253,9 +282,142 @@ static void handle_status(void)
     json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
     json += ",\"ble_addr\":\"" + String(NimBLEDevice::getAddress().toString().c_str()) + "\"";
     json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
+    json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
+    json += "}";
+
+    String html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>AT-Node Status</title>";
+    html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
+    html += "<style>body{font-family:monospace;padding:16px;max-width:600px;margin:auto;}";
+    html += "pre{background:#f5f5f5;padding:12px;border-radius:6px;overflow:auto;}";
+    html += "a{color:#007aff;}</style></head><body>";
+    html += "<h1>AT-Node Status</h1>";
+    html += "<pre>" + json + "</pre>";
+    html += "<p><a href=\"/at-node/help\">API Help</a> | ";
+    html += "<a href=\"/at-node/cmd/status\">JSON</a></p>";
+    html += "<p><small>HTTP interface is primarily for agents (JSON API). Use /at-node/* endpoints.</small></p>";
+    html += "</body></html>";
+    send_html(html);
+}
+
+static const char* HELP_PAGE_HTML = R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AT-Node Help</title>
+<style>
+  body{font-family:monospace;padding:16px;max-width:800px;margin:auto;}
+  h1,h2{margin-top:1em;}
+  code{background:#f5f5f5;padding:2px 4px;border-radius:4px;}
+  table{border-collapse:collapse;width:100%;margin:8px 0;}
+  th,td{border:1px solid #ddd;padding:6px;text-align:left;}
+  th{background:#f5f5f5;}
+  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;}
+</style>
+</head>
+<body>
+<h1>AT-Node HTTP API</h1>
+<p>This interface is designed for agents. All endpoints return JSON unless noted.</p>
+
+<h2>Device Discovery</h2>
+<div class="note">
+  <strong>mDNS</strong>: This device advertises itself via mDNS as <code>&lt;hostname&gt;.local</code>.
+  Agents can discover the device IP by resolving the mDNS hostname or by scanning the local network.
+  The hostname is configurable via <code>AT+CONF=hostname=...</code> or <code>/at-node/cmd/config/set</code>.
+  Default: <code>atnodeesp-&lt;chipid&gt;.local</code> (e.g., <code>atnodeesp-c842.local</code>).
+</div>
+
+<h2>Status</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Format</th><th>Description</th></tr>
+  <tr><td>GET</td><td><code>/at-node/status</code></td><td>HTML</td><td>Device status page</td></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/status</code></td><td>JSON</td><td>Device status (pure JSON)</td></tr>
+  <tr><td>GET</td><td><code>/at-node/help</code></td><td>HTML</td><td>This help page</td></tr>
+</table>
+
+<h2>Raw AT Command</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
+  <tr><td>POST</td><td><code>/at-node/at</code></td><td><code>AT+...</code></td><td>Execute raw AT command (text/plain)</td></tr>
+</table>
+
+<h2>Keyboard</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/tap</code></td><td><code>mods,k,ms</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/text</code></td><td><code>s,ms,gap</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/key</code></td><td><code>mods,k0..k5</code></td></tr>
+</table>
+
+<h2>Peripherals</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/gpio/write</code></td><td><code>pin,level</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/gpio/read</code></td><td><code>pin</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/adc/read</code></td><td><code>ch</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/scan</code></td><td><code></code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/read</code></td><td><code>addr,reg,len</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/write</code></td><td><code>addr,reg,data</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ir/send</code></td><td><code>protocol,data,bits</code></td></tr>
+</table>
+
+<h2>Configuration</h2>
+<table>
+  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>ca_cert or fp</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ap</code></td><td><code>1=start,0=stop</code></td></tr>
+</table>
+
+<h2>Examples</h2>
+<pre>
+# Tap key 'a' (0x04)
+curl -X POST "http://atnodeesp-c842.local/at-node/cmd/keyboard/tap?mods=0&k=4&ms=100"
+
+# Type text
+curl -X POST "http://atnodeesp-c842.local/at-node/cmd/keyboard/text?s=Hello&ms=60&gap=100"
+
+# Raw AT command
+curl -X POST -d "AT+TAP=100,0,4" http://atnodeesp-c842.local/at-node/at
+
+# Get JSON status
+curl http://atnodeesp-c842.local/at-node/cmd/status
+</pre>
+
+<p><a href="/at-node/status">Back to Status</a></p>
+</body>
+</html>
+)HTML";
+
+static void handle_help_html(void)
+{
+    send_html(HELP_PAGE_HTML);
+}
+
+static void handle_cmd_status(void)
+{
+    String json = "{";
+    json += "\"device\":\"" + g_device_name + "\"";
+    json += ",\"hostname\":\"" + g_hostname + "\"";
+    json += ",\"connected\":" + String(is_connected() ? "true" : "false");
+    json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
+    json += ",\"ble_addr\":\"" + String(NimBLEDevice::getAddress().toString().c_str()) + "\"";
+    json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
+    json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
+    json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
     json += "}";
     send_json(json);
 }
+
+/* forward declarations for IR functions defined later */
+static bool ir_send_raw(const uint16_t* timings, size_t count);
+static bool ir_send_nec(uint32_t data);
+static bool ir_send_sirc(uint32_t data, int bits);
 
 static void handle_at(void)
 {
@@ -478,6 +640,17 @@ static void handle_at(void)
             } else {
                 resp = "ERROR";
             }
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+AP=")) {
+        int val = cmd.substring(6).toInt();
+        if (val == 1) {
+            ap_portal_start();
+            resp = "OK";
+        } else if (val == 0) {
+            ap_portal_stop();
+            resp = "OK";
         } else {
             resp = "ERROR";
         }
@@ -1274,6 +1447,17 @@ static void handle_serial(void)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+AP=")) {
+        int val = line.substring(6).toInt();
+        if (val == 1) {
+            ap_portal_start();
+            Serial.println("OK");
+        } else if (val == 0) {
+            ap_portal_stop();
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
     } else {
         Serial.println("ERROR");
     }
@@ -1287,6 +1471,9 @@ void setup(void)
     Serial.println("\r\nesp32_at_node start");
 
     load_config();
+
+    /* Check AP trigger button (GPIO10) */
+    bool ap_triggered = ap_portal_check_button();
 
     WiFi.mode(WIFI_STA);
     WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
@@ -1310,7 +1497,10 @@ void setup(void)
             Serial.println("mDNS init failed");
         }
 
-        g_http.on("/at-node/status", HTTP_GET, handle_status);
+        g_http.on("/", HTTP_GET, handle_root);
+        g_http.on("/at-node/status", HTTP_GET, handle_status_html);
+        g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
+        g_http.on("/at-node/help", HTTP_GET, handle_help_html);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
@@ -1360,5 +1550,6 @@ void loop(void)
     handle_serial();
     type_poll();
     mqtt_poll();
+    ap_portal_poll();
     delay(2);
 }
