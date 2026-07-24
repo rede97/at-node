@@ -178,6 +178,7 @@ static uint8_t  slotmap[KBD_MAX_CONN][6];             /* host addrs, all-0xFF = 
 static char     slotname[KBD_MAX_CONN][SLOTNAME_LEN]; /* "" = unnamed */
 static uint16_t slotpace[KBD_MAX_CONN];               /* KEY_STR pace ms */
 static uint8_t  slotmac[KBD_MAX_CONN][6];             /* per-slot OWN MAC, all-0xFF = derive */
+static uint8_t  slottype[KBD_MAX_CONN];               /* peer addr type (for directed adv) */
 static void kbd_name_update(void);          /* defined after slotmap_find */
 
 static void slotmap_save(void)
@@ -192,6 +193,9 @@ static void slotmap_save(void)
     tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6 + KBD_MAX_CONN * SLOTNAME_LEN +
                 KBD_MAX_CONN * sizeof(uint16_t),
                 slotmac, KBD_MAX_CONN * 6);
+    tmos_memcpy(buf + 4 + KBD_MAX_CONN * 6 + KBD_MAX_CONN * SLOTNAME_LEN +
+                KBD_MAX_CONN * sizeof(uint16_t) + KBD_MAX_CONN * 6,
+                slottype, KBD_MAX_CONN);
     EEPROM_ERASE(APP_SLOTMAP_FLASH_ADDR, sizeof(buf));
     EEPROM_WRITE(APP_SLOTMAP_FLASH_ADDR, buf, sizeof(buf));
     kbd_name_update();   /* slot suffix in the advertised name changed */
@@ -226,6 +230,11 @@ static void slotmap_load(void)
         const uint8_t *mc = pc + KBD_MAX_CONN * sizeof(uint16_t);
         for (int s = 0; s < KBD_MAX_CONN; s++)
             tmos_memcpy(slotmac[s], mc + s * 6, 6);
+        const uint8_t *ty = mc + KBD_MAX_CONN * 6;
+        for (int s = 0; s < KBD_MAX_CONN; s++) {
+            slottype[s] = ty[s];
+            if (slottype[s] > 1) slottype[s] = 1;   /* unknown/legacy -> random */
+        }
     }
     /* derive default per-slot MACs from the chip MAC (last byte + slot);
        BLE1 keeps the chip MAC so existing bonds stay valid */
@@ -343,6 +352,15 @@ static int kbd_slot_alloc(uint16_t handle, const uint8_t *addr)
         return s;
     }
     return -1;  /* no free slot — all reserved or connected */
+}
+
+/* record the peer's address type for directed advertising */
+static void kbd_slot_set_type(uint8_t slot, uint8_t type)
+{
+    if (slot < KBD_MAX_CONN && slottype[slot] != type && type <= 1) {
+        slottype[slot] = type;
+        slotmap_save();
+    }
 }
 
 uint8_t kb_ble_connected(void)  { return kb_ble_conn_count() > 0 ? 1 : 0; }
@@ -576,14 +594,15 @@ static int8_t pair_slot = -1;   /* slot the window pairs into, -1 = closed */
 int8_t kb_ble_pair_slot(void) { return pair_slot; }
 
 /* Centralized advertising policy (single-active model, 2026-07-24):
- *   pairing window open                    -> ON  (findable for pairing)
+ *   pairing window open                    -> ON  general (findable)
  *   any link up                            -> OFF (quiet while connected)
- *   active slot reserved, host away        -> ON  (waiting for it home)
+ *   active slot reserved, host away        -> ON  DIRECTED at that host
  *   otherwise (free active slot / USB)     -> OFF (nothing to wait for)
  */
 static void kbd_adv_update(void)
 {
     uint8_t want;
+    uint8_t evt_type = GAP_ADTYPE_ADV_IND;
     extern uint8_t kb_ble_advert_wanted(void);
     if (pair_slot >= 0) {
         want = TRUE;
@@ -593,7 +612,19 @@ static void kbd_adv_update(void)
         int8_t act = kb_ble_active_slot();
         want = (act >= 0 && slotmap[act][0] != 0xFF && kb_ble_advert_wanted())
                ? TRUE : FALSE;
+        if (want) {
+            /* directed advertising straight at the bonded host — faster
+               reconnect and invisible to every other scanner */
+            evt_type = GAP_ADTYPE_ADV_LDC_DIRECT_IND;
+            GAPRole_SetParameter(GAPROLE_ADV_DIRECT_TYPE, 1, &slottype[act]);
+            GAPRole_SetParameter(GAPROLE_ADV_DIRECT_ADDR, B_ADDR_LEN,
+                                 slotmap[act]);
+        }
     }
+    /* event type must change while advertising is off */
+    uint8_t off = FALSE;
+    GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &off);
+    GAPRole_SetParameter(GAPROLE_ADV_EVENT_TYPE, sizeof(uint8_t), &evt_type);
     GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &want);
 }
 
@@ -837,6 +868,7 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
         }
         int slot = kbd_slot_alloc(event->connectionHandle, event->devAddr);
         if (slot >= 0) {
+            kbd_slot_set_type((uint8_t)slot, event->devAddrType);
             tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
             AT_Response("+BT_CONNECTED:%d", slot + 1);   /* URC, 1-based slot (BLE1..) */
             PRINT("Connected.. slot %d\n", slot);

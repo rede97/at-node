@@ -908,12 +908,56 @@ static int bt_scan_dgl(int argc, char *argv[]) {
                 filter ? " filter=" : "", filter ? filter : "");
     return 0;
 }
-/* AT+BT_CONN=<idx|addr|name> — connect a scan result. Name is a
-   case-insensitive substring (strongest RSSI wins); 12-hex is an
-   address; small decimal is an index. Outcome is async:
-   +BT_CONN: connected / armed (boot mode) / err ... */
+/* AT+BT_CONN — three forms (owner design 2026-07-24):
+ *   AT+BT_CONN=mac,AA:BB:CC:DD:EE:FF[,sec]  scan-and-match, default 5s
+ *   AT+BT_CONN=name,<substring>[,sec]       scan-and-match, default 5s
+ *   AT+BT_CONN=index,<n>                    immediate, from the scan list
+ * Legacy: AT+BT_CONN=<idx|addr12hex|name-substring> (immediate). */
 static int bt_conn_dgl(int argc, char *argv[]) {
-    if (argc < 2) { AT_Response("usage: AT+BT_CONN=<idx|addr|name>"); return -1; }
+    if (argc < 2) {
+        AT_Response("usage: AT+BT_CONN=mac|name|index,<value>[,<sec>]");
+        return -1;
+    }
+    if (!strcasecmp(argv[1], "mac") || !strcasecmp(argv[1], "name")) {
+        if (argc < 3) { AT_Response("usage: AT+BT_CONN=%s,<value>[,<sec>]", argv[1]); return -1; }
+        int is_mac = !strcasecmp(argv[1], "mac");
+        uint8_t addr[6] = { 0 };
+        const char *name = argv[2];
+        if (is_mac) {
+            /* parse AA:BB:CC:DD:EE:FF -> LSB-first bytes */
+            const char *p = argv[2];
+            for (int i = 5; i >= 0; i--) {
+                int v = 0;
+                for (int k = 0; k < 2; k++) {
+                    char c = *p++;
+                    v <<= 4;
+                    if (c >= '0' && c <= '9') v |= c - '0';
+                    else if ((c | 0x20) >= 'a' && (c | 0x20) <= 'f') v |= (c | 0x20) - 'a' + 10;
+                    else { AT_Response("ERROR: bad MAC"); return -1; }
+                }
+                addr[i] = (uint8_t)v;
+                if (i > 0 && *p++ != ':') { AT_Response("ERROR: bad MAC"); return -1; }
+            }
+        }
+        int sec = (argc > 3) ? atoi(argv[3]) : 5;
+        if (ble_dongle_connect_watch(is_mac, addr, name, (uint8_t)sec) < 0) {
+            AT_Response("ERROR: busy");
+            return -1;
+        }
+        AT_Response("watching %ds for %s...", sec, argv[2]);
+        return 0;
+    }
+    if (!strcasecmp(argv[1], "index")) {
+        if (argc < 3) { AT_Response("usage: AT+BT_CONN=index,<n>"); return -1; }
+        int idx = atoi(argv[2]);
+        if (ble_dongle_connect((uint8_t)idx) < 0) {
+            AT_Response("ERROR: no such index or busy — run AT+BT_SCAN first");
+            return -1;
+        }
+        AT_Response("connecting #%d...", idx);
+        return 0;
+    }
+    /* legacy immediate form */
     int idx = ble_dongle_find(argv[1]);
     if (idx < 0 || ble_dongle_connect((uint8_t)idx) < 0) {
         AT_Response("ERROR: no match or busy — run AT+BT_SCAN first");
@@ -1031,23 +1075,6 @@ static int bt_pair_kbd(int argc, char *argv[]) {
     kb_ble_pair_open(slot);
     return 0;
 }
-/* AT+FACTORY — wipe EVERYTHING: terminate links, erase all bonds,
-   clear all slot reservations/names/paces/MACs, then soft reset.
-   Back to factory defaults (per-slot MACs re-derive from chip MAC). */
-static int at_cmd_FACTORY(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    AT_Response("factory reset...");
-#ifdef DEBUG
-    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();
-#endif
-    kb_ble_disconnect();
-    kb_ble_forget_bonds();
-    kb_ble_factory_reset();
-    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
-    SYS_ResetExecute();
-    return 0;   /* unreachable */
-}
-
 /* AT+BT_UNBIND=<BLE1|BLE2|BLE3> — forget ONE host: clears its slot
    reservation and its bond record. The slot becomes free for a new
    pairing; the other hosts are untouched (F1.12). */
@@ -1065,6 +1092,29 @@ static int bt_unbind_kbd(int argc, char *argv[]) {
     return 0;
 }
 #endif /* BLE_HAS_KBD */
+
+/* AT+FACTORY — wipe EVERYTHING: terminate links, erase all bonds,
+   clear all slot reservations/names/paces/MACs, then soft reset.
+   Back to factory defaults (per-slot MACs re-derive from chip MAC). */
+static int at_cmd_FACTORY(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    AT_Response("factory reset...");
+#ifdef DEBUG
+    while ((R8_UART1_LSR & RB_LSR_TX_ALL_EMP) == 0) __nop();
+#endif
+#if BLE_HAS_KBD
+    kb_ble_disconnect();
+    kb_ble_forget_bonds();
+    kb_ble_factory_reset();
+#endif
+#if BLE_HAS_DONGLE
+    ble_dongle_disconnect();
+    bt_pair_dgl(argc, argv);      /* erases the dongle-side bond too */
+#endif
+    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
+    SYS_ResetExecute();
+    return 0;   /* unreachable */
+}
 
 /* Runtime-role guards — no-ops in single-role builds */
 #if BLE_MODE == BLE_MODE_DUAL

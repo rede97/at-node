@@ -71,6 +71,15 @@ extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
 static int8_t   dgl_pend_scan_sec = -1;
 static int8_t   dgl_pend_conn_idx = -1;
 
+/* ---- watch connect (AT+BT_CONN=mac|name,...,<sec>) ------------------
+ * Scan-and-match: keep scanning until the target appears, connect on
+ * first hit, error on scan-window timeout. Index mode stays immediate
+ * (owner design 2026-07-24). */
+static uint8_t dgl_watch_active = 0;
+static uint8_t dgl_watch_is_mac = 0;
+static uint8_t dgl_watch_addr[6];           /* LSB-first */
+static char    dgl_watch_name[DGL_NAME_LEN + 1];
+
 /* GATT discovery sub-states */
 enum {
     DISC_IDLE = 0,
@@ -369,6 +378,20 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
                 rec->addr[2], rec->addr[1], rec->addr[0],
                 rec->rssi, rec->name[0] ? rec->name : "?",
                 is_hid ? " [HID]" : "");
+
+    /* watch connect: a hit stops the scan and connects immediately */
+    if (dgl_watch_active) {
+        int hit = dgl_watch_is_mac
+                ? tmos_memcmp(info->addr, dgl_watch_addr, B_ADDR_LEN)
+                : (name[0] && strcasestr(name, dgl_watch_name));
+        if (hit) {
+            dgl_watch_active = 0;
+            GAPRole_CentralCancelDiscovery();
+            dgl_state = DGL_IDLE;
+            dgl_pend_conn_idx = (int8_t)pos;
+            tmos_set_event(dgl_task_id, DGL_CONN_EVT);
+        }
+    }
 }
 
 /* ===== GATT discovery ===== */
@@ -794,6 +817,10 @@ static void dgl_event_cb(gapRoleEvent_t *pEvent)
         break;
 
     case GAP_DEVICE_DISCOVERY_EVENT:   /* scan window complete */
+        if (dgl_watch_active) {
+            dgl_watch_active = 0;
+            AT_Response("+BT_CONN: timeout");
+        }
         if (dgl_state == DGL_SCANNING) {
             AT_Response("+BT_SCAN: done %d", dgl_scan_count);
             dgl_state = DGL_IDLE;
@@ -1040,6 +1067,25 @@ int ble_dongle_scan(uint8_t seconds, const char *filter)
     dgl_pend_scan_sec = (int8_t)seconds;
     tmos_set_event(dgl_task_id, DGL_SCAN_EVT);
     return 0;
+}
+
+int ble_dongle_connect_watch(int is_mac, const uint8_t *addr,
+                             const char *name, uint8_t timeout_s)
+{
+    if (dgl_state != DGL_IDLE || dgl_watch_active)
+        return -1;
+    dgl_watch_active = 1;
+    dgl_watch_is_mac = (uint8_t)is_mac;
+    if (is_mac) {
+        tmos_memcpy(dgl_watch_addr, (void *)addr, 6);
+    } else {
+        uint8_t i = 0;
+        while (name[i] && i < DGL_NAME_LEN) { dgl_watch_name[i] = name[i]; i++; }
+        dgl_watch_name[i] = '\0';
+    }
+    if (timeout_s < 1)  timeout_s = 1;
+    if (timeout_s > 30) timeout_s = 30;
+    return ble_dongle_scan(timeout_s, NULL);
 }
 
 int ble_dongle_connect(uint8_t index)
