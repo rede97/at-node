@@ -2,6 +2,8 @@
 
 CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE HID Host (receiver) role. Self-contained SDK.
 
+**ESP32-C3 variant**: network-enabled AT Node with WiFi HTTP / MQTT control plane — see `esp32/PLAN.md` and `esp32/README.md`.
+
 ## Project
 
 - **MCU**: CH582F (RISC-V rv32imac, 60 MHz, 448K Flash / 32K RAM)
@@ -25,6 +27,7 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 - **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` (runtime role in DUAL) — distinguishes identical boards.
 - **RAM budget**: kbd 19076 B (58%) / dongle 19740 B (60%) / dual ~21000 B (64%). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
 - **Two-board dev rig**: kbd board (test keyboard, inject keys via `AT+KEY`) + dongle board (receiver). `tools/test_dongle_loop.py` + `tools/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
+- **ESP32-C3 variant**: `esp32/esp32_at_node/` — WiFi HTTP (`/at-node/*`) + MQTT + BLE HID keyboard, full AT command parity with CH582. Build with `esp32/esp32_at_node/build.ps1`.
 
 ## Commands
 

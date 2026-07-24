@@ -141,9 +141,9 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | E3 | GPIO + ADC | `/at-node/cmd/gpio/{write,read}`, `/at-node/cmd/adc/read` | ✅ 已完成（HTTP/串口/AT 全通，测试通过） |
 | E4 | I2C | `/at-node/cmd/i2c/scan` + 读写 | ✅ 已完成（HTTP/串口/AT 全通，测试通过） |
 | E5 | IR (RMT) | `/at-node/cmd/ir/send` | ✅ 已完成（RMT 38kHz 载波，NEC/SIRC/RAW 全通） |
-| E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | ✅ 已完成（AT/TAP/TEXT/CONF/GPIO/ADC/I2C/IR 全通） |
+| E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | ✅ 已完成（AT/TAP/TEXT/CONF/GPIO/ADC/I2C/IR/MQTT 全通） |
 | E7 | 测试脚本 | `tools/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
-| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | ✅ 已实现（WiFiClientSecure + PubSubClient，NVS 配置持久化；待真实 broker 实测） |
+| E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | ✅ 已完成（本地 broker 连接/发布成功；TLS 预留 WiFiClientSecure） |
 
 ## 10. 与 CH582 版的命令语义对齐
 
@@ -164,10 +164,17 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | `AT+CONF` | `POST /at-node/cmd/config/set` | NVS 持久化，串口/HTTP 双通道 |
 | `AT+BT_*` | 不实现 | ESP32 版不做 BLE 主机/接收器 |
 
-## 11. 已决策事项
+## 10. 已决策事项
 
 - **IR 发送**：纳入 E5，使用 RMT 外设，参考开源 RMT 驱动方案。
 - **设备配置**：NVS 持久化，HTTP + 串口双通道修改。
 - **MQTT**：预留接口，必须 TLS，broker 配置由运行时决定。
 - **TLS**：MQTT 必须 TLS；HTTP 仅本地网络，无 TLS。
 - **串口与 HTTP**：同等优先级，均实现完整 AT 命令集。
+
+## 11. 后续工作
+
+- [ ] MQTT 远程 broker 实测（TLS + CA 证书）。
+- [ ] MQTT connect 阻塞优化（FreeRTOS 任务或 async TCP）。
+- [ ] 更多外设（PWM、SPI、UART 透传等）。
+- [ ] Agent 工作流集成示例。

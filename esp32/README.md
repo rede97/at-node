@@ -36,5 +36,37 @@
 - ✅ IR：RMT 38kHz 载波，NEC/SIRC/RAW，GPIO4
 - ✅ 串口全功能：与 HTTP 等价的完整 AT 命令集
 - ✅ 测试脚本：`tools/test_esp32_at_node.py` 全 PASS
-- ✅ MQTT：WiFiClientSecure + PubSubClient，TLS 预留，NVS 配置持久化（待真实 broker 实测）
-- 下一步：MQTT broker 实测、更多外设、稳定性优化
+- ✅ MQTT：本地 broker 连接/发布成功；TLS 预留 `WiFiClientSecure`
+- 下一步：远程 MQTT broker 实测（TLS）、connect 阻塞优化、更多外设
+
+## 快速开始
+
+1. 拷贝 WiFi 配置：
+   ```powershell
+   Copy-Item wifi_config.h.example wifi_config.h
+   # 编辑 wifi_config.h 填入 SSID 和密码
+   ```
+
+2. 编译/上传：
+   ```powershell
+   cd esp32/esp32_at_node
+   .\build.ps1 -Port COM3
+   ```
+
+3. 与 CH582 dongle 验证 BLE 键盘：
+   ```powershell
+   cd tools
+   .venv\Scripts\python test_dongle_c3.py --dongle-port COM4 --c3-ip 192.168.1.27
+   ```
+
+4. HTTP/AT 命令测试：
+   ```powershell
+   .venv\Scripts\python test_esp32_at_node.py --ip 192.168.1.27
+   ```
+
+5. 本地 MQTT broker 测试：
+   ```powershell
+   .venv\Scripts\python mqtt_broker.py   # 启动 broker
+   # 另一个终端：
+   .venv\Scripts\python test_esp32_at_node.py --ip 192.168.1.27
+   ```
