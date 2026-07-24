@@ -76,6 +76,10 @@ static struct {
 /* --- HTTP globals ----------------------------------------------------- */
 static WebServer g_http(80);
 static bool      g_wifi_ready = false;
+static bool      g_http_enabled = true;
+
+/* deferred restart (used by NVS clear / factory reset) */
+static uint32_t  g_restart_at = 0;
 
 /* --- MQTT client ------------------------------------------------------- */
 static WiFiClient       g_mqtt_wifi_plain;
@@ -286,6 +290,7 @@ static void load_config(void)
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_cert = prefs.getString("mqtt_ca_cert", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
+    g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
     prefs.end();
 }
 
@@ -294,6 +299,34 @@ void save_config(const String& key, const String& value)
     prefs.begin("atnode", false);
     prefs.putString(key.c_str(), value);
     prefs.end();
+}
+
+static void set_http_enabled(bool enable, bool persist = true)
+{
+    g_http_enabled = enable;
+    if (persist) save_config("http_enable", enable ? "1" : "0");
+    if (!g_wifi_ready) return;
+    if (enable) {
+        g_http.begin();
+        Serial.println("HTTP server started");
+    } else {
+        g_http.stop();
+        Serial.println("HTTP server stopped");
+    }
+}
+
+/* Clear all keys in the atnode NVS namespace and reset runtime HTTP state. */
+static void nvs_clear_config(void)
+{
+    prefs.begin("atnode", false);
+    prefs.clear();
+    prefs.end();
+    g_http_enabled = true;
+}
+
+static void schedule_restart(uint32_t delay_ms)
+{
+    g_restart_at = millis() + delay_ms;
 }
 
 /* Clear all MQTT settings (NVS + runtime) and disconnect. */
@@ -448,7 +481,10 @@ static const char* HELP_PAGE_HTML = R"HTML(
   <tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
   <tr><td>POST</td><td><code>/at-node/at</code></td><td><code>AT+...</code></td><td>Execute raw AT command (text/plain)</td></tr>
 </table>
-<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> (persisted to NVS).<br>
+<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> / <code>AT+CONF=http_enable=...</code> (persisted to NVS).<br>
+HTTP can be toggled with <code>AT+HTTP=1|0</code>, <code>AT+HTTP=enable,&lt;1|0&gt;</code>, or <code>POST /at-node/cmd/http/config?enable=1|0</code>.<br>
+Use <code>AT+HTTP=status</code> / <code>GET /at-node/cmd/http/status</code> to read the state, and <code>AT+HTTP=clear</code> / <code>POST /at-node/cmd/http/clear</code> to reset the HTTP setting to default (enabled).<br>
+<code>AT+NVS=clear</code> / <code>POST /at-node/cmd/nvs/clear</code> erases all persisted settings and restarts the device.<br>
 MQTT subcommands: <code>AT+MQTT=broker|port|ca,&lt;val&gt;</code> and <code>AT+MQTT=connect|status|clear</code> (no value) —
 <code>clear</code> wipes all MQTT settings (NVS + runtime) and disconnects.</p>
 
@@ -506,6 +542,10 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/ap</code></td><td><code>1=start,0=stop</code></td></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/http/status</code></td><td></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/http/config</code></td><td><code>enable=1|0</code></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/http/clear</code></td><td></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/nvs/clear</code></td><td>erase all settings & restart</td></tr>
 </table>
 
 <h2>Examples</h2>
@@ -749,6 +789,7 @@ static void handle_cmd_status(void)
     json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
     json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
+    json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
     json += "}";
     send_json(json);
 }
@@ -807,9 +848,17 @@ static void handle_at(void)
         if (eq > 0) {
             String key = kv.substring(0, eq);
             String val = kv.substring(eq + 1);
-            save_config(key, val);
-            if (key == "name") g_device_name = val;
-            if (key == "hostname") g_hostname = val;
+            if (key == "name") {
+                g_device_name = val;
+                save_config(key, val);
+            } else if (key == "hostname") {
+                g_hostname = val;
+                save_config(key, val);
+            } else if (key == "http_enable") {
+                set_http_enabled(val.toInt() != 0);
+            } else {
+                save_config(key, val);
+            }
             resp = "OK";
         } else {
             resp = "ERROR";
@@ -991,6 +1040,35 @@ static void handle_at(void)
             } else {
                 resp = "ERROR";
             }
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+HTTP=") || cmd == "AT+HTTP") {
+        String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
+        if (args == "status") {
+            resp = "+HTTP:" + String(g_http_enabled ? "enabled" : "disabled");
+        } else if (args == "clear") {
+            if (!g_http_enabled) set_http_enabled(true, false);
+            prefs.begin("atnode", false);
+            prefs.remove("http_enable");
+            prefs.end();
+            resp = "OK";
+        } else if (args.startsWith("enable,")) {
+            int val = args.substring(7).toInt();
+            set_http_enabled(val != 0);
+            resp = "OK";
+        } else if (args == "1" || args == "0") {
+            set_http_enabled(args == "1");
+            resp = "OK";
+        } else {
+            resp = "ERROR";
+        }
+    } else if (cmd.startsWith("AT+NVS=")) {
+        String sub = cmd.substring(7);
+        if (sub == "clear") {
+            nvs_clear_config();
+            schedule_restart(500);
+            resp = "OK";
         } else {
             resp = "ERROR";
         }
@@ -1753,6 +1831,46 @@ static void handle_ap(void)
     }
 }
 
+static void handle_http_config(void)
+{
+    String val = g_http.arg("enable");
+    if (val.length() == 0) val = g_http.arg("plain");
+    val.trim();
+    if (val == "1" || val == "true") {
+        set_http_enabled(true);
+        send_json("{\"ok\":true,\"cmd\":\"http/config\",\"enabled\":true}");
+    } else if (val == "0" || val == "false") {
+        set_http_enabled(false);
+        send_json("{\"ok\":true,\"cmd\":\"http/config\",\"enabled\":false}");
+    } else {
+        send_json("{\"ok\":false,\"error\":\"expected enable=1|0\"}", 400);
+    }
+}
+
+static void handle_http_status(void)
+{
+    String json = "{\"ok\":true,\"cmd\":\"http/status\"";
+    json += ",\"enabled\":" + String(g_http_enabled ? "true" : "false");
+    json += "}";
+    send_json(json);
+}
+
+static void handle_http_clear(void)
+{
+    if (!g_http_enabled) set_http_enabled(true, false);
+    prefs.begin("atnode", false);
+    prefs.remove("http_enable");
+    prefs.end();
+    send_json("{\"ok\":true,\"cmd\":\"http/clear\"}");
+}
+
+static void handle_nvs_clear(void)
+{
+    nvs_clear_config();
+    schedule_restart(500);
+    send_json("{\"ok\":true,\"cmd\":\"nvs/clear\",\"restarting\":true}");
+}
+
 static void handle_net_wol(void)
 {
     String mac = g_http.arg("mac");
@@ -1861,6 +1979,9 @@ static void serial_exec(const String& line)
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
+        Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
+        Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
+        Serial.println("  AT+NVS=clear                 erase all NVS settings and restart");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
         Serial.println("OK");
@@ -1965,9 +2086,17 @@ static void serial_exec(const String& line)
         if (eq > 0) {
             String key = kv.substring(0, eq);
             String val = kv.substring(eq + 1);
-            save_config(key, val);
-            if (key == "name") g_device_name = val;
-            if (key == "hostname") g_hostname = val;
+            if (key == "name") {
+                g_device_name = val;
+                save_config(key, val);
+            } else if (key == "hostname") {
+                g_hostname = val;
+                save_config(key, val);
+            } else if (key == "http_enable") {
+                set_http_enabled(val.toInt() != 0);
+            } else {
+                save_config(key, val);
+            }
             Serial.println("OK");
         } else {
             Serial.println("ERROR");
@@ -2163,6 +2292,36 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+HTTP=") || line == "AT+HTTP") {
+        String args = (line.length() > 8) ? line.substring(8) : String("status");
+        if (args == "status") {
+            Serial.println("+HTTP:" + String(g_http_enabled ? "enabled" : "disabled"));
+            Serial.println("OK");
+        } else if (args == "clear") {
+            if (!g_http_enabled) set_http_enabled(true, false);
+            prefs.begin("atnode", false);
+            prefs.remove("http_enable");
+            prefs.end();
+            Serial.println("OK");
+        } else if (args.startsWith("enable,")) {
+            int val = args.substring(7).toInt();
+            set_http_enabled(val != 0);
+            Serial.println("OK");
+        } else if (args == "1" || args == "0") {
+            set_http_enabled(args == "1");
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+NVS=")) {
+        String sub = line.substring(7);
+        if (sub == "clear") {
+            nvs_clear_config();
+            schedule_restart(500);
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
     } else if (line.startsWith("AT+AP=")) {
         int val = line.substring(6).toInt();
         if (val == 1) {
@@ -2265,9 +2424,17 @@ void setup(void)
         g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
         g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
         g_http.on("/at-node/cmd/net/ping", HTTP_POST, handle_net_ping);
+        g_http.on("/at-node/cmd/http/config", HTTP_POST, handle_http_config);
+        g_http.on("/at-node/cmd/http/status", HTTP_GET, handle_http_status);
+        g_http.on("/at-node/cmd/http/clear", HTTP_POST, handle_http_clear);
+        g_http.on("/at-node/cmd/nvs/clear", HTTP_POST, handle_nvs_clear);
         g_http.onNotFound(handle_not_found);
-        g_http.begin();
-        Serial.println("HTTP server on port 80");
+        if (g_http_enabled) {
+            g_http.begin();
+            Serial.println("HTTP server on port 80");
+        } else {
+            Serial.println("HTTP server disabled");
+        }
     } else {
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
@@ -2290,7 +2457,7 @@ void setup(void)
 
 void loop(void)
 {
-    if (g_wifi_ready) g_http.handleClient();
+    if (g_wifi_ready && g_http_enabled) g_http.handleClient();
     handle_serial();
     type_poll();
     mqtt_poll();
@@ -2302,6 +2469,11 @@ void loop(void)
             NimBLEDevice::startAdvertising();
             Serial.println("advertising restarted");
         }
+    }
+    if (g_restart_at && (int32_t)(millis() - g_restart_at) >= 0) {
+        g_restart_at = 0;
+        Serial.println("restarting...");
+        ESP.restart();
     }
     delay(2);
 }

@@ -29,7 +29,8 @@ Device status (pure JSON).
   "ble_addr": "88:56:a6:7b:c8:42",
   "typing": false,
   "mqtt": false,
-  "ap": false
+  "ap": false,
+  "http_enabled": true
 }
 ```
 
@@ -70,6 +71,8 @@ Execute raw AT command.
 - `AT+IR=<protocol>,<data>[,<bits>]`
 - `AT+MQTT=<sub>,<value>`
 - `AT+WIFI=<sub>,<value>`
+- `AT+HTTP=<status|enable,<0|1>|clear|0|1>`
+- `AT+NVS=clear`
 - `AT+AP=<0|1>`
 
 ---
@@ -315,7 +318,69 @@ Subscribe to MQTT topic.
 
 ---
 
-## 7. Device Configuration
+## 7. HTTP Configuration
+
+### GET /at-node/cmd/http/status
+
+Read HTTP server state.
+
+**Response**:
+```json
+{"ok": true, "cmd": "http/status", "enabled": true}
+```
+
+### POST /at-node/cmd/http/config
+
+Enable or disable the HTTP control plane.
+
+**Params**:
+- `enable` (int): `1` to enable HTTP, `0` to disable
+
+**Response**:
+```json
+{"ok": true, "cmd": "http/config", "enabled": false}
+```
+
+### POST /at-node/cmd/http/clear
+
+Reset the HTTP setting to default (enabled) and remove it from NVS.
+
+**Response**:
+```json
+{"ok": true, "cmd": "http/clear"}
+```
+
+**Notes**:
+- Settings are persisted in NVS as `http_enable`.
+- Disabling HTTP takes effect immediately; the listening socket is closed.
+- You can also toggle it via raw AT:
+  - `AT+HTTP=0` / `AT+HTTP=1` (shorthand)
+  - `AT+HTTP=enable,0` / `AT+HTTP=enable,1`
+  - `AT+CONF=http_enable=0` / `AT+CONF=http_enable=1`
+- Read state via `AT+HTTP=status`.
+- Reset to default via `AT+HTTP=clear`.
+- Re-enable only via serial, AP portal, or MQTT (since the HTTP endpoint is no longer reachable once disabled).
+
+---
+
+## 8. NVS / Factory Reset
+
+### POST /at-node/cmd/nvs/clear
+
+Erase all persisted settings in the `atnode` NVS namespace and restart the device.
+
+**Response** (sent before restart):
+```json
+{"ok": true, "cmd": "nvs/clear", "restarting": true}
+```
+
+**AT equivalent**: `AT+NVS=clear`
+
+**Warning**: This clears WiFi credentials, MQTT config, device name, hostname, HTTP setting, etc. The device will reboot with factory defaults (BLE bonding managed by NimBLE separately).
+
+---
+
+## 9. Device Configuration
 
 ### POST /at-node/cmd/config/set
 
@@ -338,7 +403,7 @@ Set device configuration (NVS persistent).
 
 ---
 
-## 8. AP Portal
+## 10. AP Portal
 
 ### POST /at-node/cmd/ap
 

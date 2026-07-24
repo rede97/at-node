@@ -34,13 +34,13 @@ def main():
 
     # status
     try:
-        r = requests.get(f"{base}/status", timeout=5)
+        r = requests.get(f"{base}/cmd/status", timeout=5)
         r.raise_for_status()
         st = r.json()
-        ok &= check("/at-node/status", "device" in st and "connected" in st)
+        ok &= check("/at-node/cmd/status", "device" in st and "connected" in st and "http_enabled" in st)
         print(f"    {st}")
     except Exception as e:
-        ok &= check("/at-node/status", False)
+        ok &= check("/at-node/cmd/status", False)
         print(f"    error: {e}")
 
     # raw AT
