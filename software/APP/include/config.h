@@ -569,23 +569,6 @@
 #endif
 
 /*********************************************************************
- * BLE_SNV_ADDR — SNV storage offset within Data Flash.
- *
- *   EEPROM_* commands take Data-Flash-RELATIVE offsets, not absolute
- *   addresses: offset 0x0000–0x7FFF maps to absolute 0x70000–0x77FFF
- *   (32 KB Data Flash on CH582F).
- *
- *   Default: 0x77E00 - FLASH_ROM_MAX_SIZE = 0x7E00 offset = absolute
- *   0x77E00 (last 512 bytes of Data Flash). Stays clear of application
- *   code (grows up from 0x00000) and BLE heap (in RAM, not flash).
- *   Bounds check in ble_stack_init() validates against the 32 KB
- *   Data Flash limit (0x78000 - FLASH_ROM_MAX_SIZE = 0x8000).
- */
-#ifndef BLE_SNV_ADDR
-#define BLE_SNV_ADDR  0x77E00 - FLASH_ROM_MAX_SIZE
-#endif
-
-/*********************************************************************
  * BLE_SNV_BLOCK — SNV block size in bytes.
  *
  *   Default: 256 (matches Data Flash page size on CH582F).
@@ -608,6 +591,34 @@
   #else
 #define BLE_SNV_NUM  1
   #endif
+#endif
+
+/*********************************************************************
+ * BLE_SNV_ADDR — SNV storage offset within Data Flash.
+ *
+ *   EEPROM_* commands take Data-Flash-RELATIVE offsets, not absolute
+ *   addresses: offset 0x0000–0x7FFF maps to absolute 0x70000–0x77FFF
+ *   (32 KB Data Flash on CH582F).
+ *
+ *   Default: anchored at the TOP of Data Flash, sized by
+ *   BLE_SNV_BLOCK × BLE_SNV_NUM:
+ *     NUM=1 → offset 0x7F00 (abs 0x77F00), 256 B bond store
+ *     NUM=3 → offset 0x7D00 (abs 0x77D00) — sits directly above the
+ *     APP_ROLE flag page (0x7C00), no overlap.
+ *
+ *   Field lesson 2026-07-24: the old fixed default (0x77E00-FLASH_ROM_
+ *   MAX_SIZE = 0x7E00) only fits ONE bond. With BLE_SNV_NUM=3 the
+ *   runtime guard in ble_stack_init() (addr + block*num > 0x8000)
+ *   tripped and the board hung in while(1) BEFORE USB init —
+ *   "flashes fine, never enumerates". The compile-time #error below
+ *   now catches this at build time.
+ */
+#ifndef BLE_SNV_ADDR
+#define BLE_SNV_ADDR  (0x78000 - FLASH_ROM_MAX_SIZE - BLE_SNV_BLOCK * BLE_SNV_NUM)
+#endif
+
+#if (BLE_SNV_ADDR + BLE_SNV_BLOCK * BLE_SNV_NUM) > (0x78000 - FLASH_ROM_MAX_SIZE)
+#error "BLE SNV layout overflows Data Flash (raise BLE_SNV_ADDR region or cut BLE_SNV_NUM)"
 #endif
 
 /* ====================================================================
