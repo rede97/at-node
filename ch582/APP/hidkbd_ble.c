@@ -606,14 +606,19 @@ static void kbd_adv_update(void)
     uint8_t want;
     uint8_t evt_type = GAP_ADTYPE_ADV_IND;
     extern uint8_t kb_ble_advert_wanted(void);
-    if (pair_slot >= 0) {
+    if (pair_slot >= 0 && kb_ble_advert_wanted()) {
         want = TRUE;
     } else if (kb_ble_conn_count() > 0) {
         want = FALSE;
     } else {
         int8_t act = kb_ble_active_slot();
+#if KBD_MAX_CONN > 1
         want = (act >= 0 && slotmap[act][0] != 0xFF && kb_ble_advert_wanted())
                ? TRUE : FALSE;
+#else
+        /* single-mode: always advertise when BLE is active & disconnected */
+        want = (act >= 0 && kb_ble_advert_wanted()) ? TRUE : FALSE;
+#endif
         if (want) {
             /* directed advertising straight at the bonded host — faster
                reconnect and invisible to every other scanner */
@@ -663,11 +668,23 @@ void kb_ble_activate_slot(int slot)
         if (s != slot && kbd_conns[s].handle != GAP_CONNHANDLE_INIT)
             GAPRole_TerminateLink(kbd_conns[s].handle);
 #else
-    (void)slot;
+    /* single-mode: if connected, drop first so the disconnect
+       callback restarts advertising with the right target */
+    if (slot >= 0 && kbd_conns[0].handle != GAP_CONNHANDLE_INIT) {
+        GAPRole_TerminateLink(kbd_conns[0].handle);
+        return;
+    }
 #endif
-    if (slot >= 0)
-        kb_ble_apply_addr(slot);   /* per-slot MAC: switch own address */
-    kbd_adv_update();   /* OFF while connected / USB-only; ON if waiting */
+    if (slot < 0) {
+        /* USB-only: close any open pairing window */
+        if (pair_slot >= 0) {
+            tmos_stop_task(ble_hid_emu_task_id, PAIR_WINDOW_EVT);
+            pair_slot = -1;
+        }
+        kbd_adv_update();
+    } else {
+        kb_ble_apply_addr(slot);   /* per-slot MAC: restarts advert */
+    }
 }
 
 /*********************************************************************
@@ -940,12 +957,8 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
             {
                 PRINT("Waiting for advertising..\n");
             }
-            // (Re-)enable advertising — safe whenever a slot is free
-            {
-                uint8_t initial_advertising_enable = TRUE;
-                // Set the GAP Role Parameters
-                GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &initial_advertising_enable);
-            }
+            /* Respect the advertising policy — only re-enable if wanted */
+            kbd_adv_update();
             break;
 
         case GAPROLE_ERROR:

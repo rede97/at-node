@@ -28,17 +28,7 @@ static uint8_t  kb_ble_lasterr[KBD_MAX_CONN];   /* last GATT status that exhaust
 #define KB_TGT_BLE_ALL  (KB_TGT_BLE1|KB_TGT_BLE2|KB_TGT_BLE3)
 #define KB_TGT_ALL      (KB_TGT_USB|KB_TGT_BLE_ALL)
 
-static uint8_t kb_target = KB_TGT_USB | KB_TGT_BLE1;   /* = KB_BOTH */
-
-void kb_set_mode(kb_mode_t m) {
-    kb_target = (m == KB_USB) ? KB_TGT_USB :
-                (m == KB_BLE) ? KB_TGT_BLE1 : (KB_TGT_USB | KB_TGT_BLE1);
-}
-kb_mode_t kb_get_mode(void) {
-    if (kb_target == KB_TGT_USB) return KB_USB;
-    if (kb_target == (KB_TGT_USB | KB_TGT_BLE1)) return KB_BOTH;
-    return KB_BLE;
-}
+static uint8_t kb_target = KB_TGT_BLE1;   /* default: BLE */
 
 extern uint8_t kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count);
 extern void kb_usb_send_report(uint8_t mods, uint8_t *keys, int count);
@@ -217,8 +207,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
     AT_Response(
         "  AT+ROLE  - role KBD|DONGLE (DUAL)\r\n"
         "  [Keyboard]\r\n"
-        "  AT+KB    - keyboard mode USB|BLE|BOTH\r\n"
-        "  AT+DEV   - output target USB|BLE1..3\r\n"
+        "  AT+DEV   - output target USB|BLE\r\n"
         "  AT+KEY   - raw HID <mods>,<k1>,..,<k6>\r\n"
         "  AT+TAP   - press+release <ms>,<mods>,<k1>..<k6>\r\n"
         "  AT+MOD   - modifiers <mask>\r\n"
@@ -239,7 +228,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  [Wireless]\r\n"
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
         "  AT+BT_CONN  - connect <idx|addr|name> (dongle)\r\n"
-        "  AT+BT_DISC  - drop BLE link, re-advertise\r\n"
+        "  AT+BT_DISC  - drop BLE link (suppress reconnect)\r\n"
         "  AT+BT_PAIR  - drop link + erase bonds");
     AT_Response(
         "  AT+BT_STATE - diag dongle state (dongle)\r\n"
@@ -269,20 +258,6 @@ static int at_cmd_WDG(int argc, char *argv[]) {
     else               hws_wdg_disarm();
     return 0;
 }
-static int at_cmd_KB(int argc, char *argv[])  {
-    if (argc < 2) {
-        kb_mode_t m = kb_get_mode();
-        AT_Response("mode=%s BLE=%s USB=%s",
-            m==KB_USB?"USB":m==KB_BLE?"BLE":"BOTH",
-            kb_ble_connected()?"connected":"disconnected",
-            usb_ready()?"ready":"-");
-        return 0;
-    }
-    if (argv[1][0]=='U' && argv[1][1]=='S' && argv[1][2]=='B' && !argv[1][3])  { kb_set_mode(KB_USB); AT_Response("KB=USB"); return 0; }
-    if (argv[1][0]=='B' && argv[1][1]=='L' && argv[1][2]=='E' && !argv[1][3])  { kb_set_mode(KB_BLE); AT_Response("KB=BLE"); return 0; }
-    if (argv[1][0]=='B' && argv[1][1]=='O' && argv[1][2]=='T' && argv[1][3]=='H' && !argv[1][4]) { kb_set_mode(KB_BOTH); AT_Response("KB=BOTH"); return 0; }
-    AT_Response("usage: AT+KB[=USB|BLE|BOTH]"); return -1;
-}
 
 #if BLE_HAS_KBD
 /* Parse an output-target name: USB | BLE | BOTH | ALL | BLE1..BLE3.
@@ -293,6 +268,8 @@ static uint8_t dev_target_parse(const char *s)
        dropped as a feature (rarely useful, owner decision 2026-07-24).
        BT_DISC/UNBIND still accept BLE1..3 via this parser. */
     if (!strcmp(s, "USB"))  return KB_TGT_USB;
+    /* single-mode: "BLE" alone = BLE1 */
+    if (!strcmp(s, "BLE"))   return KB_TGT_BLE1;
     if (s[0] == 'B' && s[1] == 'L' && s[2] == 'E' && s[3] >= '1' && s[3] <= '3' && !s[4])
         return (uint8_t)(KB_TGT_BLE1 << (s[3] - '1'));
     return 0;
@@ -1099,6 +1076,19 @@ static int bt_unbind_kbd(int argc, char *argv[]) {
 }
 #endif /* BLE_HAS_KBD */
 
+/* AT+FLASH_ERASE — wipe entire DataFlash (32 KB). Erases SNV bonds,
+   slotmap, role flag, all persistent state. Then resets. */
+static int at_cmd_FLASH_ERASE(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    AT_Response("erasing DataFlash...");
+    for (uint16_t addr = 0; addr < 0x8000; addr += 256)
+        EEPROM_ERASE(addr, 256);
+    AT_Response("done — resetting...");
+    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
+    SYS_ResetExecute();
+    return 0;
+}
+
 /* AT+FACTORY — wipe EVERYTHING: terminate links, erase all bonds,
    clear all slot reservations/names/paces/MACs, then soft reset.
    Back to factory defaults (per-slot MACs re-derive from chip MAC). */
@@ -1318,13 +1308,13 @@ const at_cmd_t cmd_table[] = {
     { "AT+STATUS",  "device status (role/dev/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+FACTORY", "wipe all config + bonds, reset", at_cmd_FACTORY },
+    { "AT+FLASH_ERASE", "erase DataFlash (SNV/slotmap/role) + reset", at_cmd_FLASH_ERASE },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
     /* Keyboard */
-    { "AT+KB",      "keyboard mode USB|BLE|BOTH",     at_cmd_KB },
 #if BLE_HAS_KBD
-    { "AT+DEV",     "output target USB|BLE1..3",  at_cmd_DEV },
+    { "AT+DEV",     "output target USB|BLE",  at_cmd_DEV },
 #endif
     { "AT+KEY",     "raw HID report <mods>,<k1>,..,<k6>", at_cmd_KEY },
     { "AT+TAP",     "press+release <ms>,<mods>,<k1>..<k6>", at_cmd_TAP },
@@ -1349,7 +1339,7 @@ const at_cmd_t cmd_table[] = {
     /* Wireless */
     { "AT+BT_SCAN", "scan HID devices [sec] (dongle)", at_cmd_BT_SCAN },
     { "AT+BT_CONN", "connect <idx|addr|name> (dongle)", at_cmd_BT_CONN },
-    { "AT+BT_DISC", "drop BLE link, re-advertise",   at_cmd_BT_DISC },
+    { "AT+BT_DISC", "drop BLE link (hold reconnect)",   at_cmd_BT_DISC },
     { "AT+BT_PAIR", "open pairing window <BLEn>",    at_cmd_BT_PAIR },
     { "AT+BT_UNBIND", "forget one host <BLE1..3>",   at_cmd_BT_UNBIND },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },

@@ -35,7 +35,7 @@ extern "C" {
 #define BLE_HID_RPT_ID_FEATURE     0                      // Feature report ID
 
 // HID feature flags
-#define BLE_HID_KBD_FEATURE_FLAGS      BLE_HID_FLAGS_REMOTE_WAKE
+#define BLE_HID_KBD_FEATURE_FLAGS      (BLE_HID_FLAGS_REMOTE_WAKE | BLE_HID_FLAGS_NORMALLY_CONNECTABLE)
 
 /*********************************************************************
  * TYPEDEFS

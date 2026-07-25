@@ -919,8 +919,13 @@ static void dgl_pair_state_cb(uint16_t connHandle, uint8_t state, uint8_t status
         if (status == SUCCESS && dgl_state == DGL_CONNECTED)
             tmos_set_event(dgl_task_id, DGL_SVC_DISC_EVT);
     }
-    else if (state == GAPBOND_PAIRING_STATE_BONDED)
+    else if (state == GAPBOND_PAIRING_STATE_BONDED) {
         AT_Response("+BT_BOND: bonded");
+        /* bonded reconnect: encryption is up, restart discovery
+           (PAIRING_STATE_COMPLETE does not fire on reconnect) */
+        if (dgl_state == DGL_CONNECTED)
+            tmos_set_event(dgl_task_id, DGL_SVC_DISC_EVT);
+    }
 }
 
 static void dgl_passcode_cb(uint8_t *deviceAddr, uint16_t connectionHandle,

@@ -30,25 +30,38 @@ TI 文档不符（WCH 实现差异），导致按 `i*len+3` 取 value handle 错
 B/P/R/C 四处。另修复两个连带 bug:CCCD 列表陈旧值（重连必现 no CCCD)、
 RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 
-## 2. 阶段二：dongle 硬化（2–3 天） 🚧 进行中（2026-07-21 起）
+## 2. 阶段二：dongle 硬化（✅ 已完成 2026-07-25）
 
-- **自动重连** ✅ 双板实测（2026-07-21)：开机/断链后自动回连，按键转发恢复
-  （`test_dongle_hardening.py` 全 PASS)。**实现改为直连绑定地址**（从 SNV bond 0
-  读 identity 地址 + addrType,`EstablishLink(highDutyCycle=TRUE, whiteList=FALSE)`)——
-  白名单路径（`AUTO_SYNC_WL/RL`）实测不可靠：establish 启动但 25s 无匹配。
-  ~~RPA 键盘（RK）可能需重回 WL/RL 路径 → 阶段三验证~~。
-  `AT+BT_AUTO[=0|1]` 开关（默认 1),`AT+BT_DISC` 单次抑制（hold)✅ 实测。
-- **清理 DIAG** ✅（门控）:`+BT_ADV`/`+BT_GATT`/`+BT_DISC` raw/`+BT_RD`/`+BT_NTF`
-  全部由 `BLE_DONGLE_DEBUG` 宏门控（默认 TRUE，量产翻 FALSE)。
-- **解析固化**：boot 或任一 report 句柄 + len≥8 过滤已在代码。
-  ~~按 Report Map 识别键盘输入报告~~ — 不实现（RK/复杂键盘支持已废弃，见 §3）。
-- **断链清理** ✅:`dgl_reset_link_state()` 在 LINK_ESTABLISHED(成功/失败)/
-  LINK_TERMINATED 三处调用，句柄表/CCCD 队列/passkey 挂起全复位。
-- **AT+BT_LIST** ✅ 双板实测：SNV 查询正确（地址 = 扫描到的 kbd 板地址）。
-- **已验证（2026-07-21 双板）**：自动回连连环（断→回连→转发）✅、BT_LIST 地址 ✅、
-  hold/恢复 ✅、开机自动回连 ✅、**绑定失配退避保护**（连断 5 次自动 hold,
-  AT 不再被淹没）✅、**量产模式 `BLE_DONGLE_DEBUG=FALSE`**（信道干净无诊断行,
-  扫描/连接/armed 全通）✅。测试固化：`tools/test/test_dongle_hardening.py`。
+**自动重连**（dongle 侧发起）：
+
+- 触发条件：kbd 复位（`AT+RST`/断电）或 DEV 切回 BLE（`AT+DEV=BLE`）后，kbd 恢复广播
+- 流程：kbd 恢复广播 → dongle（`AT+BT_AUTO=1`）扫描到 → 加密重连（bonded）→ GATT 发现 → armed → 按键转发恢复
+- 实现：dongle 从 SNV bond 0 读 identity 地址 + addrType，
+  `EstablishLink(highDutyCycle=TRUE, whiteList=FALSE)`
+- 开关：`AT+BT_AUTO[=0|1]`（dongle 侧命令，默认 1）
+
+**`AT+BT_DISC`**（kbd 或 dongle 均可发起）：
+
+- kbd 侧 `AT+BT_DISC`：kbd 主动断开 BLE 连接，**不恢复广播**（不弹回来）
+- dongle 侧 `AT+BT_DISC`：dongle 断开连接，**抑制自动重连**（hold）
+- 恢复：dongle 侧需 `AT+BT_AUTO=1` 显式重新启用
+- 区别于自动重连：DISC 是**用户主动结束**连接，不应自动弹回
+
+**断链清理** ✅：`dgl_reset_link_state()` 在 LINK_ESTABLISHED（成功/失败）/
+LINK_TERMINATED 三处调用，句柄表/CCCD 队列/passkey 挂起全复位。
+
+**清理 DIAG** ✅（门控）：`+BT_ADV`/`+BT_GATT`/`+BT_DISC` raw/`+BT_RD`/`+BT_NTF`
+全部由 `BLE_DONGLE_DEBUG` 宏门控（默认 TRUE，量产翻 FALSE)。
+
+**AT+BT_LIST** ✅ 双板实测：SNV 查询正确。
+
+**已验证（2026-07-25）**：
+- 开机自动回连 ✅（dongle `AT+BT_AUTO=1` + kbd 冷启动广播）
+- DEV 切换自动重连 ✅（`AT+DEV=USB→BLE`，kbd 恢复广播，dongle 自动回连 armed + 按键）
+- 绑定失配退避保护 ✅（连断 5 次自动 hold）
+- 量产模式 `BLE_DONGLE_DEBUG=FALSE` ✅
+- hold 抑制 ✅（`AT+BT_DISC` 后不自动回连，需 `AT+BT_AUTO=1` 恢复）
+- Bonded 重连 GATT 发现 ✅（`PAIRING_STATE_BONDED` 回调重启发现）
 
 ## 3. 阶段三：RK 真机验证（❌ 不实现）
 
@@ -202,15 +215,85 @@ AT 命令处理只做参数解析，调用 `hws_*` API。
 | 子系统 | 宏 | AT 命令 | 要点 |
 |--------|-----|---------|------|
 | GPIO | `HWS_GPIO` | `AT+GPIO_W=<pin>,<level>` / `AT+GPIO_R=<pin>` | 线性引脚号（PA=0–15, PB=16–39)，模式配置（推挽/上拉/浮空） |
-| ADC | `HWS_ADC` | `AT+ADC=<ch>` | 外部单通道采样，返回 mV（内部温度/电池电压已有） |
+| ADC | `HWS_ADC` | `AT+ADC=<ch>[,<pga>]` | 外部单通道采样，可选 PGA（0=-12dB/1=-6dB/2=0dB默认/3=6dB），返回 `+ADC:<raw>,<mV> mV` |
 | I²C | `HWS_I2C` | `AT+I2C_SCAN` / `AT+I2C_R` / `AT+I2C_W` | 主机模式 100k/400k，扫 0x00–0x7F |
 | IR | `HWS_IR` | `AT+IR=NEC\|SIRC\|RAW,...` | PWM4 38kHz 载波 + TMR1 门控状态机（需求 §3.10)，busy 时阻止 BLE 休眠 |
+| TEMP | （无宏，常驻） | `AT+TEMP` | 内部温度传感器（ADC 通道），读出原始 12-bit ADC 值或换算 °C。`hws_get_temp()` 已实现（BLE 校准用），仅需 AT 命令封装 |
 
 实现状态（2026-07-22）：四子系统均已落地（`hws_gpio/adc/i2c/ir.c`），三变体构建
 通过（dual FLASH 44.68% / RAM 64.59%），冒烟验证：GPIO 写读、ADC 浮空读数、
 I²C 扫描不挂死、IR 命令受理；AT 回归 + 双板 loop/hardening 全 PASS。
-待完整实测：GPIO 回环、ADC 定压、I²C 挂 EEPROM/传感器、IR 示波器/空调验证。
+
+**ADC PGA 增强（待实现）**：当前 `AT+ADC` 硬编码 PGA=0dB，换算用 `raw*3300/4095`（未按
+datasheet Table 15-2 公式）。方案：① 加可选 `<pga>` 参数，默认 0dB 向后兼容；
+② 换算改用 `HWS_ADC_VREF_MV`（VINTA 典型 1050mV，可校准）+ 每档 PGA 独立公式；
+③ 响应格式改为 `+ADC:<raw>,<mV> mV` 同时返回原始值。详见 §7.1。
+
+**Vref 校准问题（影响 ADC + 电池电压精度）**：当前 `HWS_ADC_FULLSCALE_MV=3300` 和
+`HWS_BATT_ADC_FULLSCALE_MV=13200` 均为理论值，未基于实际 VINTA 标定。
+VINTA 芯片间差异 ±15mV（≈1.5%），加上 PGA 增益误差，电池电压读数可能偏差 3-5%。
+解决方案：加 `HWS_ADC_VREF_MV` 宏（默认 1050），ADC 和电池统一用该值按 datasheet
+公式换算；用户可实测 VINTA 后覆盖宏值完成单点校准。详见 §7.1。
+
+待完整实测：GPIO 回环、ADC 定压（含 PGA 各档）、I²C 挂 EEPROM/传感器、IR 示波器/空调验证。
 已知设计点：GPIO 读固定切上拉输入（读输出引脚会读到上拉电平，非回读驱动态）。
+
+### 7.1 ADC PGA + Vref 校准方案（待实现）
+
+**动机**：
+- `AT+ADC` 硬编码 0dB PGA，无法测量高于 2V 或低于 0.6V 的信号
+- 当前换算 `raw * 3300 / 4095` 不符合 datasheet Table 15-2 公式，不同 PGA 档位误差更大
+- 电池电压（`HWS_BATT_ADC_FULLSCALE_MV=13200`）同样未校准，依赖 VINTA 典型值
+- VINTA 芯片间差异 ±15mV（≈1.5%），叠加 PGA 增益误差，电池读数可能偏差 3-5%
+
+**PGA 参数设计**：
+
+```
+AT+ADC=<ch>[,<pga>]
+  ch   : 0-13 外部通道
+  pga  : 0=-12dB(1/4x), 1=-6dB(1/2x), 2=0dB(1x,默认), 3=6dB(2x)
+
+响应：+ADC:<raw>,<mV> mV
+  例：AT+ADC=5    → +ADC:2048,1050 mV   (PGA 默认 0dB)
+  例：AT+ADC=5,1  → +ADC:2048,1574 mV   (PGA=-6dB)
+  例：AT+ADC=5,3  → +ADC:3500,604 mV    (PGA=6dB, 接近饱和)
+```
+
+**换算公式**（datasheet Table 15-2，Vref=VINTA）：
+
+| PGA | 公式 | ADC=4095 满量程 (Vref=1050mV) |
+|-----|------|-------------------------------|
+| 0 (-12dB) | mV = raw × Vref/512 − 3×Vref | ~5248 mV（可测到 VIO33） |
+| 1 (-6dB) | mV = raw × Vref/1024 − 1×Vref | ~3149 mV |
+| 2 (0dB) | mV = raw × Vref/2048 | ~2100 mV |
+| 3 (6dB) | mV = (raw + 2048) × Vref/4096 | ~1575 mV |
+
+**Vref 校准**：
+
+```c
+// config.h — 默认典型值，用户可按实测覆盖
+#define HWS_ADC_VREF_MV  1050   // VINTA 典型值，范围 1035-1065mV
+```
+
+校准步骤：
+1. 选一个已知电压源（如万用表实测的 3.3V 或 1.8V 引脚）
+2. 选匹配的 PGA 档（3.3V→0 档, 1.8V→2 档）
+3. `AT+ADC=<ch>,<pga>` 读 raw 值
+4. 反算 Vref：`Vref = 公式逆解(mV_已知, raw, pga)`
+5. 更新 `HWS_ADC_VREF_MV`，所有通道（含电池）统一生效
+
+**改动清单**：
+
+| 文件 | 改动 | 行数 |
+|------|------|------|
+| `config.h` | 新增 `HWS_ADC_VREF_MV`，替代 `HWS_ADC_FULLSCALE_MV` | +3 |
+| `hws_adc.h` | `hws_adc_read_mv(uint8_t ch, uint8_t pga)` 加 pga 参数 | ~2 |
+| `hws_adc.c` | PGA 传入 init，按 Table 15-2 公式换算 mV | ~15 |
+| `hws_batt.c` | 改用 `HWS_ADC_VREF_MV` + -12dB 公式（替代 `HWS_BATT_ADC_FULLSCALE_MV`） | ~3 |
+| `at_cmds.c` | 解析可选 PGA 参数，响应 `+ADC:<raw>,<mV> mV` | ~8 |
+| **总计** | | **~30 行** |
+
+**向后兼容**：pga 参数省略时默认 2（0dB），响应格式从 `<mV> mV` 变为 `+ADC:<raw>,<mV> mV`（脚本需更新正则，影响面小）。
 
 ## 8. 阶段六：ESP32-C3 模拟键盘测试台（2026-07-22 立项）
 
@@ -311,6 +394,8 @@ C3 同时运行 WiFi HTTP 服务，测试脚本/Agent 以 HTTP 请求驱动键�
 - C3 台架②:C3 RPA 地址轮换（等 Windows 侧 sketch，属 PLAN §8)
 - E2:CDC 背压实测（`cdc_tx_drops` 观测，VMware 拔插）
 - `AT+STATUS` 增加 CDC TX drops / 通道指示字段
+- `AT+TEMP`：暴露内部温度传感器（`hws_get_temp()` 已有，仅加 AT 命令封装，< 10 行代码）
+- **ADC PGA + Vref 校准**（§7.1）：`AT+ADC=<ch>[,<pga>]` 加 PGA 参数 + datasheet 公式换算 + Vref 校准宏（统一 ADC 和电池精度，~30 行）
 
 ## 10. KBD_MULTI 键盘多模实现方案（F1.10–F1.15)
 
