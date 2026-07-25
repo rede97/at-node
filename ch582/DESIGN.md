@@ -131,7 +131,7 @@ HWS 故意不做跨平台 HAL。CH582 和 CH592 的寄存器兼容，抽象已�
 ## 2. 目录结构
 
 ```
-software/
+ch582/
 ├── APP/                           # 应用层
 │   ├── main.c                     # 入口 + 初始化序列
 │   ├── ble_init.c                 # BLE Peripheral 初始化聚合

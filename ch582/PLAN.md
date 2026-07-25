@@ -148,7 +148,7 @@ RPA 刷屏挤出扫描列表（16 槽 + RSSI 最弱逐出）。
 
 | 组件 | Linux 方案 |
 |------|-----------|
-| 编译 | `riscv-none-embed-gcc`（MounRiver 提供 Linux 版，或 xPack riscv-none-elf-gcc）；现有 Makefile 直接用，`cd software/obj && make main-build` |
+| 编译 | `riscv-none-embed-gcc`（MounRiver 提供 Linux 版，或 xPack riscv-none-elf-gcc）；现有 Makefile 直接用，`cd ch582/obj && make main-build` |
 | 烧录 | **wchisp**（开源 Rust 工具，`cargo install wchisp`）支持 CH582 USB/串口 ISP；或官方 WCHISPTool 无 Linux 版 |
 | 串口测试 | 现有 Python 脚本全部跨平台（pyserial），无需改动 |
 | ESP32-C3 | arduino-cli Linux 原生，esp32 core 官方源速度通常正常 |

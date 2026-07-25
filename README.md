@@ -80,10 +80,10 @@ The project is designed with a hardware abstraction layer so the same firmware c
 Requires MounRiver Studio toolchain (`riscv-none-embed-gcc`, `make`) on PATH.
 
 ```bash
-cd software/obj && make --no-print-directory main-build
+cd ch582/obj && make --no-print-directory main-build
 ```
 
-Output: `software/obj/at-node.elf` / `.hex` / `.lst` / `.map`.
+Output: `ch582/obj/at-node.elf` / `.hex` / `.lst` / `.map`.
 
 ### Pinout (Default)
 
@@ -99,7 +99,7 @@ Output: `software/obj/at-node.elf` / `.hex` / `.lst` / `.map`.
 ### Project Structure
 
 ```
-software/
+ch582/
 ├── APP/              # Application layer (AT parser, HID keyboard logic)
 ├── HAL/              # Hardware abstraction (KEY, LED, RTC, SLEEP, MCU)
 ├── Profile/          # BLE GATT profiles (HID, Battery, Device Info)
@@ -184,10 +184,10 @@ software/
 需要安装 MounRiver Studio 工具链（`riscv-none-embed-gcc`、`make`）并加入 PATH。
 
 ```bash
-cd software/obj && make --no-print-directory main-build
+cd ch582/obj && make --no-print-directory main-build
 ```
 
-输出文件：`software/obj/at-node.elf` / `.hex` / `.lst` / `.map`。
+输出文件：`ch582/obj/at-node.elf` / `.hex` / `.lst` / `.map`。
 
 ### 默认引脚
 
@@ -203,7 +203,7 @@ cd software/obj && make --no-print-directory main-build
 ### 项目结构
 
 ```
-software/
+ch582/
 ├── APP/              # 应用层（AT 解析器、HID 键盘逻辑）
 ├── HAL/              # 硬件抽象层（按键、LED、RTC、休眠、MCU 初始化）
 ├── Profile/          # BLE GATT 服务（HID、电池、设备信息）

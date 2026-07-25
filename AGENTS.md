@@ -10,7 +10,7 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 - **BLE**: 4.2/5.0 via pre-compiled `libCH58xBLE.a`, TMOS scheduler
 - **USB**: CDC ACM (PID=0x2107) + HID Keyboard composite (IAD)
 - **Roles**: kbd (Peripheral keyboard) / dongle (Central receiver, forwards a BLE keyboard to USB) / dual (`AT+ROLE` runtime switch)
-- **Entry point**: `software/APP/main.c` → `main()`
+- **Entry point**: `ch582/APP/main.c` → `main()`
 - **Device name**: "AT-Node" (BLE advertising, set in `hidkbd_ble.c`)
 - **Design notes**: see `DESIGN.md` for memory layout, BLE bonding, USB constraints
 
@@ -34,18 +34,18 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 
 Build:
 ```bash
-cd software/obj && make --no-print-directory main-build          # kbd (default)
-cd software/obj && make --no-print-directory main-build MODE=KBD_MULTI # kbd_multi: 3-host keyboard
-cd software/obj && make --no-print-directory main-build DONGLE=1 # dongle (after make clean)
-cd software/obj && make --no-print-directory main-build MODE=DUAL # dual: single-mode keyboard + dongle (debug)
+cd ch582/obj && make --no-print-directory main-build          # kbd (default)
+cd ch582/obj && make --no-print-directory main-build MODE=KBD_MULTI # kbd_multi: 3-host keyboard
+cd ch582/obj && make --no-print-directory main-build DONGLE=1 # dongle (after make clean)
+cd ch582/obj && make --no-print-directory main-build MODE=DUAL # dual: single-mode keyboard + dongle (debug)
 tools/ci/build_all.sh                                            # all variants -> tools/ci/out/
 ```
 Requires MounRiver Studio toolchain on PATH (`riscv-none-embed-gcc`, `make`) — `source env.sh`. Variant switch needs `make clean` first. xPack/upstream GCC builds broken firmware (interrupt attr) — see `tools/ci/TOOLCHAIN.md`.
 
 Encoding check:
 ```bash
-uv run python tools/utils/batch_utf8.py software --check
-uv run python tools/utils/batch_utf8.py software   # GB2312 → UTF-8
+uv run python tools/utils/batch_utf8.py ch582 --check
+uv run python tools/utils/batch_utf8.py ch582   # GB2312 → UTF-8
 ```
 
 AT test:
@@ -80,13 +80,13 @@ uv run python tools/broker/atnode_broker.py client list    # list devices
 
 | Layer | Path | Role |
 |-------|------|------|
-| APP | `software/APP/` | main, BLE keyboard (`hidkbd_ble.c`), USB keyboard (`hidkbd_usb.c`), USB CDC+HID (`usb_dev.c`), AT parser+cmds, runtime role (`role.c`), role init dispatch (`ble_init.c`) |
-| APP/HWS | `software/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. Peripheral drivers (GPIO/ADC/I2C/IR) land here, macro-gated. |
-| APP/BLE | `software/APP/BLE/` | BLE stack init (`ble_stack.c`) + GATT services (HID Dev, HID Keyboard, Battery, Device Info) + dongle receiver (`ble_dongle.c`, Central/HID host) |
-| BLE Stack | `software/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
-| StdPeriphDriver | `software/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
-| RVMSIS | `software/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
-| Startup | `software/Startup/` | Reset vector + interrupt table |
+| APP | `ch582/APP/` | main, BLE keyboard (`hidkbd_ble.c`), USB keyboard (`hidkbd_usb.c`), USB CDC+HID (`usb_dev.c`), AT parser+cmds, runtime role (`role.c`), role init dispatch (`ble_init.c`) |
+| APP/HWS | `ch582/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. Peripheral drivers (GPIO/ADC/I2C/IR) land here, macro-gated. |
+| APP/BLE | `ch582/APP/BLE/` | BLE stack init (`ble_stack.c`) + GATT services (HID Dev, HID Keyboard, Battery, Device Info) + dongle receiver (`ble_dongle.c`, Central/HID host) |
+| BLE Stack | `ch582/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
+| StdPeriphDriver | `ch582/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
+| RVMSIS | `ch582/RVMSIS/` | RISC-V core access (NVIC/PFIC) |
+| Startup | `ch582/Startup/` | Reset vector + interrupt table |
 
 ### USB endpoint allocation
 
@@ -156,10 +156,10 @@ LED self-schedules blink timing outside the table.
 ## Notes
 
 - `DESIGN.md` — design philosophy, memory layout, BLE callback registration, USB/low-power exclusion details.
-- `software/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers; M6 = C3 keyboard bench).
+- `ch582/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers; M6 = C3 keyboard bench).
 - `esp32/PLAN.md` — ESP32-C3 AT Node network variant plan (E1–E7).
 - `.pi/skills/esp32-windows/` — Windows/ESP32-C3 development pit list (pi skill).
 - `.pi/skills/ch582-linux/` — Linux build/flash/test ops manual (pi skill).
 - `EVT/` — WCH CH583 SDK reference code (gitignored, not compiled).
 - `REQUIREMENTS.md` — feature requirements (Chinese).
-- `software/POWER.md` — low-power design guide.
+- `ch582/POWER.md` — low-power design guide.

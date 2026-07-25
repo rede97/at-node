@@ -20,7 +20,7 @@
        Input (0x2A22) or falls back to the first 0x2A4D, plus Battery
        (0x2A19). Prints every notification as hex.
 
-  Findings on RK-S75RGB (2026-07-22, full postmortem in software/PLAN.md §3.0):
+  Findings on RK-S75RGB (2026-07-22, full postmortem in ch582/PLAN.md §3.0):
 
   Current status: keyboard displays PAIRED; battery level (0x2A19)
   notifications stream in; keystream does NOT arrive — no keyboard

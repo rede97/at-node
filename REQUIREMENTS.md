@@ -662,7 +662,7 @@ USB VBUS (5V) ──→ 分压电阻 (2:1) ──→ 3.3V ──→ GPIO 输入�
 ## 9. 代码结构
 
 ```
-software/APP/                    ← 应用层
+ch582/APP/                    ← 应用层
 ├── main.c                       # 入口 + 初始化序列 ✅
 ├── ble_init.c                   # BLE Peripheral 初始化聚合 ✅
 ├── at_parser.c / at_parser.h    # AT 解析器（UART+CDC 双通道）✅

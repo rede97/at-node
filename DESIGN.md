@@ -149,8 +149,8 @@ cfg.writeFlashCB  = Lib_Write_Flash;
 
 - All `.c`/`.h`/`.S` are **UTF-8 without BOM**, pure ASCII comments
 - Original WCH SDK was GB2312; converted via `tools/utils/batch_utf8.py`
-- Verify: `uv run python tools/utils/batch_utf8.py software`
-- CI check: `uv run python tools/utils/batch_utf8.py software --check`
+- Verify: `uv run python tools/utils/batch_utf8.py ch582`
+- CI check: `uv run python tools/utils/batch_utf8.py ch582 --check`
 
 ## 12. IR Transmitter Design (planned)
 

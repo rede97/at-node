@@ -25,7 +25,7 @@ description: CH582F firmware development on Linux. Covers WCH toolchain setup, b
 | `~/.local/bin/wlink` | wlink 0.1.2(Rust,WCH-Link 协议) | ✅ **烧录首选,已验证支持 CH582** |
 | `~/.local/bin/wchisp` | wchisp(USB ISP 烧录) | 备选(未验证) |
 
-关键点:`software/obj/` 的 makefile 硬编码调用 `riscv-none-embed-gcc`,
+关键点:`ch582/obj/` 的 makefile 硬编码调用 `riscv-none-embed-gcc`,
 只有 GCC 8.2(xPack)那个目录提供此前缀。换工具链必须同步改 makefile。
 
 ### 1.2 Python 环境(uv)
@@ -54,7 +54,7 @@ source env.sh        # 仓库根,幂等,仅向 PATH 前置两个目录
 
 ```bash
 source env.sh
-cd software/obj && make --no-print-directory main-build
+cd ch582/obj && make --no-print-directory main-build
 # dongle 变体(BLE HID 接收器):make clean 后
 make --no-print-directory main-build DONGLE=1
 # 两个变体一起构建:tools/ci/build_all.sh(产物在 tools/ci/out/)
@@ -75,7 +75,7 @@ RAM:    18996 B / 32  KB (57.97%)
 ### 3.1 Linux 化修复(已完成,勿回退)
 
 MRS(MounRiver Studio)自动生成的 makefile 原本是 Windows 绝对路径,
-已批量改为相对路径(make 始终在 `software/obj/` 下执行,`..` = `software/`,
+已批量改为相对路径(make 始终在 `ch582/obj/` 下执行,`..` = `ch582/`,
 Windows/Linux 通用):
 
 - `obj/makefile`:`-T "../Ld/Link.ld"` + `-L".." -L"../LIB" -L"../StdPeriphDriver"`
@@ -84,8 +84,8 @@ Windows/Linux 通用):
 若 Windows 端 MRS 重新生成工程文件覆盖了这些路径,一键修复:
 
 ```bash
-cd software/obj
-sed -i 's|e:/Projects/at_node/software|..|g' */subdir.mk APP/*/subdir.mk makefile
+cd ch582/obj
+sed -i 's|e:/Projects/at_node/ch582|..|g' */subdir.mk APP/*/subdir.mk makefile
 ```
 
 ### 3.2 大小写敏感
@@ -118,7 +118,7 @@ ChipID 0x82000000,WCH-V4A 内核):
 
 ```bash
 wlink status                       # 探测:确认 Attached chip: CH582
-wlink flash software/obj/at-node.hex    # 烧录 + 自动复位,162 KB 约 18 秒
+wlink flash ch582/obj/at-node.hex    # 烧录 + 自动复位,162 KB 约 18 秒
 wlink flash -e firmware.hex        # 可选:先整片擦除
 ```
 

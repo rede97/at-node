@@ -7,7 +7,7 @@
 #   dual      (MODE=DUAL)     both roles, AT+ROLE runtime switch
 #
 # Outputs: tools/ci/out/{kbd,kbd_multi,dongle,dual}.{hex,elf,map}
-# Ends with `make clean` so a later manual `make` in software/obj can
+# Ends with `make clean` so a later manual `make` in ch582/obj can
 # never silently link stale objects of the wrong variant (make does
 # not track flag changes).
 set -euo pipefail
@@ -15,7 +15,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 source "$ROOT/env.sh" >/dev/null
 
-OBJ="$ROOT/software/obj"
+OBJ="$ROOT/ch582/obj"
 OUT="$ROOT/tools/ci/out"
 mkdir -p "$OUT"
 

@@ -1,28 +1,28 @@
-# === Firmware (software/) ===
+# === Firmware (ch582/) ===
 
 # Build output
-software/obj/**/*.o
-software/obj/**/*.d
-software/obj/**/*.elf
-software/obj/**/*.hex
-software/obj/**/*.lst
-software/obj/**/*.map
-software/obj/**/*.siz
-software/obj/**/*.expand
+ch582/obj/**/*.o
+ch582/obj/**/*.d
+ch582/obj/**/*.elf
+ch582/obj/**/*.hex
+ch582/obj/**/*.lst
+ch582/obj/**/*.map
+ch582/obj/**/*.siz
+ch582/obj/**/*.expand
 
-# Build artifacts (at software root)
-software/*.elf
-software/*.hex
-software/*.lst
-software/*.map
-software/*.siz
+# Build artifacts (at ch582 root)
+ch582/*.elf
+ch582/*.hex
+ch582/*.lst
+ch582/*.map
+ch582/*.siz
 
 # Reasonix
 .reasonix/
 
 # === EVT (reference code — not compiled) ===
 EVT/
-software/obj/EVT/
+ch582/obj/EVT/
 
 # === Hardware / PCB (future) ===
 # KiCad
@@ -53,7 +53,7 @@ hardware/*.BackupOf.*
 .DS_Store
 Thumbs.db
 desktop.ini
-software/.mrs/
+ch582/.mrs/
 
 # === Python (uv) ===
 .venv/

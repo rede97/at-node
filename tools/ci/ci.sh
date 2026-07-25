@@ -50,7 +50,7 @@ build_ch582() {
     fi
     log "Toolchain: $(riscv-none-embed-gcc --version | head -1)"
 
-    cd "$PROJECT_ROOT/software/obj"
+    cd "$PROJECT_ROOT/ch582/obj"
 
     # Build all variants
     for variant in "" "DONGLE=1" "MODE=DUAL"; do
@@ -96,7 +96,7 @@ run_tests() {
     cd "$PROJECT_ROOT"
     # Run encoding check (if script exists)
     if [ -f tools/utils/batch_utf8.py ]; then
-        uv run python tools/utils/batch_utf8.py software --check || error "Encoding check failed"
+        uv run python tools/utils/batch_utf8.py ch582 --check || error "Encoding check failed"
         log "Encoding check OK"
     else
         warn "Encoding check script not found, skipping"
