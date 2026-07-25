@@ -556,6 +556,7 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
 }
 
 
+#if BLE_HAS_KBD
 /* AT+MAC[=<BLE1|BLE2|BLE3>[,<AA:BB:CC:DD:EE:FF>]] — per-slot own MAC.
    Query shows all slots; set writes a static-random address (MSB must
    have top bits 11) and persists it. The ACTIVE slot's MAC drives the
@@ -654,6 +655,11 @@ static int at_cmd_NAME(int argc, char *argv[]) {
     }
     return -1;
 }
+#else
+static int at_cmd_MAC(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("ERROR: keyboard role disabled"); return -1; }
+static int at_cmd_PACE(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: keyboard role disabled"); return -1; }
+static int at_cmd_NAME(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: keyboard role disabled"); return -1; }
+#endif /* BLE_HAS_KBD */
 
 /* ===== Stub commands — registered for protocol compatibility, TODO implement ===== */
 
@@ -1325,9 +1331,11 @@ const at_cmd_t cmd_table[] = {
     { "AT+MOD",     "set modifiers <mask>",           at_cmd_MOD },
     { "AT+KEY_SEQ", "batch HID <delay>,<mods>,<k1>..<k6>,...", at_cmd_KEY_SEQ },
     { "AT+KEY_STR", "type text <string> (US layout)", at_cmd_KEY_STR },
+#if BLE_HAS_KBD
     { "AT+PACE",    "KEY_STR pacing <ms> (per-slot)", at_cmd_PACE },
     { "AT+NAME",    "slot label <BLEn>,<name>",   at_cmd_NAME },
     { "AT+MAC",     "slot own MAC <BLEn>[,<addr>]", at_cmd_MAC },
+#endif
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },

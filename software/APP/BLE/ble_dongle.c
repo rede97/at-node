@@ -317,6 +317,40 @@ static void dgl_adv_get_name(const uint8_t *data, uint8_t len, char *out)
     }
 }
 
+/* ASCII case-insensitive substring search.
+   Replaces strcasestr() which is a GNU extension and not declared by
+   the embedded newlib headers unless feature-test macros are set. */
+static inline char dgl_tolower(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c - 'A' + 'a') : c;
+}
+
+static const char *dgl_strcasestr(const char *haystack, const char *needle)
+{
+    size_t nlen;
+    const char *p;
+
+    if (!needle || !needle[0])
+        return haystack;
+
+    nlen = strlen(needle);
+    for (p = haystack; *p; p++) {
+        if (dgl_tolower(*p) == dgl_tolower(*needle)) {
+            size_t i;
+            for (i = 1; i < nlen; i++) {
+                char a = p[i];
+                if (!a)
+                    return NULL;
+                if (dgl_tolower(a) != dgl_tolower(needle[i]))
+                    break;
+            }
+            if (i == nlen)
+                return p;
+        }
+    }
+    return NULL;
+}
+
 static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
 {
     /* Inclusive filter: HID service UUID OR any device name.
@@ -334,7 +368,7 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
     if (dgl_filter[0]) {
         if (strcasecmp(dgl_filter, "HID") == 0) {
             if (!is_hid) return;
-        } else if (!name[0] || !strcasestr(name, dgl_filter)) {
+        } else if (!name[0] || !dgl_strcasestr(name, dgl_filter)) {
             return;
         }
     }
@@ -383,7 +417,7 @@ static void dgl_add_scan_rec(gapDeviceInfoEvent_t *info)
     if (dgl_watch_active) {
         int hit = dgl_watch_is_mac
                 ? tmos_memcmp(info->addr, dgl_watch_addr, B_ADDR_LEN)
-                : (name[0] && strcasestr(name, dgl_watch_name));
+                : (name[0] && dgl_strcasestr(name, dgl_watch_name));
         if (hit) {
             dgl_watch_active = 0;
             GAPRole_CentralCancelDiscovery();

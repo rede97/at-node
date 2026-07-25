@@ -368,3 +368,40 @@ C3 同时运行 WiFi HTTP 服务，测试脚本/Agent 以 HTTP 请求驱动键�
 - **WCH GAPRole 多链路广播行为**：半连接状态下的广播间隔/可连性需实测调参
 - **SNV 布局变更使旧绑定失效**：可接受，commit 注明；先 P0+P1 用"无绑定直连"跑通再做 P3
 - **dongle 板当主机**：其 `AT+BT_CONN` 已支持按名连接，可直接当第 3 主机，无需新硬件
+
+## 11. 交接进展(2026-07-24 深夜暂停点)
+
+### 已完成(全部入库,本地 HEAD=9e2e0e2 + 123ec1b,GitHub 网络不通待推)
+
+**KBD_MULTI 多模键盘全链路**(F1.10–F1.15 收官):
+- 单活动链路模型:仅 AT+DEV 目标槽持有连接,其他已绑定主机秒拒(省电/消灭多链路复杂度)
+- 槽位持久化 slotmap(DataFlash 0x7B00):预留地址/名字/节奏/MAC/地址类型,跨刷机
+- 配对窗口:AT+BT_PAIR[=<BLEn>] 60s,窗口外未知主机拒连(安全,市面键盘范式)
+- 每槽独立 MAC:默认芯片 MAC+slot(BLE1 兼容旧绑定),AT+MAC 可配持久化
+- AT+NAME 助记 / AT+PACE 每槽节奏(默认30ms)/ AT+FACTORY 出厂复位
+- +KEY_DONE 回放完成 URC(agent 同步点);KEY_STR 特殊字符映射表修复(F17)
+- 定向广播(ADV_DIRECT)代码就绪(A/B 调试中,见下)
+- dongle AT+BT_CONN=mac|name,<目标>[,秒] watch 式连接(超时默认5s)
+- FIELD-NOTES.md F1–F17 坑录;tools/bt_host.py / bt_agent.py / test_multi.py 固化
+
+### 当前断点(下次从这里继续)
+
+**[OPEN] 广播复活路径回归**:切 AT+DEV=USB → BLE1 后广播不再发出
+(btmon 零包,dongle 无法回连)。冷启动广播正常;怀疑点:
+① kbd_adv_update 的 off→EVENT_TYPE→want 序列;
+② kb_ble_apply_addr 与 kbd_adv_update 双重开关;
+③ DEV 循环后 GAPRole 状态异常。下一步:reset 后先验证 boot 广播,
+再单步 DEV 切换定位失效点;必要时恢复 hidDevDisconnected 的简单重开逻辑。
+
+**[OPEN] dongle 板固件待更新**:watch 模式 AT+BT_CONN 在 dongle 固件中,
+dongle 板仍跑旧版(调试线目前在 kbd 板,需挪线刷 dongle.hex)。
+
+**[OPEN] dongle auto_hold 闭锁**:5 连败后 AT+BT_AUTO=1 单独解锁有时不生效
+(消息提示要 AT+BT_PAIR),查 dgl_auto_hold 清理路径。
+
+### 台架状态
+
+- kbd 板(kbd_multi 固件,调试线接着):BLE1=dongle 预留 / BLE2=空 / BLE3=Windows 预留
+- dongle 板:旧固件,auto 重连可用(配对窗开着时手动 AT+BT_CONN 有效)
+- 已验证矩阵:BLE1 dongle 按键通路 / BLE2 手机打字 / BLE3 Windows 长文本+回车
+- GitHub:网络抖动,本地 2 提交未推(123ec1b 映射修复 + 9e2e0e2 定向广播/watch)

@@ -23,6 +23,8 @@
 #include "hidkbd_common.h"
 #include "at_parser.h"
 
+#if BLE_HAS_KBD
+
 /*********************************************************************
  * MACROS
  */
@@ -620,6 +622,9 @@ static void kbd_adv_update(void)
             GAPRole_SetParameter(GAPROLE_ADV_DIRECT_ADDR, B_ADDR_LEN,
                                  slotmap[act]);
         }
+        /* A/B debug 2026-07-24: directed adv emits nothing on this stack,
+           keep general for the waiting case until fixed */
+        evt_type = GAP_ADTYPE_ADV_IND;
     }
     /* event type must change while advertising is off */
     uint8_t off = FALSE;
@@ -1040,3 +1045,36 @@ static void ble_hid_emu_evt_cb(uint8_t evt)
     // process enter/exit suspend or enter/exit boot mode
     return;
 }
+
+#else /* !BLE_HAS_KBD — dongle builds: keyboard peripheral code excluded */
+
+/* Minimal stubs so common AT commands (KEY/STATUS/etc.) still link. */
+void ble_hid_emu_init(void) { }
+uint8_t kb_ble_connected(void) { return 0; }
+int kb_ble_conn_count(void) { return 0; }
+uint16_t kb_ble_slot_handle(uint8_t slot) { (void)slot; return GAP_CONNHANDLE_INIT; }
+uint8_t kb_ble_slot_notify(uint8_t slot) { (void)slot; return 0; }
+const char *kb_ble_slot_name(uint8_t slot) { (void)slot; return ""; }
+int kb_ble_slot_set_name(uint8_t slot, const char *name) { (void)slot; (void)name; return -1; }
+uint16_t kb_ble_slot_pace(uint8_t slot) { (void)slot; return 30; }
+int kb_ble_slot_set_pace(uint8_t slot, uint16_t ms) { (void)slot; (void)ms; return -1; }
+const uint8_t *kb_ble_slot_mac(uint8_t slot) { (void)slot; return NULL; }
+int kb_ble_slot_set_mac(uint8_t slot, const uint8_t *addr) { (void)slot; (void)addr; return -1; }
+void kb_ble_apply_addr(int slot) { (void)slot; }
+const uint8_t *kb_ble_slot_bound_addr(uint8_t slot) { (void)slot; return NULL; }
+void kb_ble_factory_reset(void) { }
+int kb_ble_unbind_slot(uint8_t slot) { (void)slot; return -1; }
+uint8_t kb_ble_slot_params(uint8_t slot, uint16_t *intv, uint16_t *lat) { (void)slot; (void)intv; (void)lat; return 0; }
+uint8_t kb_ble_slot_secure(uint8_t slot) { (void)slot; return 0; }
+const uint8_t *kb_ble_slot_addr(uint8_t slot) { (void)slot; return NULL; }
+int kb_ble_disconnect_slot(uint8_t slot) { (void)slot; return -1; }
+int kb_ble_disconnect(void) { return -1; }
+void kb_ble_forget_bonds(void) { }
+uint8_t kb_ble_send_report_slot(uint8_t slot, uint8_t mods, uint8_t *keys, int count) { (void)slot; (void)mods; (void)keys; (void)count; return bleNotReady; }
+void kb_ble_send_report(uint8_t mods, uint8_t *keys, int count) { (void)mods; (void)keys; (void)count; }
+int8_t kb_ble_pair_slot(void) { return -1; }
+void kb_ble_pair_open(int slot) { (void)slot; }
+void kb_ble_activate_slot(int slot) { (void)slot; }
+int8_t kb_ble_active_slot(void) { return -1; }
+
+#endif /* BLE_HAS_KBD */
