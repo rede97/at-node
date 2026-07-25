@@ -161,7 +161,8 @@ LED self-schedules blink timing outside the table.
 ## Notes
 
 - `DESIGN.md` — design philosophy, memory layout, BLE callback registration, USB/low-power exclusion details.
-- `ch582/PLAN.md` — roadmap + milestone log (M1–M4 done; M5 = peripheral drivers; M6 = C3 keyboard bench).
+- `ch582/USER-MANUAL.md` — AT 命令使用手册(命令/模式/参数/注意细节)。
+- `ch582/FIELD-NOTES.md` — 实战坑录(F1–F19)。
 - `esp32/PLAN.md` — ESP32-C3 AT Node network variant plan (E1–E7).
 - `.pi/skills/esp32-windows/` — Windows/ESP32-C3 development pit list (pi skill).
 - `.pi/skills/ch582-linux/` — Linux build/flash/test ops manual (pi skill).

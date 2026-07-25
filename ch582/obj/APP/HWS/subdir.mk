@@ -10,8 +10,7 @@ C_SRCS += \
 ../APP/HWS/hws_core.c \
 ../APP/HWS/hws_gpio.c \
 ../APP/HWS/hws_i2c.c \
-../APP/HWS/hws_ir.c \
-../APP/HWS/hws_key.c \
+../../APP/HWS/hws_key.c \
 ../APP/HWS/hws_led.c \
 ../APP/HWS/hws_rtc.c \
 ../APP/HWS/hws_sleep.c \
@@ -36,7 +35,6 @@ OBJS += \
 ./APP/HWS/hws_core.o \
 ./APP/HWS/hws_gpio.o \
 ./APP/HWS/hws_i2c.o \
-./APP/HWS/hws_ir.o \
 ./APP/HWS/hws_key.o \
 ./APP/HWS/hws_led.o \
 ./APP/HWS/hws_rtc.o \

@@ -31,7 +31,6 @@ extern "C" {
 #include "hws_gpio.h"   /* AT+GPIO_W/R (HWS_GPIO) */
 #include "hws_adc.h"    /* AT+ADC external channels (HWS_ADC) */
 #include "hws_i2c.h"    /* AT+I2C_SCAN/R/W (HWS_I2C) */
-#include "hws_ir.h"     /* AT+IR=NEC/SIRC/RAW (HWS_IR) */
 #include "hws_wdg.h"    /* AT+WDG runtime watchdog (HWS_WDG) */
 
 /* HWS task events — bitmask flags for TMOS event dispatch.

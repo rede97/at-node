@@ -148,16 +148,6 @@
 #define HWS_I2C_SPEED_HZ  100000     /* 100 kHz standard; 400 kHz ok */
 #endif
 
-/* HWS_IR — AT+IR=NEC|SIRC|RAW. PWM4 38 kHz carrier on PA12 (bPWM4),
-   TMR1 interrupt drives the mark/space segment engine. Busy flag
-   while a frame is on air. */
-#ifndef HWS_IR
-#define HWS_IR  TRUE
-#endif
-#ifndef HWS_IR_CARRIER_HZ
-#define HWS_IR_CARRIER_HZ  37500     /* 60MHz/25/64 = 37.5 kHz */
-#endif
-
 /* HWS_WDG — runtime-armable watchdog (AT+WDG). Compiled in, DISARMED
    at boot; arm explicitly when you actually want the protection. */
 #ifndef HWS_WDG

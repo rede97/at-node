@@ -24,7 +24,7 @@ import serial
 import sys
 import time
 
-sys.path.insert(0, "tools")
+sys.path.insert(0, "tools/test")
 import bt_host  # noqa: E402
 
 # AT command arguments are parsed by atoi() — DECIMAL. HID 0x14 ('t') is

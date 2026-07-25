@@ -130,7 +130,7 @@
 
 | 需求 | 解法 |
 |------|------|
-| bluetoothctl agent 注册被拒 | 自写 dbus-next agent:`tools/bt_agent.py` |
+| bluetoothctl agent 注册被拒 | 自写 dbus-next agent:`tools/test/bt_agent.py` |
 | evdev 读取 | `sudo usermod -aG input mxq`(+newgrp/重登录) |
 | btmon 抓包 | `sudo setcap 'cap_net_admin,cap_net_raw+eip' $(readlink -f $(which btmon))` |
 | bluetooth 组 | `sudo usermod -aG bluetooth mxq` |

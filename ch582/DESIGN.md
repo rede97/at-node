@@ -1,6 +1,9 @@
 # at-node 设计文档
 
-> 版本：v0.2 · 最后更新：2026-07-16
+> 版本：v1.0 · 最后更新：2026-07-25
+> 范围：设计原则、架构、关键约束。命令用法见 [USER-MANUAL.md](USER-MANUAL.md),
+> 需求清单见顶层 [REQUIREMENTS.md](../REQUIREMENTS.md)(分层职责不重复)。
+> 当前状态：功能全部交付，剩余工作 = 电源优化 + 细节维护。
 
 ---
 
@@ -197,10 +200,23 @@ int main(void) {
 |---------|---------|---------|---------|
 | hws_task_id | `hws_init()` | HWS_KEY_EVENT, HWS_LED_BLINK_EVENT, HWS_CALIB_EVENT | 100ms / on-demand / 120s |
 | ble_hid_dev_task_id | `ble_hid_dev_init()` | GATT 状态机 | 事件驱动 |
-| ble_hid_emu_task_id | `ble_hid_emu_init()` | BLE 广播/连接/参数更新 | 事件驱动 |
+| ble_hid_emu_task_id | `ble_hid_emu_init()` | 广播/连接/配对窗/广播补发 | 事件驱动 |
 | at_task_id | `at_init()` | AT_EVENT | 10ms |
+| seq_task_id | 首个 KEY_STR/KEY_SEQ | 按键回放状态机 | pace 节拍 |
+| ble_dongle_task_id | `ble_dongle_init()` | 扫描/连接/GATT 发现/自动重连 | 事件驱动(dongle 构建) |
 
-### 3.3 AT 命令系统
+### 3.3 多模键盘架构(KBD_MULTI,2026-07-24 定稿)
+
+**单活动链路模型**(市面产品范式):3 个主机槽位，但同一时刻只有 `AT+DEV`
+目标槽持有链路；其他已绑定主机来连即拒。省电、消灭多链路空口竞争。
+
+- **槽位持久化**(slotmap,DataFlash `0x7B00`):主机地址/助记名/节奏/每槽独立 MAC/地址类型，跨刷机保留；`AT+FACTORY` 全清
+- **配对窗口**:`AT+BT_PAIR[=<BLEn>]` 开 60s 窗口，窗口外未知主机拒连(防误连);配对即指向，窗口在目标槽的 MAC 上广播
+- **自动回连**:活动槽预留主机离开时，HDC 定向广播每 3s 补发(实测 dongle 0.1s、Windows 2.8s 回连)
+- **每槽独立 MAC**:默认芯片 MAC+槽号(BLE1 兼容旧绑定),`AT+MAC` 可配;广播名 `AT-Node-XXXX-N` 联动
+- **节奏控制**:KEY_STR 每槽 `AT+PACE` 持久化，法则 pace ≥ 2×连接间隔
+
+### 3.4 AT 命令系统
 
 **设计目标：** AI Agent 通过文本协议控制硬件。不是给人用的 UI，是给 LLM 用的 API。
 

@@ -1402,40 +1402,6 @@ static int at_cmd_ROLE(int argc, char *argv[]) {
 #endif
 }
 
-/* Infrared — AT+IR=<sub>,<args>... (sub parsed as argv[1]) */
-#if(defined(HWS_IR)) && (HWS_IR == TRUE)
-static uint8_t ir_inited = 0;
-static int at_cmd_IR(int argc, char *argv[]) {
-    if (argc < 3) { AT_Response("usage: AT+IR=NEC,<hex> | SIRC,<hex>,<bits> | RAW,<t1>,<t2>,..."); return -1; }
-    if (!ir_inited) { hws_ir_init(); ir_inited = 1; }
-    if (hws_ir_busy()) { AT_Response("ERROR: busy"); return -1; }
-    const char *sub = argv[1];
-    char c0 = sub[0] & ~0x20;   /* case-insensitive first letter */
-    if (c0 == 'N') {            /* NEC,<hex> */
-        if (hws_ir_nec((uint32_t)strtoul(argv[2], NULL, 0)) < 0) goto err;
-    } else if (c0 == 'S') {     /* SIRC,<hex>,<bits> */
-        if (argc < 4) { AT_Response("usage: AT+IR=SIRC,<hex>,<bits>"); return -1; }
-        if (hws_ir_sirc((uint32_t)strtoul(argv[2], NULL, 0), (uint8_t)atoi(argv[3])) < 0) goto err;
-    } else if (c0 == 'R') {     /* RAW,<t1>,<t2>,... */
-        uint16_t us[64];
-        int n = argc - 2;
-        if (n > 64) n = 64;
-        for (int i = 0; i < n; i++)
-            us[i] = (uint16_t)strtoul(argv[2 + i], NULL, 0);
-        if (hws_ir_raw(us, (uint8_t)n) < 0) goto err;
-    } else {
-        AT_Response("usage: AT+IR=NEC|SIRC|RAW,...");
-        return -1;
-    }
-    return 0;
-err:
-    AT_Response("ERROR: ir send failed");
-    return -1;
-}
-#else
-static int at_cmd_IR(int argc, char *argv[])  { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_IR=FALSE)"); return -1; }
-#endif
-
 /* ===== Command table =====
  *
  *   Organized by function group. Entries marked [stub] return OK but
@@ -1500,6 +1466,5 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },
     { "AT+BT_AUTO", "auto-reconnect [0|1] (dongle)", at_cmd_BT_AUTO },
     /* Infrared */
-    { "AT+IR",      "IR=NEC|SIRC|RAW,...",         at_cmd_IR },
 };
 const int cmd_table_count = sizeof(cmd_table) / sizeof(cmd_table[0]);
