@@ -620,9 +620,11 @@ static void kbd_adv_update(void)
         want = (act >= 0 && kb_ble_advert_wanted()) ? TRUE : FALSE;
 #endif
         if (want) {
-            /* directed advertising straight at the bonded host — faster
-               reconnect and invisible to every other scanner */
-            evt_type = GAP_ADTYPE_ADV_LDC_DIRECT_IND;
+            /* directed advertising straight at the bonded host — the
+               commercial-mouse fast-reconnect path. HDC fires every
+               ~3.75 ms for 1.28 s so the host answers almost instantly;
+               the disconnect handler re-arms it for the next window. */
+            evt_type = GAP_ADTYPE_ADV_HDC_DIRECT_IND;
             GAPRole_SetParameter(GAPROLE_ADV_DIRECT_TYPE, 1, &slottype[act]);
             GAPRole_SetParameter(GAPROLE_ADV_DIRECT_ADDR, B_ADDR_LEN,
                                  slotmap[act]);
