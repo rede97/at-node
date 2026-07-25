@@ -627,9 +627,6 @@ static void kbd_adv_update(void)
             GAPRole_SetParameter(GAPROLE_ADV_DIRECT_ADDR, B_ADDR_LEN,
                                  slotmap[act]);
         }
-        /* A/B debug 2026-07-24: directed adv emits nothing on this stack,
-           keep general for the waiting case until fixed */
-        evt_type = GAP_ADTYPE_ADV_IND;
     }
     /* event type must change while advertising is off */
     uint8_t off = FALSE;
