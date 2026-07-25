@@ -49,11 +49,10 @@ def wait_urc(ser, pattern, timeout):
 
 
 def type_sync(kbd, text):
+    """Type text; a trailing \\n in the string becomes a paced Enter
+    (firmware maps \\n -> Enter in the seq engine). Waits +KEY_DONE."""
     kbd.write(f"AT+KEY_STR={text}\r\n".encode())
-    if not wait_urc(kbd, "+KEY_DONE", len(text) * 0.1 + 5):
-        return False
-    kbd.write(b"AT+TAP=80,0,40\r\n")   # Enter
-    return True
+    return bool(wait_urc(kbd, "+KEY_DONE", len(text) * 0.12 + 8))
 
 
 def main():
@@ -74,12 +73,20 @@ def main():
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE2\r\n")
         t0 = time.time()
-        ok = wait_urc(kbd, "+BT_CONNECTED:2", 25) or n == 1 and time.time()
-        if not ok and n > 1:
-            results.append((n, "BLE2 reconnect FAIL", None)); continue
-        recon = (ok - t0) if ok and n > 1 else 0
+        ok = wait_urc(kbd, "+BT_CONNECTED:2", 25)
+        if not ok and n == 1:
+            # already connected from a previous session — no URC comes;
+            # verify with a DEV query instead of blindly proceeding
+            kbd.write(b"AT+DEV\r\n"); time.sleep(0.8)
+            dev = kbd.read(kbd.in_waiting or 1).decode(errors="replace")
+            ok = time.time() if "BLE2" in dev and ",connected," in dev else None
+        if not ok:
+            results.append((n, "BLE2 reconnect FAIL", None))
+            print(f"round {n}: BLE2 reconnect FAIL")
+            continue
+        recon = (ok - t0) if n > 1 else 0
         time.sleep(2.5)   # let the dongle finish GATT/arm
-        typed = type_sync(kbd, f"echo D{n} >> {LOG}")
+        typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
         # --- to Windows (BLE1) ---
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE1\r\n")
@@ -90,9 +97,11 @@ def main():
             time.sleep(1.5)
             type_sync(kbd, f"win round {n}")
         results.append((n, recon, recon1))
-        print(f"round {n}: BLE2_recon={recon:.1f}s typed={'Y' if typed else 'N'} "
-              f"BLE1_recon={recon1:.1f}s" if recon1 is not None else
-              f"round {n}: BLE1 reconnect FAIL")
+        if recon1 is not None:
+            print(f"round {n}: BLE2_recon={recon:.1f}s typed={'Y' if typed else 'N'} "
+                  f"BLE1_recon={recon1:.1f}s")
+        else:
+            print(f"round {n}: BLE1 reconnect FAIL")
 
     time.sleep(2)
     got = ""

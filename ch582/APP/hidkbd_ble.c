@@ -891,7 +891,14 @@ static void ble_hid_emu_state_cb(gapRole_States_t newState, gapRoleEvent_t *pEve
         int slot = kbd_slot_alloc(event->connectionHandle, event->devAddr);
         if (slot >= 0) {
             kbd_slot_set_type((uint8_t)slot, event->devAddrType);
+#if(BLE_MODE != BLE_MODE_KBD_MULTI)
+            /* KBD_MULTI: no proactive param update — it fires 12.8 s after
+               connect and the renegotiation drops the link with LL
+               supervision timeout 0x08 when it lands mid-typing (field
+               2026-07-25: 3/3 flaps before, 3/3 clean after 15 s settle).
+               Host-negotiated initial params are fine as-is. */
             tmos_start_task(ble_hid_emu_task_id, START_PARAM_UPDATE_EVT, START_PARAM_UPDATE_EVT_DELAY);
+#endif
             AT_Response("+BT_CONNECTED:%d", slot + 1);   /* URC, 1-based slot (BLE1..) */
             PRINT("Connected.. slot %d\n", slot);
         } else {

@@ -479,6 +479,9 @@ static int keystr_map(char c, uint8_t *mods, uint8_t *key)
     switch (c) {
         case ' ':  *key = 44; return 1;
         case '\t': *key = 43; return 1;
+        case '\n': *key = 40; return 1;   /* Enter — paced with the string,
+            so a trailing newline can never be dropped behind the text
+            (field 2026-07-25: separate AT+TAP Enter raced the queue) */
         case '-':  *key = 45; return 1;
         case '=':  *key = 46; return 1;
         case '[':  *key = 47; return 1;
@@ -518,9 +521,20 @@ static int keystr_map(char c, uint8_t *mods, uint8_t *key)
 
 static int at_cmd_KEY_STR(int argc, char *argv[])
 {
-    if (argc < 2) { AT_Response("usage: AT+KEY_STR=<text> (no ',' or '=')"); return -1; }
+    if (argc < 2) { AT_Response("usage: AT+KEY_STR=<text> (no ',' or '='; \\n=Enter \\t=Tab \\\\=backslash)"); return -1; }
+    /* copy with backslash escapes: \\n -> Enter, \\t -> Tab, \\\\ -> backslash.
+       Raw newline can't ride inside an AT command line, so Enter is
+       spelled \\n and plays back paced with the text (2026-07-25). */
     int n = 0;
-    while (argv[1][n] && n < KEYSTR_MAX) { keystr_buf[n] = argv[1][n]; n++; }
+    const char *p = argv[1];
+    while (*p && n < KEYSTR_MAX) {
+        if (*p == '\\' && p[1]) {
+            if (p[1] == 'n')      { keystr_buf[n++] = '\n'; p += 2; continue; }
+            if (p[1] == 't')      { keystr_buf[n++] = '\t'; p += 2; continue; }
+            if (p[1] == '\\')     { keystr_buf[n++] = '\\'; p += 2; continue; }
+        }
+        keystr_buf[n++] = *p++;
+    }
     keystr_buf[n] = '\0';
     keystr_len  = n;
     keystr_idx  = 0;
@@ -528,7 +542,7 @@ static int at_cmd_KEY_STR(int argc, char *argv[])
         seq_task_id = TMOS_ProcessEventRegister(kb_seq_process_event);
     keystr_active = 1;
     tmos_start_task(seq_task_id, SEQ_EVENT, 0);
-    if (argv[1][n]) AT_Response("truncated to %d chars", KEYSTR_MAX);
+    if (*p) AT_Response("truncated to %d chars", KEYSTR_MAX);
     return 0;
 }
 
