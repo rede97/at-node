@@ -734,16 +734,18 @@ static int at_cmd_ISP(int argc, char *argv[])     {
 /* GPIO */
 #if(defined(HWS_GPIO)) && (HWS_GPIO == TRUE)
 static int at_cmd_GPIO_W(int argc, char *argv[]) {
-    if (argc < 3) { AT_Response("usage: AT+GPIO_W=<pin>,<level>"); return -1; }
-    if (hws_gpio_write((uint8_t)atoi(argv[1]), (uint8_t)atoi(argv[2])) < 0) {
+    if (argc < 3) { AT_Response("usage: AT+GPIO_W=<pin>,<level>[,<drive 5|20>]"); return -1; }
+    uint8_t drive20 = (argc > 3 && atoi(argv[3]) == 20) ? 1 : 0;
+    if (hws_gpio_write((uint8_t)atoi(argv[1]), (uint8_t)atoi(argv[2]), drive20) < 0) {
         AT_Response("ERROR: bad pin (0-15=PA, 16-39=PB)");
         return -1;
     }
     return 0;
 }
 static int at_cmd_GPIO_R(int argc, char *argv[]) {
-    if (argc < 2) { AT_Response("usage: AT+GPIO_R=<pin>"); return -1; }
-    int v = hws_gpio_read((uint8_t)atoi(argv[1]));
+    if (argc < 2) { AT_Response("usage: AT+GPIO_R=<pin>[,<mode 0=PU 1=FLOAT 2=PD>]"); return -1; }
+    uint8_t mode = (argc > 2) ? (uint8_t)atoi(argv[2]) : 0;
+    int v = hws_gpio_read((uint8_t)atoi(argv[1]), mode);
     if (v < 0) { AT_Response("ERROR: bad pin (0-15=PA, 16-39=PB)"); return -1; }
     AT_Response("%d", v);
     return 0;

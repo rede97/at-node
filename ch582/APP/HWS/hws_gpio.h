@@ -18,8 +18,8 @@ extern "C" {
 #include "config.h"
 
 /* returns 0 ok, -1 bad pin */
-int hws_gpio_write(uint8_t pin, uint8_t level);
-int hws_gpio_read(uint8_t pin);   /* 0/1 level, -1 bad pin */
+int hws_gpio_write(uint8_t pin, uint8_t level, uint8_t drive20);
+int hws_gpio_read(uint8_t pin, uint8_t mode);   /* 0/1, -1 bad; mode: 0=PU 1=FLOAT 2=PD */
 
 #ifdef __cplusplus
 }
