@@ -84,11 +84,9 @@ def type_sync(kbd, text):
     return bool(wait_urc(kbd, "+KEY_DONE", len(text) * 0.12 + 8))
 
 
-def set_pace(kbd, ms_per_char):
-    """Set AT+PACE so that one character (press + release) takes roughly
-    ms_per_char.  AT+PACE controls the gap between press and release reports,
-    so pace = max(5, ms_per_char // 2)."""
-    pace = max(5, ms_per_char // 2)
+def set_pace(kbd, pace):
+    """Set AT+PACE to the given value (ms between press/release reports)."""
+    pace = max(5, pace)
     kbd.write(f"AT+PACE={pace}\r\n".encode())
     return bool(wait_urc(kbd, "OK", 3))
 
@@ -98,8 +96,8 @@ def main():
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--ms", type=int, default=30, dest="ms_per_char",
                     help="target milliseconds per character for KEY_STR (default: 30)")
-    ap.add_argument("--pace", type=int, default=None,
-                    help="override AT+PACE value directly (5-2000); if set, ignores --ms")
+    ap.add_argument("--pace", type=int, default=30,
+                    help="AT+PACE ms (default 30, safe for ~21ms links)")
     args = ap.parse_args()
 
     kbd = open_port("kbd")
@@ -132,9 +130,9 @@ def main():
         recon = (ok - t0) if n > 1 else 0
         say(f"[r{n}] dongle connected ({recon:.1f}s), settle 2.5s...")
         time.sleep(2.5)   # let the dongle finish GATT/arm
-        pace = args.pace if args.pace is not None else max(5, args.ms_per_char // 2)
+        pace = args.pace
         say(f"[r{n}] set AT+PACE={pace}ms for dongle")
-        if not set_pace(kbd, args.ms_per_char):
+        if not set_pace(kbd, pace):
             say(f"[r{n}] WARN: AT+PACE set failed, continuing with current pace")
         say(f"[r{n}] typing to dongle: echo D{n} >> {LOG}\\n")
         typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
@@ -144,13 +142,12 @@ def main():
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE1\r\n")
         t1 = time.time()
-        ok1 = wait_full_link(kbd, "BLE1", 60)
+        ok1 = wait_full_link(kbd, "BLE1", 25)
         recon1 = (ok1 - t1) if ok1 else None
         if ok1:
             say(f"[r{n}] Windows reconnected ({recon1:.1f}s), typing 'win round {n}'")
             time.sleep(1.5)
-            if args.pace is not None:
-                set_pace(kbd, args.ms_per_char)
+            set_pace(kbd, pace)
             type_sync(kbd, f"win round {n}")
         else:
             say(f"[r{n}] BLE1 reconnect FAIL (60s timeout)")

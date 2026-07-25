@@ -591,6 +591,11 @@ uint8_t kb_ble_slot_allowed(uint8_t slot, const uint8_t *addr);   /* at_cmds.c *
  * Known (reserved) hosts are unaffected and can always return. */
 #define PAIR_WINDOW_EVT   0x0002
 #define PAIR_WINDOW_MS    60000
+#define ADV_REARM_EVT     0x0010
+#define ADV_REARM_MS      3000   /* HDC direct is a 1.28 s burst by spec —
+    refire it every 3 s while waiting, or the host only gets one 1.28 s
+    chance to ever reconnect (field 2026-07-25: dongle missed the window
+    and the keyboard went silent forever) */
 static int8_t pair_slot = -1;   /* slot the window pairs into, -1 = closed */
 
 int8_t kb_ble_pair_slot(void) { return pair_slot; }
@@ -635,6 +640,13 @@ static void kbd_adv_update(void)
     GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &off);
     GAPRole_SetParameter(GAPROLE_ADV_EVENT_TYPE, sizeof(uint8_t), &evt_type);
     GAPRole_SetParameter(GAPROLE_ADVERT_ENABLED, sizeof(uint8_t), &want);
+
+    /* while waiting for a host home, keep refiring the HDC burst */
+    if (want && pair_slot < 0)
+        tmos_start_task(ble_hid_emu_task_id, ADV_REARM_EVT,
+                        MS1_TO_SYSTEM_TIME(ADV_REARM_MS));
+    else
+        tmos_stop_task(ble_hid_emu_task_id, ADV_REARM_EVT);
 }
 
 void kb_ble_pair_open(int slot)
@@ -826,6 +838,13 @@ uint16_t ble_hid_emu_process_event(uint8_t task_id, uint16_t events)
         kbd_adv_update();
         AT_Response("+BT_PAIR_WINDOW:closed");
         return (events ^ PAIR_WINDOW_EVT);
+    }
+
+    if(events & ADV_REARM_EVT)
+    {
+        /* refire the directed burst while still waiting (HDC = 1.28 s) */
+        kbd_adv_update();
+        return (events ^ ADV_REARM_EVT);
     }
 
     if(events & START_PHY_UPDATE_EVT)
