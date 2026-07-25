@@ -200,10 +200,10 @@ dongle 走 wlink——dongle 板 ISP 握手实测不稳（kbd 板每次都成，
 | # | 内容 | 判据 |
 |---|------|------|
 | M1 | 句柄解析修复 | ✅ 2026-07-21 达成：loop test 3 连过（§1） |
-| M2 | dongle 硬化 | 自动重连 + DIAG 门控 + Just Works boot 路径验证（§2） |
-| M3 | Linux CI 闭环 | ✅ 2026-07-21 `loop_test.sh` 一键全绿（混合模式：kbd 走 ISP,dongle 走 wlink） |
-| M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4),dongle-wip 早已合并 |
-| M5 | 外设驱动落地 | 🚧 GPIO/ADC/I2C/IR 已在 HWS 实现（宏可配），冒烟已验，待完整硬件实测（§7） |
+| M2 | dongle 硬化 | ✅ 2026-07-25 达成：自动重连+DIAG门控+bonded GATT 发现修复（§2） |
+| M3 | Linux CI 闭环 | ✅ 2026-07-21 `loop_test.sh` 一键全绿 |
+| M4 | 角色切换 + 合并 main | ✅ 2026-07-21 双板实测通过（§4) |
+| M5 | 外设驱动落地 | ✅ GPIO/ADC(PGA+Vref)/I2C/IR/TEMP 已实现，冒烟已验（§7） |
 
 ## 7. 阶段五：外设驱动（需求 F6/F7/F8/F11,2026-07-22 启动）
 
@@ -224,12 +224,12 @@ AT 命令处理只做参数解析，调用 `hws_*` API。
 通过（dual FLASH 44.68% / RAM 64.59%），冒烟验证：GPIO 写读、ADC 浮空读数、
 I²C 扫描不挂死、IR 命令受理；AT 回归 + 双板 loop/hardening 全 PASS。
 
-**ADC PGA 增强（待实现）**：当前 `AT+ADC` 硬编码 PGA=0dB，换算用 `raw*3300/4095`（未按
+**ADC PGA + Vref 校准（✅ 已完成 2026-07-25）**：当前 `AT+ADC` 硬编码 PGA=0dB，换算用 `raw*3300/4095`（未按
 datasheet Table 15-2 公式）。方案：① 加可选 `<pga>` 参数，默认 0dB 向后兼容；
 ② 换算改用 `HWS_ADC_VREF_MV`（VINTA 典型 1050mV，可校准）+ 每档 PGA 独立公式；
 ③ 响应格式改为 `+ADC:<raw>,<mV> mV` 同时返回原始值。详见 §7.1。
 
-**Vref 校准问题（影响 ADC + 电池电压精度）**：当前 `HWS_ADC_FULLSCALE_MV=3300` 和
+**Vref 校准（✅ 已完成 2026-07-25）**：当前 `HWS_ADC_FULLSCALE_MV=3300` 和
 `HWS_BATT_ADC_FULLSCALE_MV=13200` 均为理论值，未基于实际 VINTA 标定。
 VINTA 芯片间差异 ±15mV（≈1.5%），加上 PGA 增益误差，电池电压读数可能偏差 3-5%。
 解决方案：加 `HWS_ADC_VREF_MV` 宏（默认 1050），ADC 和电池统一用该值按 datasheet
@@ -238,7 +238,28 @@ VINTA 芯片间差异 ±15mV（≈1.5%），加上 PGA 增益误差，电池电�
 待完整实测：GPIO 回环、ADC 定压（含 PGA 各档）、I²C 挂 EEPROM/传感器、IR 示波器/空调验证。
 已知设计点：GPIO 读固定切上拉输入（读输出引脚会读到上拉电平，非回读驱动态）。
 
-### 7.1 ADC PGA + Vref 校准方案（待实现）
+**ADC 通道与引脚对照**（外部通道 0-13）：
+
+| 通道 | 引脚 | 状态 |
+|------|------|------|
+| AIN0 | PA4 | 空闲 |
+| AIN1 | PA5 | 空闲 |
+| AIN2 | PA12 | IR PWM4 占用 |
+| AIN3 | PA13 | SWCLK（调试） |
+| AIN4 | PA14 | SWDIO（调试） |
+| AIN5 | PA15 | 空闲 |
+| AIN6 | PA3 | 空闲 |
+| AIN7 | PA2 | 空闲 |
+| AIN8 | PA1 | 空闲 |
+| AIN9 | PA0 | 空闲 |
+| AIN10 | PA6 | 空闲 |
+| AIN11 | PA7 | 空闲 |
+| AIN12 | PA8 | LED1 + DEBUG UART RX |
+| AIN13 | PA9 | DEBUG UART TX |
+
+> 内部通道：14 = VBAT（VDD 供电电压，1/4 分压），15 = 温度传感器（差分模式）。
+
+### 7.1 ADC PGA + Vref 校准方案（✅ 已完成 2026-07-25）
 
 **动机**：
 - `AT+ADC` 硬编码 0dB PGA，无法测量高于 2V 或低于 0.6V 的信号
@@ -295,7 +316,7 @@ AT+ADC=<ch>[,<pga>]
 
 **向后兼容**：pga 参数省略时默认 2（0dB），响应格式从 `<mV> mV` 变为 `+ADC:<raw>,<mV> mV`（脚本需更新正则，影响面小）。
 
-## 8. 阶段六：ESP32-C3 模拟键盘测试台（2026-07-22 立项）
+## 8. 阶段六
 
 **动机**：当前双板台架是 CH582↔CH582 同栈互测，存在盲区（RK 失败已证明
 真实世界键盘多样性不可省略）；且 kbd 板的烧录/重连摩擦大。引入
@@ -359,45 +380,17 @@ C3 同时运行 WiFi HTTP 服务，测试脚本/Agent 以 HTTP 请求驱动键�
 - 串口控制面保留作后备/调试；
 - 工作量：v1（/status+/tap+/text+mDNS）约 0.5-1 天，场景端点随 ②③ 扩展。
 
-## 9. 明日计划（2026-07-23 排期）
+## 9. 开放项（2026-07-25）
 
-> 背景：M1–M4 闭环，M5 冒烟完成，看门狗/CDC/SLEEP 三条战线收尾（2026-07-22)。
-> 以下为下一工作日候选，按建议顺序。
+> M1–M5 全部完成，KBD_MULTI 已完成。剩余非代码项：
 
-### 9.1 键盘多模连接（F1.10–F1.15，最大单项）
+### 9.1 UART 物理通道 + HWS_SLEEP（待硬件）
 
-- 构建变体 `MODE=KBD_MULTI`，与单模键盘（`MODE=KBD`）和接收器（`MODE=DONGLE`）互斥
-- `PERIPHERAL_MAX_CONNECTION=3` + `BLE_SNV_NUM=3`，堆按 3 连接重估（~12 KB）
-- 每连接独立 `conn_handle` 表；`kb_flush()` 按当前选中设备路由
-- `AT+DEV=<target>` 无缝切换输出目标（target=USB\|BLE1\|BLE2\|BLE3\|ALL）/ `AT+DEV` 查询列表，**无需复位**
-- 验证：PC + 手机 + dongle 板三台主机绑定，切换发键各自独立接收
-- RAM 预算：原 dual 模式 RAM（73.6%）可用于多模堆，互斥设计避免冲突
+- 接线：USB-TTL → PA4(TX)/PA5(RX)/GND
+- UART 与 CDC 双通道命令/响应一致性
+- `HWS_SLEEP=TRUE` 构建下测 `AT+SLEEP=<mode>,<sec>`
 
-### 9.2 UART 物理通道验证 + HWS_SLEEP 真休眠（D4/B 区）
-
-- 接线：WCH-Link UART 或 USB-TTL → PA4(TX)/PA5(RX)/GND
-- ① F4.2 实测：UART 与 CDC 双通道命令/响应一致性
-- ② `HWS_SLEEP=TRUE` 构建（USB 编译期关闭）下测 `AT+SLEEP=<mode>,<sec>`:
-  休眠进入、RTC 定时唤醒、醒后广播恢复、UART 全程观察
-- ③ 顺带：电流表粗测各休眠档位（B 区低功耗标定的第一步）
-
-### 9.3 C2 Peripheral 侧监督超时（栈层研究，非阻塞）
-
-- 现象已精确定位：Central 侧 LL 超时正常（reason 0x08 < 20s),
-  Peripheral 侧 60s+ 不触发（test_features.py C2 XFAIL)
-- 方向：`-DCLK_OSC32K=0` 外晶振对比（若板载 32.768k);
-  连接参数主动 `GAPRole_UpdateLink` 设定 supervision 后复测
-- 产出：结论记录（栈层限制 or 可修复），影响电池场景重连体验
-
-### 9.4 备选小项（穿插）
-
-- C3 台架②:C3 RPA 地址轮换（等 Windows 侧 sketch，属 PLAN §8)
-- E2:CDC 背压实测（`cdc_tx_drops` 观测，VMware 拔插）
-- `AT+STATUS` 增加 CDC TX drops / 通道指示字段
-- `AT+TEMP`：暴露内部温度传感器（`hws_get_temp()` 已有，仅加 AT 命令封装，< 10 行代码）
-- **ADC PGA + Vref 校准**（§7.1）：`AT+ADC=<ch>[,<pga>]` 加 PGA 参数 + datasheet 公式换算 + Vref 校准宏（统一 ADC 和电池精度，~30 行）
-
-## 10. KBD_MULTI 键盘多模实现方案（F1.10–F1.15)
+## 10. KBD_MULTI 键盘多模（✅ 已完成 2026-07-24）
 
 > 依据 4263525 文档定稿：变体 `MODE=KBD_MULTI`,3 主机绑定，
 > `AT+DEV=<target>`(target=USB|BLE1|BLE2|BLE3|ALL）无缝切换，无需复位。

@@ -13,9 +13,9 @@ extern "C" {
 
 #include "config.h"
 
-/* Read external ADC channel <ch> (0-13) once, return milli-volts.
-   Returns 0xFFFF on bad channel. */
-uint16_t hws_adc_read_mv(uint8_t ch);
+/* Read external ADC channel <ch>, PGA <pga>. Returns mV; *raw_out gets
+   the 12-bit ADC reading. Returns 0xFFFF on bad channel. */
+uint16_t hws_adc_read_mv(uint8_t ch, uint8_t pga, uint16_t *raw_out);
 
 #ifdef __cplusplus
 }

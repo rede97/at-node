@@ -25,27 +25,27 @@ extern "C" {
 /* Key pin definitions */
 #define KEY1_BV        BV(22)
 #define KEY2_BV        BV(4)
-#define KEY3_BV        (0)
+#define KEY3_BV        BV(23)
 #define KEY4_BV        (0)
 
 #define KEY1_PU        (R32_PB_PU |= KEY1_BV)
 #define KEY2_PU        (R32_PB_PU |= KEY2_BV)
-#define KEY3_PU        ()
+#define KEY3_PU        (R32_PB_PU |= KEY3_BV)
 #define KEY4_PU        ()
 
 #define KEY1_DIR       (R32_PB_DIR &= ~KEY1_BV)
 #define KEY2_DIR       (R32_PB_DIR &= ~KEY2_BV)
-#define KEY3_DIR       ()
+#define KEY3_DIR       (R32_PB_DIR &= ~KEY3_BV)
 #define KEY4_DIR       ()
 
 #define KEY1_IN        (ACTIVE_LOW(R32_PB_PIN & KEY1_BV))
 #define KEY2_IN        (ACTIVE_LOW(R32_PB_PIN & KEY2_BV))
-#define KEY3_IN        (0)
+#define KEY3_IN        (ACTIVE_LOW(R32_PB_PIN & KEY3_BV))
 #define KEY4_IN        (0)
 
 #define HWS_PUSH_BUTTON1()  (KEY1_IN)
 #define HWS_PUSH_BUTTON2()  (KEY2_IN)
-#define HWS_PUSH_BUTTON3()  (0)
+#define HWS_PUSH_BUTTON3()  (KEY3_IN)
 #define HWS_PUSH_BUTTON4()  (0)
 
 /*********************************************************************

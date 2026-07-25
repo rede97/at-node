@@ -217,13 +217,13 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+GPIO_W   - write <pin>,<level> (PA0-15,PB16-39)\r\n"
         "  AT+GPIO_R   - read <pin>\r\n"
         "  [Sensor]\r\n"
-        "  AT+ADC      - read <ch 0-13> -> mV\r\n"
+        "  AT+ADC      - read <ch>[,<pga>] -> +ADC:<raw>,<mV> mV\r\n"
         "  AT+I2C_SCAN - scan bus");
     AT_Response(
         "  AT+I2C_R    - read <addr>,<reg>,<len> (hex)\r\n"
         "  AT+I2C_W    - write <addr>,<reg>,<data> (hex)\r\n"
         "  [Power]\r\n"
-        "  AT+SLEEP    - sleep <mode 0-2>[,<sec>] RTC wake");
+        "  AT+TEMP     - read internal temperature sensor -> °C\r\n");
     AT_Response(
         "  [Wireless]\r\n"
         "  AT+BT_SCAN  - scan HID devices [sec] (dongle)\r\n"
@@ -742,15 +742,146 @@ static int at_cmd_GPIO_R(int argc, char *argv[])  { (void)argc; (void)argv; AT_R
 /* Sensor */
 #if(defined(HWS_ADC)) && (HWS_ADC == TRUE)
 static int at_cmd_ADC(int argc, char *argv[]) {
-    if (argc < 2) { AT_Response("usage: AT+ADC=<ch 0-13>"); return -1; }
-    uint16_t mv = hws_adc_read_mv((uint8_t)atoi(argv[1]));
-    if (mv == 0xFFFF) { AT_Response("ERROR: bad channel (0-13)"); return -1; }
-    AT_Response("%u mV", mv);
+    if (argc < 2) { AT_Response("usage: AT+ADC=<ch 0-13>[,<pga 0-3>]"); return -1; }
+    uint8_t ch  = (uint8_t)atoi(argv[1]);
+    uint8_t pga = (argc >= 3) ? (uint8_t)atoi(argv[2]) : 2;   /* default 0dB */
+    if (ch > 13 || pga > 3) { AT_Response("ERROR: ch 0-13, pga 0-3"); return -1; }
+    if (pga > 3) { AT_Response("ERROR: pga 0-3 (0=-12dB,1=-6dB,2=0dB,3=6dB)"); return -1; }
+    uint16_t raw = 0;
+    uint16_t mv  = hws_adc_read_mv(ch, pga, &raw);
+    if (mv == 0xFFFF) { AT_Response("ERROR: bad channel"); return -1; }
+    AT_Response("+ADC:%u,%u mV", raw, mv);
     return 0;
 }
 #else
 static int at_cmd_ADC(int argc, char *argv[])     { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_ADC=FALSE)"); return -1; }
 #endif
+
+/* AT+TEMP — internal temperature sensor, returns Celsius */
+static int at_cmd_TEMP(int argc, char *argv[]) {
+    (void)argc; (void)argv;
+    uint16_t raw = hws_get_temp() & 0x0FFF;
+    int      c   = adc_to_temperature_celsius(raw);
+    AT_Response("+TEMP:%u,%d C", raw, c);
+    return 0;
+}
+
+/* AT+LED — control LED on PA8 (active-low).
+   AT+LED=ON|OFF|BLINK|FLASH|TOGGLE[,period_ms[,duty_pct]] */
+static int at_cmd_LED(int argc, char *argv[]) {
+    if (argc < 2) { AT_Response("usage: AT+LED=ON|OFF|BLINK|FLASH|TOGGLE[,ms[,duty%%]]"); return -1; }
+    uint8_t mode;
+    const char *m = argv[1];
+    if     (!strcasecmp(m, "ON"))     mode = HWS_LED_MODE_ON;
+    else if(!strcasecmp(m, "OFF"))    mode = HWS_LED_MODE_OFF;
+    else if(!strcasecmp(m, "TOGGLE")) mode = HWS_LED_MODE_TOGGLE;
+    else if(!strcasecmp(m, "BLINK"))  mode = HWS_LED_MODE_BLINK;
+    else if(!strcasecmp(m, "FLASH"))  mode = HWS_LED_MODE_FLASH;
+    else { AT_Response("ERROR: ON|OFF|BLINK|FLASH|TOGGLE"); return -1; }
+
+    if (mode == HWS_LED_MODE_BLINK || mode == HWS_LED_MODE_FLASH) {
+        uint16_t period = (argc >= 3) ? (uint16_t)atoi(argv[2]) : 500;
+        uint8_t  duty   = (argc >= 4) ? (uint8_t)atoi(argv[3])  : 50;
+        uint8_t  count  = (mode == HWS_LED_MODE_FLASH) ? 0 : 1;  /* 0=continuous */
+        hws_led_blink(HWS_LED_1, count, duty, period);
+        AT_Response("LED=%s period=%ums duty=%u%%", m, period, duty);
+    } else {
+        hws_led_set(HWS_LED_1, mode);
+        AT_Response("LED=%s", m);
+    }
+    return 0;
+}
+
+/* AT+KEY_CFG — custom HID key on PB22(pin 38) or PB23(pin 39).
+   AT+KEY_CFG=<pin>,<mods>,<keycode> — assign key
+   AT+KEY_CFG=<pin>,0,0             — disable */
+#define KEY_CFG_NUM  2
+#define KEY_CFG_MAGIC 0xA77E0002
+#define APP_KEYCFG_FLASH_ADDR  0x7A00  /* 256B page below slotmap */
+
+static struct { uint8_t pin; uint8_t mods; uint8_t kc; uint8_t last; } key_cfg[KEY_CFG_NUM];
+
+static void key_cfg_save(void) {
+    uint8_t buf[8];
+    uint32_t magic = KEY_CFG_MAGIC;
+    tmos_memcpy(buf, &magic, 4);
+    for (int i = 0; i < KEY_CFG_NUM; i++) {
+        buf[4 + i*2]     = key_cfg[i].mods;
+        buf[4 + i*2 + 1] = key_cfg[i].kc;
+    }
+    EEPROM_ERASE(APP_KEYCFG_FLASH_ADDR, 8);
+    EEPROM_WRITE(APP_KEYCFG_FLASH_ADDR, buf, 8);
+}
+
+static void key_cfg_load(void) {
+    uint8_t buf[8];
+    uint32_t magic = 0;
+    EEPROM_READ(APP_KEYCFG_FLASH_ADDR, buf, 8);
+    tmos_memcpy(&magic, buf, 4);
+    key_cfg[0].pin = 38; key_cfg[1].pin = 39;
+    if (magic == KEY_CFG_MAGIC) {
+        for (int i = 0; i < KEY_CFG_NUM; i++) {
+            key_cfg[i].mods = buf[4 + i*2];
+            key_cfg[i].kc   = buf[4 + i*2 + 1];
+        }
+    }
+    /* else: fresh flash, all 0xFF → kc=0xFF → not active */
+}
+
+void hws_key_cfg_factory_reset(void) {
+    tmos_memset(key_cfg, 0, sizeof(key_cfg));
+    key_cfg[0].pin = 38; key_cfg[1].pin = 39;
+    EEPROM_ERASE(APP_KEYCFG_FLASH_ADDR, 8);
+}
+
+static int at_cmd_KEY_CFG(int argc, char *argv[]) {
+    static uint8_t loaded;
+    if (!loaded) { key_cfg_load(); loaded = 1; }
+    if (argc < 2) {
+        for (int i = 0; i < KEY_CFG_NUM; i++)
+            AT_Response("%d,%u,%s", i, key_cfg[i].pin,
+                        key_cfg[i].kc ? "active" : "disabled");
+        return 0;
+    }
+    uint8_t pin = (uint8_t)atoi(argv[1]);
+    if (pin != 38 && pin != 39) { AT_Response("ERROR: pin 38(PB22) or 39(PB23)"); return -1; }
+    int idx = (pin == 38) ? 0 : 1;
+    if (argc < 3) {
+        AT_Response("%d,%u,mods=%u,kc=%02X", idx, pin, key_cfg[idx].mods, key_cfg[idx].kc);
+        return 0;
+    }
+    uint8_t mods = (uint8_t)atoi(argv[2]);
+    uint8_t kc   = (uint8_t)atoi(argv[3]);
+    key_cfg[idx].pin  = pin;
+    key_cfg[idx].mods = mods;
+    key_cfg[idx].kc   = kc;
+    key_cfg[idx].last = 0;
+    key_cfg_save();
+    AT_Response("KEY_CFG=%u mods=%u kc=%02X", pin, mods, kc);
+    return 0;
+}
+
+/* Called from main key_press callback to handle custom key pins */
+void hws_key_cfg_poll(void) {
+    for (int i = 0; i < KEY_CFG_NUM; i++) {
+        if (!key_cfg[i].kc) continue;
+        uint8_t now = (key_cfg[i].pin == 38) ? HWS_PUSH_BUTTON1()
+                     : HWS_PUSH_BUTTON3();
+        if (now && !key_cfg[i].last) {
+            extern int kb_set_mods(uint8_t mods);
+            extern int kb_press(uint8_t keycode);
+            kb_set_mods(key_cfg[i].mods);
+            kb_press(key_cfg[i].kc);
+        } else if (!now && key_cfg[i].last) {
+            extern int kb_set_mods(uint8_t mods);
+            extern int kb_release(void);
+            kb_set_mods(0);
+            kb_release();
+        }
+        key_cfg[i].last = now;
+    }
+}
+
 #if(defined(HWS_I2C)) && (HWS_I2C == TRUE)
 static uint8_t i2c_inited = 0;
 static void i2c_lazy_init(void) { if (!i2c_inited) { hws_i2c_init(); i2c_inited = 1; } }
@@ -807,7 +938,7 @@ static int at_cmd_I2C_W(int argc, char *argv[]) {
     return 0;
 }
 #else
-static int at_cmd_I2C_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
+static int at_cmd_I2C_SCAN(int argc, char *argv[]) { (void)argc; (void)argv; AT_Response("not implemented"); return -1; }
 static int at_cmd_I2C_R(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
 static int at_cmd_I2C_W(int argc, char *argv[])   { (void)argc; (void)argv; AT_Response("ERROR: disabled (HWS_I2C=FALSE)"); return -1; }
 #endif
@@ -1076,19 +1207,6 @@ static int bt_unbind_kbd(int argc, char *argv[]) {
 }
 #endif /* BLE_HAS_KBD */
 
-/* AT+FLASH_ERASE — wipe entire DataFlash (32 KB). Erases SNV bonds,
-   slotmap, role flag, all persistent state. Then resets. */
-static int at_cmd_FLASH_ERASE(int argc, char *argv[]) {
-    (void)argc; (void)argv;
-    AT_Response("erasing DataFlash...");
-    for (uint16_t addr = 0; addr < 0x8000; addr += 256)
-        EEPROM_ERASE(addr, 256);
-    AT_Response("done — resetting...");
-    for (volatile uint32_t d = 0; d < 60000; d++) __nop();
-    SYS_ResetExecute();
-    return 0;
-}
-
 /* AT+FACTORY — wipe EVERYTHING: terminate links, erase all bonds,
    clear all slot reservations/names/paces/MACs, then soft reset.
    Back to factory defaults (per-slot MACs re-derive from chip MAC). */
@@ -1102,6 +1220,7 @@ static int at_cmd_FACTORY(int argc, char *argv[]) {
     kb_ble_disconnect();
     kb_ble_forget_bonds();
     kb_ble_factory_reset();
+    hws_key_cfg_factory_reset();
 #endif
 #if BLE_HAS_DONGLE
     ble_dongle_disconnect();
@@ -1308,7 +1427,6 @@ const at_cmd_t cmd_table[] = {
     { "AT+STATUS",  "device status (role/dev/ble/batt)", at_cmd_STATUS },
     { "AT+RST",     "software reset",                 at_cmd_RST },
     { "AT+FACTORY", "wipe all config + bonds, reset", at_cmd_FACTORY },
-    { "AT+FLASH_ERASE", "erase DataFlash (SNV/slotmap/role) + reset", at_cmd_FLASH_ERASE },
     { "AT+ISP",     "enter ISP bootloader (erases app!)", at_cmd_ISP },
     { "AT+WDG",     "watchdog [0|1], default off",       at_cmd_WDG },
     { "AT+ROLE",    "query/switch role KBD|DONGLE (DUAL)", at_cmd_ROLE },
@@ -1329,8 +1447,12 @@ const at_cmd_t cmd_table[] = {
     /* GPIO */
     { "AT+GPIO_W",  "write <pin>,<level> (PA0-15,PB16-39)", at_cmd_GPIO_W },
     { "AT+GPIO_R",  "read <pin>",                      at_cmd_GPIO_R },
+    /* LED & Key */
+    { "AT+LED",     "LED ON|OFF|BLINK|FLASH|TOGGLE[,ms[,duty%%]]", at_cmd_LED },
+    { "AT+KEY_CFG", "custom key <pin 38|39>,<mods>,<keycode>", at_cmd_KEY_CFG },
     /* Sensor */
-    { "AT+ADC",     "read ADC <ch 0-13> -> mV",    at_cmd_ADC },
+    { "AT+ADC",     "read ADC <ch>[,<pga>] -> +ADC:<raw>,<mV> mV", at_cmd_ADC },
+    { "AT+TEMP",    "temperature sensor -> +TEMP:<raw>,<C> C", at_cmd_TEMP },
     { "AT+I2C_SCAN", "scan I2C bus",                at_cmd_I2C_SCAN },
     { "AT+I2C_R",   "I2C read <addr>,<reg>,<len> (hex)", at_cmd_I2C_R },
     { "AT+I2C_W",   "I2C write <addr>,<reg>,<data> (hex)", at_cmd_I2C_W },

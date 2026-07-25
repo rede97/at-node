@@ -35,8 +35,16 @@ extern "C" {
 
 /*********************************************************************
  * LED pin definitions (hardware-specific)
+ *
+ * PA0 (LED1): verified stable for GPIO output.
+ *
+ * PA8 (formerly LED1): DO NOT USE for GPIO output toggling —
+ *   shares RXD1 (UART1 RX).  Even with DEBUG disabled, repeated
+ *   GPIO writes to PA8 cause the system to hang (2026-07-25 tested:
+ *   key poll toggling PA8 at 100 ms deadlocks within 3 s; PA0 is
+ *   fine).  PA8 is safe for input (pull-up) when DEBUG is off.
  */
-#define LED1_BV     BV(8)
+#define LED1_BV     BV(0)
 #define LED2_BV     (0)
 #define LED3_BV     (0)
 

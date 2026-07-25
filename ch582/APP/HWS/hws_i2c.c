@@ -33,17 +33,18 @@ void hws_i2c_init(void)
 
 int hws_i2c_probe(uint8_t addr)
 {
+    /* Use same pattern as hws_i2c_read's address phase; i2c_wait
+       handles ACK/NACK within timeout (unlike scan-loop, single
+       probes don't accumulate peripheral state). */
     int rc = -1;
     I2C_GenerateSTART(ENABLE);
     if (i2c_wait(I2C_EVENT_MASTER_MODE_SELECT) == 0) {
         I2C_Send7bitAddress(addr << 1, I2C_Direction_Transmitter);
-        uint32_t t = I2C_TIMEOUT;
-        while (t--) {
-            if (I2C_CheckEvent(I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED)) { rc = 0; break; }
-            if (I2C_GetLastEvent() & 0x00000400 /* AF */) break;
-        }
+        if (i2c_wait(I2C_EVENT_MASTER_TRANSMITTER_MODE_SELECTED) == 0)
+            rc = 0;
     }
     I2C_GenerateSTOP(ENABLE);
+    I2C_ClearFlag(I2C_FLAG_AF);
     return rc;
 }
 
@@ -75,6 +76,7 @@ int hws_i2c_read(uint8_t addr, uint8_t reg, uint8_t *buf, uint8_t len)
     return 0;
 fail:
     I2C_GenerateSTOP(ENABLE);
+    I2C_ClearFlag(I2C_FLAG_AF);  /* clear AF so next START doesn't block */
     I2C_AcknowledgeConfig(ENABLE);
     return -1;
 }
@@ -95,6 +97,7 @@ int hws_i2c_write(uint8_t addr, uint8_t reg, const uint8_t *data, uint8_t len)
     return 0;
 fail:
     I2C_GenerateSTOP(ENABLE);
+    I2C_ClearFlag(I2C_FLAG_AF);
     return -1;
 }
 

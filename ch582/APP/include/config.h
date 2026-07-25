@@ -120,13 +120,23 @@
 #define HWS_GPIO  TRUE
 #endif
 
-/* HWS_ADC — AT+ADC=<ch>, external single-ended channels 0-13,
-   returns mV (raw * HWS_ADC_FULLSCALE_MV / 4095, PGA 0dB). */
+/* HWS_ADC — AT+ADC=<ch>[,<pga>], external single-ended channels 0-13,
+   returns +ADC:<raw>,<mV> mV using VINTA-calibrated per-PGA formula. */
 #ifndef HWS_ADC
 #define HWS_ADC  TRUE
 #endif
 #ifndef HWS_ADC_FULLSCALE_MV
-#define HWS_ADC_FULLSCALE_MV  3300   /* 3.3 V reference, PGA 0dB */
+#define HWS_ADC_FULLSCALE_MV  3300   /* deprecated — kept for backward compat */
+#endif
+
+/* HWS_ADC_VREF_MV — VINTA internal reference (datasheet Table 15-2).
+   Default 1050 mV typ; calibrate per board:
+     1. Apply known voltage to an ADC pin.
+     2. AT+ADC=<ch>,<pga> read raw.
+     3. Solve formula for Vref, update this define.
+   All ADC channels (external + battery) use this single value. */
+#ifndef HWS_ADC_VREF_MV
+#define HWS_ADC_VREF_MV  1050
 #endif
 
 /* HWS_I2C — AT+I2C_SCAN / AT+I2C_R / AT+I2C_W. Master mode, polling.
@@ -237,18 +247,12 @@
 #endif
 
 /*********************************************************************
- * HWS_BATT_ADC_FULLSCALE_MV — ADC raw → mV conversion for CH_INTE_VBAT.
- *
- *   mV = raw × FULLSCALE / 4095.
- *
- *   The VBAT channel runs with -12 dB PGA (1/4 attenuation), so
- *   full-scale ≈ 4 × ADC reference. Default 13200 (4 × 3.3 V) is
- *   THEORETICAL — calibrate per board:
- *     1. Measure real VDD with a multimeter.
- *     2. Read raw value (add a debug PRINT in hws_batt_read_mv or
- *        watch the periodic BLE battery task).
- *     3. FULLSCALE = VDD_mV × 4095 / raw.
- */
+ * HWS_BATT_ADC_FULLSCALE_MV — deprecated, kept for backward compat.
+ *   Battery mV is now derived from HWS_ADC_VREF_MV via the -12 dB
+ *   PGA formula with the VBAT 4:1 attenuator:
+ *     VDD = ((raw * Vref / 512) − 3 * Vref) * 4
+ *   At Vref=1050 and raw=4095: VDD ≈ (8400 − 3150) * 4/4...
+ *   See hws_batt.c for the actual formula. */
 #ifndef HWS_BATT_ADC_FULLSCALE_MV
 #define HWS_BATT_ADC_FULLSCALE_MV  13200
 #endif

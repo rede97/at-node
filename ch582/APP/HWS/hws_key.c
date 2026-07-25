@@ -20,6 +20,7 @@ void hws_key_init(void)
     hws_key_cb    = NULL;
     KEY1_DIR; KEY1_PU;
     KEY2_DIR; KEY2_PU;
+    KEY3_DIR; KEY3_PU;
     /* First poll in HWS_KEY_POLL_MS milliseconds — MS1_TO_SYSTEM_TIME
        converts ms to TMOS ticks, matching the core re-arm unit. */
     tmos_start_task(hws_task_id, HWS_KEY_EVENT, MS1_TO_SYSTEM_TIME(HWS_KEY_POLL_MS));

@@ -100,15 +100,9 @@ void main_loop(void)
  */
 static void key_press(uint8_t key)
 {
-    if(key & HWS_KEY_SW_1) {
-        PRINT("KEY PRESS\n\n");
-        kb_press(0x3A);
-        hws_led_set(HWS_LED_1, HWS_LED_MODE_ON);
-    } else {
-        PRINT("KEY RELEASE\n\n");
-        kb_release();
-        hws_led_set(HWS_LED_1, HWS_LED_MODE_OFF);
-    }
+    extern void hws_key_cfg_poll(void);
+    hws_key_cfg_poll();  /* dispatch custom-configured keys (AT+KEY_CFG) */
+    (void)key;
 }
 
 /* ===== USB initialization ===== */
