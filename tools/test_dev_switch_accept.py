@@ -98,18 +98,18 @@ def main():
         typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
         say(f"[r{n}] typed={'OK' if typed else 'TIMEOUT'}")
         # --- to Windows (BLE1) ---
-        say(f"[r{n}] AT+DEV=BLE1, waiting Windows reconnect (25s)...")
+        say(f"[r{n}] AT+DEV=BLE1, waiting Windows reconnect (60s, host-paced)...")
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE1\r\n")
         t1 = time.time()
-        ok1 = wait_urc(kbd, "+BT_CONNECTED:1", 25)
+        ok1 = wait_urc(kbd, "+BT_CONNECTED:1", 60)
         recon1 = (ok1 - t1) if ok1 else None
         if ok1:
             say(f"[r{n}] Windows reconnected ({recon1:.1f}s), typing 'win round {n}'")
             time.sleep(1.5)
             type_sync(kbd, f"win round {n}")
         else:
-            say(f"[r{n}] BLE1 reconnect FAIL (25s timeout)")
+            say(f"[r{n}] BLE1 reconnect FAIL (60s timeout)")
         results.append((n, recon, recon1))
         say(f"[r{n}] done: BLE2_recon={recon:.1f}s BLE1_recon="
             + (f"{recon1:.1f}s" if recon1 is not None else "FAIL"))
