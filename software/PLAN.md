@@ -311,3 +311,97 @@ C3 同时运行 WiFi HTTP 服务，测试脚本/Agent 以 HTTP 请求驱动键�
 - C3 台架②:C3 RPA 地址轮换（等 Windows 侧 sketch，属 PLAN §8)
 - E2:CDC 背压实测（`cdc_tx_drops` 观测，VMware 拔插）
 - `AT+STATUS` 增加 CDC TX drops / 通道指示字段
+
+## 10. KBD_MULTI 键盘多模实现方案（F1.10–F1.15)
+
+> 依据 4263525 文档定稿：变体 `MODE=KBD_MULTI`,3 主机绑定，
+> `AT+DEV=<target>`(target=USB|BLE1|BLE2|BLE3|ALL）无缝切换，无需复位。
+> **列表类输出统一约定：索引在行首**(AT+DEV 查询、BT_SCAN 均如此，机器可解析)。
+
+### 10.1 现状障碍（代码勘察 2026-07-24)
+
+| 点 | 位置 | 单连接假设 |
+|---|------|-----------|
+| 连接句柄 | `hidkbd_ble.c:152` `ble_hid_emu_conn_handle` 单全局 | 发送/断连全绑一个 |
+| 报告发送 | `ble_hid_dev.c` `ble_hid_dev_report()` 用全局 `gapConnHandle` | 无句柄参数 |
+| 广播策略 | `ble_hid_dev.c` hidDevGapStateCB:CONNECTED 即停广播 | 多模须"未满 3 连接持续广播" |
+| 断开重播 | hidDevDisconnected：仅 bonded 才重播 | 多模按空闲槽位重播 |
+| 绑定存储 | config.h `BLE_SNV_NUM=1`,SNV 512B 单块 | 须 3 槽 |
+| 堆 | kbd 5KB | 3 连接 ~8KB(F1.15: ~1.5KB/conn) |
+
+### 10.2 实施步骤
+
+**P0 构建骨架**
+1. config.h:`BLE_MODE_KBD_MULTI = 3`;KBD_MULTI ⇒
+   `PERIPHERAL_MAX_CONNECTION=3` / `BLE_SNV_NUM=3` / `BLE_MEMHEAP_SIZE`→8KB;
+   `BLE_HAS_KBD` 纳入 KBD_MULTI;#error 排斥 DONGLE/DUAL 组合
+2. makefile:`MODE=KBD_MULTI` → `CFG_DEFS := -DBLE_MODE=3`;
+   build_all.sh 增 kbd_multi 变体 → `tools/ci/out/kbd_multi.hex`
+3. role.c:KBD_MULTI 初始化路径 = 单模键盘（Peripheral)
+
+**P1 多连接核心（主工作量）**
+4. `hidkbd_ble.c`:`kbd_conns[3] {handle, addr, state}` 槽位表；
+   GAPROLE_CONNECTED 分配 / 断开释放；单模构建下槽 0 即原全局（`#if` 保持 KBD/DUAL 路径不动）
+5. `ble_hid_dev.c`:`gapConnHandle` → 数组；`ble_hid_dev_report()` 加句柄参数；
+   CONNECTED 不再无条件停广播——连接数 < 3 继续广播；断开按空闲槽重播
+6. 连接参数更新（latency/interval）按句柄逐个下发
+
+**P2 路由 + AT 层**
+7. `kb_target` 位掩码：USB|BLE1|BLE2|BLE3;`kb_flush()` 按激活掩码路由；
+   单模构建的 KB_USB/KB_BLE/KB_BOTH 映射到掩码，保持兼容
+8. `AT+DEV=<target>` 设定 / `AT+DEV` 查询——**索引行首**:
+   `1,USB,ready` / `2,BLE1,AA:BB:CC:DD:EE:FF,connected` / `3,BLE2,-,unbound`
+9. `AT+KB` 桥接到 DEV 语义（BOTH⇔ALL);AT+STATUS 增加激活目标字段
+
+**P3 绑定 3 槽**
+10. `BLE_SNV_NUM=3`：核算 SNV Flash 布局（3 块）；槽位=绑定顺序即 BLE1/2/3
+    稳定身份（非连接顺序）；`AT+BT_UNBIND=<slot>` 单槽擦除
+
+**P4 验证（TEST-TODO D5)**
+11. 三主机台架：PC(BLE) + 手机 + dongle 板（`AT+BT_CONN=AT-Node`);
+    绑 3 → `AT+DEV` 列表核对 → 逐目标 `AT+KEY` → 各主机独立收到；
+    `AT+DEV=ALL` 广播验证；固化 `tools/test_multi.py`
+
+### 10.3 风险与对策
+
+- **RAM**:堆 5→8KB 约 +3KB,kbd 68%→~78%，每步构建看 size 表，超 80% 即收
+- **WCH GAPRole 多链路广播行为**：半连接状态下的广播间隔/可连性需实测调参
+- **SNV 布局变更使旧绑定失效**：可接受，commit 注明；先 P0+P1 用"无绑定直连"跑通再做 P3
+- **dongle 板当主机**：其 `AT+BT_CONN` 已支持按名连接，可直接当第 3 主机，无需新硬件
+
+## 11. 交接进展(2026-07-24 深夜暂停点)
+
+### 已完成(全部入库,本地 HEAD=9e2e0e2 + 123ec1b,GitHub 网络不通待推)
+
+**KBD_MULTI 多模键盘全链路**(F1.10–F1.15 收官):
+- 单活动链路模型:仅 AT+DEV 目标槽持有连接,其他已绑定主机秒拒(省电/消灭多链路复杂度)
+- 槽位持久化 slotmap(DataFlash 0x7B00):预留地址/名字/节奏/MAC/地址类型,跨刷机
+- 配对窗口:AT+BT_PAIR[=<BLEn>] 60s,窗口外未知主机拒连(安全,市面键盘范式)
+- 每槽独立 MAC:默认芯片 MAC+slot(BLE1 兼容旧绑定),AT+MAC 可配持久化
+- AT+NAME 助记 / AT+PACE 每槽节奏(默认30ms)/ AT+FACTORY 出厂复位
+- +KEY_DONE 回放完成 URC(agent 同步点);KEY_STR 特殊字符映射表修复(F17)
+- 定向广播(ADV_DIRECT)代码就绪(A/B 调试中,见下)
+- dongle AT+BT_CONN=mac|name,<目标>[,秒] watch 式连接(超时默认5s)
+- FIELD-NOTES.md F1–F17 坑录;tools/bt_host.py / bt_agent.py / test_multi.py 固化
+
+### 当前断点(下次从这里继续)
+
+**[OPEN] 广播复活路径回归**:切 AT+DEV=USB → BLE1 后广播不再发出
+(btmon 零包,dongle 无法回连)。冷启动广播正常;怀疑点:
+① kbd_adv_update 的 off→EVENT_TYPE→want 序列;
+② kb_ble_apply_addr 与 kbd_adv_update 双重开关;
+③ DEV 循环后 GAPRole 状态异常。下一步:reset 后先验证 boot 广播,
+再单步 DEV 切换定位失效点;必要时恢复 hidDevDisconnected 的简单重开逻辑。
+
+**[OPEN] dongle 板固件待更新**:watch 模式 AT+BT_CONN 在 dongle 固件中,
+dongle 板仍跑旧版(调试线目前在 kbd 板,需挪线刷 dongle.hex)。
+
+**[OPEN] dongle auto_hold 闭锁**:5 连败后 AT+BT_AUTO=1 单独解锁有时不生效
+(消息提示要 AT+BT_PAIR),查 dgl_auto_hold 清理路径。
+
+### 台架状态
+
+- kbd 板(kbd_multi 固件,调试线接着):BLE1=dongle 预留 / BLE2=空 / BLE3=Windows 预留
+- dongle 板:旧固件,auto 重连可用(配对窗开着时手动 AT+BT_CONN 有效)
+- 已验证矩阵:BLE1 dongle 按键通路 / BLE2 手机打字 / BLE3 Windows 长文本+回车
+- GitHub:网络抖动,本地 2 提交未推(123ec1b 映射修复 + 9e2e0e2 定向广播/watch)

@@ -53,6 +53,12 @@ int     ble_dongle_scan(uint8_t seconds, const char *filter);
  */
 int     ble_dongle_connect(uint8_t index);
 
+/* ble_dongle_connect_watch — scan-and-match connect: keep scanning for
+ * up to <timeout_s> seconds, connect on the first advertiser matching
+ * the MAC (LSB-first) or name substring. +BT_CONN: timeout on expiry. */
+int     ble_dongle_connect_watch(int is_mac, const uint8_t *addr,
+                                 const char *name, uint8_t timeout_s);
+
 /*********************************************************************
  * ble_dongle_find — resolve a connect target to a scan-list index:
  *   decimal index ("5"), 12-hex address ("EFFF00011E21"), or name

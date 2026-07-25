@@ -62,8 +62,25 @@ __attribute__((aligned(4))) uint8_t EP3_Buf[64 + 64];       // EP3 CDC notify
  */
 static const uint8_t LangDescr[]  = { 0x04, 0x03, 0x09, 0x04 };
 static const uint8_t ManuInfo[]   = { 0x0C, 0x03, 'a',0,'t',0,'-',0,'n',0,'o',0,'d',0,'e',0 };
+/* Product string names the firmware variant so hosts (and lser) can
+   tell identical boards apart (user requirement 2026-07-24):
+   AT-Node Kbd / Kbd-Multi / Dongle / Dual. */
+#if BLE_MODE == BLE_MODE_KBD_MULTI
 static const uint8_t ProdInfo[]   = { 0x24, 0x03,
-    'a',0,'t',0,'-',0,'n',0,'o',0,'d',0,'e',0,' ',0,'C',0,'D',0,'C',0,'+',0,'H',0,'I',0,'D',0 };
+    'A',0,'T',0,'-',0,'N',0,'o',0,'d',0,'e',0,' ',0,'K',0,'b',0,'d',0,
+    '-',0,'M',0,'u',0,'l',0,'t',0,'i',0 };
+#elif BLE_MODE == BLE_MODE_DONGLE
+static const uint8_t ProdInfo[]   = { 0x1E, 0x03,
+    'A',0,'T',0,'-',0,'N',0,'o',0,'d',0,'e',0,' ',0,'D',0,'o',0,'n',0,
+    'g',0,'l',0,'e',0 };
+#elif BLE_MODE == BLE_MODE_DUAL
+static const uint8_t ProdInfo[]   = { 0x1A, 0x03,
+    'A',0,'T',0,'-',0,'N',0,'o',0,'d',0,'e',0,' ',0,'D',0,'u',0,'a',0,
+    'l',0 };
+#else
+static const uint8_t ProdInfo[]   = { 0x18, 0x03,
+    'A',0,'T',0,'-',0,'N',0,'o',0,'d',0,'e',0,' ',0,'K',0,'b',0,'d',0 };
+#endif
 static const uint8_t SerialInfo[] = { 0x1A, 0x03,
     '2',0,'0',0,'2',0,'6',0,'0',0,'7',0,'0',0,'1',0,'A',0,'B',0,'C',0,'D',0,0,0 };
 

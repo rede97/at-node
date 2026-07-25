@@ -378,17 +378,25 @@
  *                              flag (AT+ROLE=KBD|DONGLE writes the flag
  *                              and soft-resets — switch time ≈ one
  *                              reboot, <1 s).
+ *   BLE_MODE_KBD_MULTI (3):    multi-mode keyboard. Peripheral role
+ *                              with 3 concurrent host links
+ *                              (PERIPHERAL_MAX_CONNECTION=3,
+ *                              BLE_SNV_NUM=3). AT+DEV=<target> routes
+ *                              output (USB|BLE1|BLE2|BLE3|ALL),
+ *                              no reset needed. See PLAN.md §10.
  *
  *   Legacy: -DBLE_DONGLE=TRUE (make DONGLE=1) maps to BLE_MODE_DONGLE.
  *
  *   Derived gates for #if:
- *     BLE_HAS_KBD    — kbd role compiled in
+ *     BLE_HAS_KBD    — kbd role compiled in (KBD / DUAL / KBD_MULTI)
  *     BLE_HAS_DONGLE — dongle role compiled in
  *     BLE_DONGLE     — normalized legacy alias of BLE_HAS_DONGLE
+ *     KBD_MAX_CONN   — per-host connection slots (3 in KBD_MULTI, else 1)
  */
-#define BLE_MODE_KBD     0
-#define BLE_MODE_DONGLE  1
-#define BLE_MODE_DUAL    2
+#define BLE_MODE_KBD        0
+#define BLE_MODE_DONGLE     1
+#define BLE_MODE_DUAL       2
+#define BLE_MODE_KBD_MULTI  3
 
 #ifndef BLE_MODE
   #if defined(BLE_DONGLE) && (BLE_DONGLE == TRUE)
@@ -398,7 +406,7 @@
   #endif
 #endif
 
-#if (BLE_MODE == BLE_MODE_KBD) || (BLE_MODE == BLE_MODE_DUAL)
+#if (BLE_MODE == BLE_MODE_KBD) || (BLE_MODE == BLE_MODE_DUAL) || (BLE_MODE == BLE_MODE_KBD_MULTI)
 #define BLE_HAS_KBD     TRUE
 #else
 #define BLE_HAS_KBD     FALSE
@@ -413,6 +421,15 @@
 #undef BLE_DONGLE
 #define BLE_DONGLE  BLE_HAS_DONGLE
 
+/* KBD_MAX_CONN — per-host connection slots. 3 in multi-mode keyboard
+   builds (BLE1/BLE2/BLE3), 1 in all single-host builds. Used to size
+   the connection table and per-slot AT commands. */
+#if (BLE_MODE == BLE_MODE_KBD_MULTI)
+#define KBD_MAX_CONN  3
+#else
+#define KBD_MAX_CONN  1
+#endif
+
 /*********************************************************************
  * APP_ROLE_FLASH_ADDR — DataFlash offset of the runtime-role flag
  * (DUAL builds only; see APP/role.c).
@@ -425,6 +442,17 @@
  */
 #ifndef APP_ROLE_FLASH_ADDR
 #define APP_ROLE_FLASH_ADDR  0x7C00
+#endif
+
+/*********************************************************************
+ * APP_SLOTMAP_FLASH_ADDR — DataFlash offset of the kbd slot-binding
+ * table (KBD_MULTI): which host address owns BLE1/BLE2/BLE3, so a host
+ * keeps its slot across reconnects and reboots (F1.12 usability: the
+ * user records "laptop = BLE2" once). One 256-byte page below the role
+ * flag page.
+ */
+#ifndef APP_SLOTMAP_FLASH_ADDR
+#define APP_SLOTMAP_FLASH_ADDR  0x7B00
 #endif
 
 /*********************************************************************
@@ -475,7 +503,10 @@
  *   room for the Central connection context).
  */
 #ifndef BLE_MEMHEAP_SIZE
-  #if(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+/* 3 concurrent links: 5 KB base + ~1 KB/connection (F1.15) */
+#define BLE_MEMHEAP_SIZE  (1024 * 8)
+  #elif(defined(BLE_DONGLE)) && (BLE_DONGLE == TRUE)
 #define BLE_MEMHEAP_SIZE  (1024 * 6)
   #else
 #define BLE_MEMHEAP_SIZE  (1024 * 5)
@@ -549,23 +580,6 @@
 #endif
 
 /*********************************************************************
- * BLE_SNV_ADDR — SNV storage offset within Data Flash.
- *
- *   EEPROM_* commands take Data-Flash-RELATIVE offsets, not absolute
- *   addresses: offset 0x0000–0x7FFF maps to absolute 0x70000–0x77FFF
- *   (32 KB Data Flash on CH582F).
- *
- *   Default: 0x77E00 - FLASH_ROM_MAX_SIZE = 0x7E00 offset = absolute
- *   0x77E00 (last 512 bytes of Data Flash). Stays clear of application
- *   code (grows up from 0x00000) and BLE heap (in RAM, not flash).
- *   Bounds check in ble_stack_init() validates against the 32 KB
- *   Data Flash limit (0x78000 - FLASH_ROM_MAX_SIZE = 0x8000).
- */
-#ifndef BLE_SNV_ADDR
-#define BLE_SNV_ADDR  0x77E00 - FLASH_ROM_MAX_SIZE
-#endif
-
-/*********************************************************************
  * BLE_SNV_BLOCK — SNV block size in bytes.
  *
  *   Default: 256 (matches Data Flash page size on CH582F).
@@ -583,7 +597,39 @@
  *   multiple hosts (e.g., desktop + laptop + tablet).
  */
 #ifndef BLE_SNV_NUM
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+#define BLE_SNV_NUM  3   /* one bond slot per host: BLE1/BLE2/BLE3 */
+  #else
 #define BLE_SNV_NUM  1
+  #endif
+#endif
+
+/*********************************************************************
+ * BLE_SNV_ADDR — SNV storage offset within Data Flash.
+ *
+ *   EEPROM_* commands take Data-Flash-RELATIVE offsets, not absolute
+ *   addresses: offset 0x0000–0x7FFF maps to absolute 0x70000–0x77FFF
+ *   (32 KB Data Flash on CH582F).
+ *
+ *   Default: anchored at the TOP of Data Flash, sized by
+ *   BLE_SNV_BLOCK × BLE_SNV_NUM:
+ *     NUM=1 → offset 0x7F00 (abs 0x77F00), 256 B bond store
+ *     NUM=3 → offset 0x7D00 (abs 0x77D00) — sits directly above the
+ *     APP_ROLE flag page (0x7C00), no overlap.
+ *
+ *   Field lesson 2026-07-24: the old fixed default (0x77E00-FLASH_ROM_
+ *   MAX_SIZE = 0x7E00) only fits ONE bond. With BLE_SNV_NUM=3 the
+ *   runtime guard in ble_stack_init() (addr + block*num > 0x8000)
+ *   tripped and the board hung in while(1) BEFORE USB init —
+ *   "flashes fine, never enumerates". The compile-time #error below
+ *   now catches this at build time.
+ */
+#ifndef BLE_SNV_ADDR
+#define BLE_SNV_ADDR  (0x78000 - FLASH_ROM_MAX_SIZE - BLE_SNV_BLOCK * BLE_SNV_NUM)
+#endif
+
+#if (BLE_SNV_ADDR + BLE_SNV_BLOCK * BLE_SNV_NUM) > (0x78000 - FLASH_ROM_MAX_SIZE)
+#error "BLE SNV layout overflows Data Flash (raise BLE_SNV_ADDR region or cut BLE_SNV_NUM)"
 #endif
 
 /* ====================================================================
@@ -620,7 +666,11 @@
  *   keyboard — one host at a time.
  */
 #ifndef PERIPHERAL_MAX_CONNECTION
+  #if(BLE_MODE == BLE_MODE_KBD_MULTI)
+#define PERIPHERAL_MAX_CONNECTION  3   /* 3 concurrent host links */
+  #else
 #define PERIPHERAL_MAX_CONNECTION  1
+  #endif
 #endif
 
 /*********************************************************************
