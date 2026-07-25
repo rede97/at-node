@@ -48,6 +48,25 @@ def wait_urc(ser, pattern, timeout):
     return None
 
 
+def wait_full_link(ser, slot_name, timeout):
+    """Poll AT+DEV until the slot shows connected+secure+notify — the
+    full handshake, not just the ACL link (a Windows 'connected' with
+    NO-CCCD accepts nothing)."""
+    end = time.time() + timeout
+    while time.time() < end:
+        ser.reset_input_buffer()
+        ser.write(b"AT+DEV\r\n")
+        time.sleep(0.8)
+        dev = ser.read(ser.in_waiting or 1).decode(errors="replace")
+        for line in dev.splitlines():
+            if line.startswith(("2", "3", "4")) and slot_name in line \
+               and ",connected," in line and ",secure" in line \
+               and ",notify" in line:
+                return time.time()
+        time.sleep(1.2)
+    return None
+
+
 def say(msg):
     print(msg, flush=True)
 
@@ -98,11 +117,11 @@ def main():
         typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
         say(f"[r{n}] typed={'OK' if typed else 'TIMEOUT'}")
         # --- to Windows (BLE1) ---
-        say(f"[r{n}] AT+DEV=BLE1, waiting Windows reconnect (60s, host-paced)...")
+        say(f"[r{n}] AT+DEV=BLE1, waiting Windows full link (60s)...")
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE1\r\n")
         t1 = time.time()
-        ok1 = wait_urc(kbd, "+BT_CONNECTED:1", 60)
+        ok1 = wait_full_link(kbd, "BLE1", 60)
         recon1 = (ok1 - t1) if ok1 else None
         if ok1:
             say(f"[r{n}] Windows reconnected ({recon1:.1f}s), typing 'win round {n}'")
