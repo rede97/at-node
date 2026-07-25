@@ -100,6 +100,10 @@ void    ble_dongle_forget_bonds(void);
  */
 uint8_t ble_dongle_connected(void);
 
+/* ble_dongle_batt_read — read the peer's Battery Level (0x2A19).
+   0 = read started (+BT_BATT:<pct>% follows), -1 = unavailable. */
+int     ble_dongle_batt_read(void);
+
 /*********************************************************************
  * ble_dongle_passkey — answer an SMP passkey request (MITM pairing).
  *

@@ -1320,6 +1320,20 @@ static int at_cmd_BT_STATE(int argc, char *argv[]) {
     AT_Response("ERROR: dongle mode disabled (BLE_DONGLE=FALSE)"); return -1;
 #endif
 }
+/* AT+BT_BATT — read the peer keyboard's battery level (0x2A19). */
+static int at_cmd_BT_BATT(int argc, char *argv[]) {
+#if BLE_HAS_DONGLE
+    ROLE_GUARD_DGL;
+    if (ble_dongle_batt_read() < 0) {
+        AT_Response("ERROR: no battery service or not armed");
+        return -1;
+    }
+    return 0;   /* +BT_BATT:<pct>% follows async */
+#else
+    (void)argc; (void)argv;
+    AT_Response("ERROR: dongle mode only"); return -1;
+#endif
+}
 static int at_cmd_BT_PAIR(int argc, char *argv[]) {
 #if BLE_MODE == BLE_MODE_DUAL
     return (role_current() == ROLE_DONGLE) ? bt_pair_dgl(argc, argv)
@@ -1479,6 +1493,7 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_PAIR", "open pairing window <BLEn>",    at_cmd_BT_PAIR },
     { "AT+BT_UNBIND", "forget one host <BLE1..3>",   at_cmd_BT_UNBIND },
     { "AT+BT_STATE","diag dongle state (dongle)",    at_cmd_BT_STATE },
+    { "AT+BT_BATT", "peer battery % (dongle)",      at_cmd_BT_BATT },
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },
     { "AT+BT_AUTO", "auto-reconnect [0|1] (dongle)", at_cmd_BT_AUTO },

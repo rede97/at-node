@@ -88,6 +88,8 @@ enum {
     DISC_PROTO_CHAR, /* finding Protocol Mode char 0x2A4E */
     DISC_RPT_CHAR,   /* fallback: finding Report chars 0x2A4D */
     DISC_CCCD,       /* finding CCCD 0x2902 */
+    DISC_BATT_SVC,   /* finding Battery service 0x180F */
+    DISC_BATT_CHAR,  /* finding Battery Level char 0x2A19 */
 };
 
 /* Dongle link states */
@@ -186,6 +188,8 @@ static uint8_t  dgl_rpt_count;
 #define DGL_MAX_CCCD  8
 static uint16_t dgl_cccd_list[DGL_MAX_CCCD];
 static uint8_t  dgl_cccd_count, dgl_cccd_wr;
+static uint16_t dgl_batt_hdl = 0;   /* Battery Level value handle, 0 = unknown */
+static uint8_t  dgl_batt_reading = 0;
 static uint8_t  dgl_proto_pending;   /* protocol-mode write awaiting RSP */
 
 /* Post-arm DIAG: read each report char once — proves the chars are
@@ -207,6 +211,8 @@ static void dgl_reset_link_state(void)
     dgl_rpt_count = 0;
     dgl_cccd_count = dgl_cccd_wr = 0;
     dgl_cccd_list[0] = 0;
+    dgl_batt_hdl = 0;
+    dgl_batt_reading = 0;
     dgl_proto_pending = 0;
     dgl_rd_idx = 0;
     dgl_passkey_pending = 0;
@@ -687,9 +693,52 @@ static void dgl_discovery_event(gattMsgEvent_t *pMsg)
         }
         break;
 
+    case DISC_BATT_SVC:
+        if (pMsg->method == ATT_FIND_BY_TYPE_VALUE_RSP &&
+            pMsg->msg.findByTypeValueRsp.numInfo > 0) {
+            dgl_svc_start = ATT_ATTR_HANDLE(pMsg->msg.findByTypeValueRsp.pHandlesInfo, 0);
+            dgl_svc_end   = ATT_GRP_END_HANDLE(pMsg->msg.findByTypeValueRsp.pHandlesInfo, 0);
+        }
+        if (complete) {
+            if (dgl_svc_start && dgl_svc_end) {
+                dgl_find_char(BATT_LEVEL_UUID, DISC_BATT_CHAR);
+            } else {
+                /* peer has no Battery service — fine, AT+BT_BATT reports N/A */
+                dgl_disc_state = DISC_IDLE;
+            }
+        }
+        break;
+
+    case DISC_BATT_CHAR:
+        if (pMsg->method == ATT_READ_BY_TYPE_RSP &&
+            pMsg->msg.readByTypeRsp.numPairs > 0) {
+            uint16_t h = dgl_rbt_vhandle(&pMsg->msg.readByTypeRsp, 0);
+            if (h > dgl_svc_start && h <= dgl_svc_end)
+                dgl_batt_hdl = h;
+        }
+        if (complete)
+            dgl_disc_state = DISC_IDLE;
+        break;
+
     default:
         break;
     }
+}
+
+/* AT+BT_BATT backend: read the peer's Battery Level. Returns 0 if the
+   read was started (URC +BT_BATT:<pct> follows), -1 if unavailable. */
+int ble_dongle_batt_read(void)
+{
+    if (dgl_state != DGL_ARMED || !dgl_batt_hdl || dgl_batt_reading)
+        return -1;
+    attReadReq_t rr;
+    rr.handle = dgl_batt_hdl;
+    dgl_batt_reading = 1;
+    if (GATT_ReadCharValue(dgl_conn_handle, &rr, dgl_task_id) != SUCCESS) {
+        dgl_batt_reading = 0;
+        return -1;
+    }
+    return 0;
 }
 
 /* Called on ATT_WRITE_RSP / ATT_ERROR_RSP while enabling CCCDs */
@@ -709,6 +758,15 @@ static void dgl_cccd_write_next(void)
         AT_Response("+BT_CONN: armed (%s mode, %d rpt, %d cccd)",
                     dgl_boot_hdl ? "boot" : "report", dgl_rpt_count, dgl_cccd_count);
         dgl_auto_fails = 0;   /* a healthy link resets the fail counter */
+        /* follow-up: find the peer's Battery Level characteristic so
+           AT+BT_BATT can read it on demand */
+        {
+            uint8_t uuid[ATT_BT_UUID_SIZE] = { LO_UINT16(BATT_SERV_UUID),
+                                               HI_UINT16(BATT_SERV_UUID) };
+            dgl_disc_state = DISC_BATT_SVC;
+            GATT_DiscPrimaryServiceByUUID(dgl_conn_handle, uuid,
+                                          ATT_BT_UUID_SIZE, dgl_task_id);
+        }
 #if DGL_DBG_ON
         /* DIAG: kick report-char reads to verify accessibility */
         dgl_rd_idx = 0;
@@ -757,6 +815,20 @@ static void dgl_process_gatt_msg(gattMsgEvent_t *pMsg)
                     pMsg->msg.errorRsp.errCode, pMsg->msg.errorRsp.handle);
         }
         dgl_cccd_write_next();
+        GATT_bm_free(&pMsg->msg, pMsg->method);
+        return;
+    }
+
+    /* battery read result (unconditional — AT+BT_BATT relies on it) */
+    if (pMsg->method == ATT_READ_RSP && dgl_batt_reading) {
+        dgl_batt_reading = 0;
+        AT_Response("+BT_BATT: %d%%", pMsg->msg.readRsp.pValue[0]);
+        GATT_bm_free(&pMsg->msg, pMsg->method);
+        return;
+    }
+    if (pMsg->method == ATT_ERROR_RSP && dgl_batt_reading) {
+        dgl_batt_reading = 0;
+        AT_Response("+BT_BATT: err %02X", pMsg->msg.errorRsp.errCode);
         GATT_bm_free(&pMsg->msg, pMsg->method);
         return;
     }

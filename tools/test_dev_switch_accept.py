@@ -9,7 +9,13 @@ Windows side is watched by the user.
 Prereqs: BLE1=Windows paired, BLE2=dongle board paired, a terminal
 focused on the Linux box (dongle forwards keys there).
 
-    uv run python tools/test_dev_switch_accept.py [--rounds 5]
+    uv run python tools/test_dev_switch_accept.py [--rounds 5] [--ms 30]
+
+Timing: AT+KEY_STR is paced by the active BLE slot's AT+PACE value.
+Default target is 30 ms/character (press+release), i.e. AT+PACE=15 ms.
+Raise --ms to slow down if the dongle/host drops keys; lower it to speed
+up.  The dongle side is the one being self-verified, so it gets the paced
+treatment explicitly.
 """
 import argparse
 import os
@@ -78,9 +84,22 @@ def type_sync(kbd, text):
     return bool(wait_urc(kbd, "+KEY_DONE", len(text) * 0.12 + 8))
 
 
+def set_pace(kbd, ms_per_char):
+    """Set AT+PACE so that one character (press + release) takes roughly
+    ms_per_char.  AT+PACE controls the gap between press and release reports,
+    so pace = max(5, ms_per_char // 2)."""
+    pace = max(5, ms_per_char // 2)
+    kbd.write(f"AT+PACE={pace}\r\n".encode())
+    return bool(wait_urc(kbd, "OK", 3))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--rounds", type=int, default=5)
+    ap.add_argument("--ms", type=int, default=30, dest="ms_per_char",
+                    help="target milliseconds per character for KEY_STR (default: 30)")
+    ap.add_argument("--pace", type=int, default=None,
+                    help="override AT+PACE value directly (5-2000); if set, ignores --ms")
     args = ap.parse_args()
 
     kbd = open_port("kbd")
@@ -113,6 +132,10 @@ def main():
         recon = (ok - t0) if n > 1 else 0
         say(f"[r{n}] dongle connected ({recon:.1f}s), settle 2.5s...")
         time.sleep(2.5)   # let the dongle finish GATT/arm
+        pace = args.pace if args.pace is not None else max(5, args.ms_per_char // 2)
+        say(f"[r{n}] set AT+PACE={pace}ms for dongle")
+        if not set_pace(kbd, args.ms_per_char):
+            say(f"[r{n}] WARN: AT+PACE set failed, continuing with current pace")
         say(f"[r{n}] typing to dongle: echo D{n} >> {LOG}\\n")
         typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
         say(f"[r{n}] typed={'OK' if typed else 'TIMEOUT'}")
@@ -126,6 +149,8 @@ def main():
         if ok1:
             say(f"[r{n}] Windows reconnected ({recon1:.1f}s), typing 'win round {n}'")
             time.sleep(1.5)
+            if args.pace is not None:
+                set_pace(kbd, args.ms_per_char)
             type_sync(kbd, f"win round {n}")
         else:
             say(f"[r{n}] BLE1 reconnect FAIL (60s timeout)")
