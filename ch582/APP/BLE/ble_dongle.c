@@ -1056,8 +1056,11 @@ void ble_dongle_init(void)
 
     /* GAP parameters */
     GAP_SetParamValue(TGAP_DISC_SCAN, DGL_SCAN_SECONDS * 1600);   /* 0.625 ms units */
-    GAP_SetParamValue(TGAP_CONN_EST_INT_MIN, 20);                 /* 25 ms */
-    GAP_SetParamValue(TGAP_CONN_EST_INT_MAX, 40);                 /* 50 ms */
+    /* Request a fast link: 38.75 ms (old 25-50 range) capped typing at
+       ~25 reports/s and burst-typing dropped keys (2026-07-25). Aim at
+       the Windows-class 15-22.5 ms cadence. */
+    GAP_SetParamValue(TGAP_CONN_EST_INT_MIN, 12);                 /* 15 ms */
+    GAP_SetParamValue(TGAP_CONN_EST_INT_MAX, 18);                 /* 22.5 ms */
     GAP_SetParamValue(TGAP_CONN_EST_SUPERV_TIMEOUT, 500);         /* 5 s */
 
     /* Bond manager (central): INITIATE pairing — keyboards that protect
