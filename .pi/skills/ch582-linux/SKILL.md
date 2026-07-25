@@ -196,6 +196,11 @@ uv run python tools/test/test_dongle_hardening.py  # 阶段二:回连/BT_LIST/ho
 uv run python tools/test/send_key.py 0x04 --mode BLE
 ```
 
+**输入注入规则(FIELD-NOTES F18)**:常规注入一律用 `AT+TAP`(原子按下+释放)
+或 `AT+KEY_STR`/`AT+KEY_SEQ`(引擎自动配对 press/release);裸 `AT+KEY` 仅限
+修饰键按住等特例,用完必须补 `AT+KEY=0,0` 释放,否则主机判定长按、
+终端被字符洪流刷屏。卡住止血:补发 `AT+KEY=0,0` ×2-3。
+
 **日常操作:**
 
 ```bash

@@ -55,6 +55,11 @@ uv run python tools/test/send_key.py 0x39 --mode BLE          # CapsLock via BLE
 uv run python tools/test/send_key.py 0x04 --mode USB --seq "Hi"  # 'a' / text via KEY_SEQ
 ```
 
+**输入注入规则(FIELD-NOTES F18)**:常规注入一律用 `AT+TAP`(原子按下+释放)
+或 `AT+KEY_STR`/`AT+KEY_SEQ`(序列引擎自动配对 press/release);裸 `AT+KEY`
+仅限修饰键按住等特殊场景,且必须显式补 `AT+KEY=0,0` 释放。卡住时止血:
+补发 `AT+KEY=0,0` ×2-3。
+
 Dongle loop test:
 ```bash
 uv run python tools/test/test_dongle_loop.py          # two CH582 boards
