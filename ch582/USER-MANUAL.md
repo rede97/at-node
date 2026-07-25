@@ -16,6 +16,75 @@
 
 通道:USB CDC 是唯一 AT 端口(UART1 仅调试输出)。
 
+## 1.1 命令支持矩阵
+
+✅=支持,—=不支持,△=DUAL 下按运行时角色。
+
+### COMMON(系统)
+
+| 命令 | KBD | KBD_MULTI | DONGLE | DUAL | 参数 |
+|------|-----|-----------|--------|------|------|
+| AT | ✅ | ✅ | ✅ | ✅ | — |
+| AT+VER | ✅ | ✅ | ✅ | ✅ | — |
+| AT+HELP | ✅ | ✅ | ✅ | ✅ | `[=<CMD>]` |
+| AT+STATUS | ✅ | ✅ | ✅ | ✅ | — |
+| AT+ECHO | ✅ | ✅ | ✅ | ✅ | `<text>` |
+| AT+RST | ✅ | ✅ | ✅ | ✅ | — |
+| AT+FACTORY | ✅ | ✅ | ✅ | ✅ | 清全部绑定+配置,软复位 |
+| AT+ISP | ✅ | ✅ | ✅ | ✅ | 进 ISP 下载(擦应用区) |
+| AT+WDG | ✅ | ✅ | ✅ | ✅ | `[=0|1]` 默认关 |
+| AT+ROLE | — | — | — | ✅ | `[=KBD|DONGLE]` 切角色+复位 |
+
+### KBD(键盘输出)
+
+| 命令 | KBD | KBD_MULTI | DONGLE | DUAL | 参数 |
+|------|-----|-----------|--------|------|------|
+| AT+DEV | ✅ | ✅ | — | △ | `=USB|BLE`;多模 `=USB|BLE1|BLE2|BLE3` |
+| AT+TAP | ✅ | ✅ | ✅* | ✅ | `<ms>,<mods>,<k1..6>` *dongle 走 USB HID |
+| AT+KEY | ✅ | ✅ | ✅* | ✅ | `<mods>,<k1..6>` 按住型,须补 `,0,0` 释放 |
+| AT+MOD | ✅ | ✅ | ✅* | ✅ | `<mask>` |
+| AT+KEY_STR | ✅ | ✅ | ✅* | ✅ | `<text>` 转义 `\n` `\t` `\\` |
+| AT+KEY_SEQ | ✅ | ✅ | ✅* | ✅ | `<delay>,<mods>,<k1..6>,...` |
+| AT+PACE | ✅(槽0) | ✅(每槽) | — | △ | `[=<ms 5-2000>]` 默认 30,持久 |
+| AT+NAME | — | ✅ | — | △(多模角色) | `=<BLEn>,<label≤11>` |
+| AT+MAC | — | ✅ | — | △(多模角色) | `=<BLEn>[,<AA:BB:..>]` |
+| AT+LED | ✅ | ✅ | — | △ | `=ON|OFF|BLINK|FLASH|TOGGLE[,ms[,duty%]]` |
+| AT+KEY_CFG | ✅ | ✅ | — | △ | `=<pin 38|39>,<mods>,<keycode>` 持久 |
+
+### BLE-KBD(配对管理,kbd 角色)
+
+| 命令 | KBD | KBD_MULTI | DONGLE | DUAL | 参数 |
+|------|-----|-----------|--------|------|------|
+| AT+BT_PAIR | ✅(清绑) | ✅(开窗) | — | △ | 多模:`[=<BLEn>]` 清槽+开 60s 窗 |
+| AT+BT_DISC | ✅ | ✅ | — | △ | 多模:`[=<BLE1..3>]` 按槽断 |
+| AT+BT_UNBIND | — | ✅ | — | △ | `=<BLE1|BLE2|BLE3>` 忘一台主机 |
+
+### BLE-DONGLE(接收器,dongle 角色)
+
+| 命令 | KBD | KBD_MULTI | DONGLE | DUAL | 参数 |
+|------|-----|-----------|--------|------|------|
+| AT+BT_SCAN | — | — | ✅ | △ | `=<sec>[,<filter HID|名字>]` |
+| AT+BT_CONN | — | — | ✅ | △ | `=mac,<addr>[,s]|name,<串>[,s]|index,<n>` |
+| AT+BT_DISC | — | — | ✅ | △ | 断链(hold 重连一次) |
+| AT+BT_AUTO | — | — | ✅ | △ | `[=0|1]` 自动重连 |
+| AT+BT_LIST | — | — | ✅ | △ | 绑定列表 |
+| AT+BT_PAIR | — | — | ✅ | △ | 清本机绑定 |
+| AT+BT_BATT | — | — | ✅ | △ | 读对端电量 → `+BT_BATT:<pct>%` |
+| AT+BT_STATE | — | — | ✅ | △ | 状态机诊断 |
+| AT+BT_PASSKEY | — | — | ✅ | △ | `=<6digits>` 默认 123456 |
+
+### GPIO / 硬件(HWS 宏门控)
+
+| 命令 | KBD | KBD_MULTI | DONGLE | DUAL | 参数 |
+|------|-----|-----------|--------|------|------|
+| AT+GPIO_W | ✅ | ✅ | ✅ | ✅ | `=<pin>,<level>[,5|20]` PA0-15,PB16-39 |
+| AT+GPIO_R | ✅ | ✅ | ✅ | ✅ | `=<pin>[,0=PU|1=FLOAT|2=PD]` |
+| AT+ADC | ✅ | ✅ | ✅ | ✅ | `=<ch 0-13>[,<pga>]` → `+ADC:<raw>,<mV>` |
+| AT+TEMP | ✅ | ✅ | ✅ | ✅ | → `+TEMP:<raw>,<C>` |
+| AT+SLEEP | △¹ | △¹ | △¹ | △¹ | `=<mode 0-2>[,<sec>]` ¹USB 构建拒绝,仅 HWS_SLEEP 构建 |
+
+---
+
 ---
 
 ## 2. 系统命令(ALL)
