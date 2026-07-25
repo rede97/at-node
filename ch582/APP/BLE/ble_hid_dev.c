@@ -235,11 +235,14 @@ void ble_hid_dev_init()
         // connection requests only from devices in the White List'.
         GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_WL, sizeof(uint8_t), &syncWL);
 
-        /* Sync the Resolving List too: bonded RPA hosts (phones) are
-           resolved to their IDENTITY address before the connect event
-           reaches us — that stable address keys the slot-binding table
-           (KBD_MULTI slot persistence, 2026-07-24). */
-        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_RL, sizeof(uint8_t), &syncWL);
+        /* Resolving List auto-sync: DISABLED (2026-07-25). With a
+           non-empty RL the controller turns on LL Network Privacy and
+           advertises with a self-generated RPA — the on-air address
+           rotated (69:A8:...), breaking per-slot static MACs, directed
+           advertising, and Windows pairing ("please reconnect" loop).
+           Phone RPA identities were not stabilized by it anyway. */
+        uint8_t syncRL = FALSE;
+        GAPBondMgr_SetParameter(GAPBOND_AUTO_SYNC_RL, sizeof(uint8_t), &syncRL);
     }
 
     // Set up services
