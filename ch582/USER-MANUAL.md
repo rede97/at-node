@@ -39,21 +39,21 @@
 | 命令 | 格式 | KBD | KBD_MULTI | DONGLE | DUAL | 说明 |
 |------|------|-----|-----------|--------|------|------|
 | AT | `AT` | ✅ | ✅ | ✅ | ✅ | 握手,返回 OK |
-| AT+VER | `AT+VER` | ✅ | ✅ | ✅ | ✅ | 版本+角色标签 `[kbd|dongle]` |
+| AT+VER | `AT+VER` | ✅ | ✅ | ✅ | ✅ | 版本+角色标签 `[kbd\|dongle]` |
 | AT+HELP | `AT+HELP[=<CMD>]` | ✅ | ✅ | ✅ | ✅ | 无参=分组列表;带参=单条用法 |
 | AT+STATUS | `AT+STATUS` | ✅ | ✅ | ✅ | ✅ | `role= dev= ble= batt=` 一行 |
 | AT+ECHO | `AT+ECHO=<text>` | ✅ | ✅ | ✅ | ✅ | 回显,链路自检 |
 | AT+RST | `AT+RST` | ✅ | ✅ | ✅ | ✅ | 软件复位 |
 | AT+FACTORY | `AT+FACTORY` | ✅ | ✅ | ✅ | ✅ | 清全部绑定+槽位配置,软复位,**不可恢复** |
 | AT+ISP | `AT+ISP` | ✅ | ✅ | ✅ | ✅ | 进 ISP 下载模式(擦应用区) |
-| AT+WDG | `AT+WDG[=0|1]` | ✅ | ✅ | ✅ | ✅ | 看门狗,默认关;武装后 0.56s 无喂狗复位 |
-| AT+ROLE | `AT+ROLE[=KBD|DONGLE]` | — | — | — | ✅ | 仅 dual:切运行时角色并软复位 |
+| AT+WDG | `AT+WDG[=0\|1]` | ✅ | ✅ | ✅ | ✅ | 看门狗,默认关;武装后 0.56s 无喂狗复位 |
+| AT+ROLE | `AT+ROLE[=KBD\|DONGLE]` | — | — | — | ✅ | 仅 dual:切运行时角色并软复位 |
 
 ### KBD(键盘输出)
 
 | 命令 | 格式 | KBD | KBD_MULTI | DONGLE | DUAL | 说明 |
 |------|------|-----|-----------|--------|------|------|
-| AT+DEV | `AT+DEV[=USB|BLE]` (单模) `AT+DEV[=USB|BLE1|BLE2|BLE3]` (多模) | ✅ | ✅ | — | △ | 输出目标查询/切换;多模单活动链路,切即断旧连新 |
+| AT+DEV | `AT+DEV[=USB\|BLE]` (单模) `AT+DEV[=USB\|BLE1\|BLE2\|BLE3]` (多模) | ✅ | ✅ | — | △ | 输出目标查询/切换;多模单活动链路,切即断旧连新 |
 | AT+TAP | `AT+TAP=<ms>,<mods>,<k1>..<k6>` | ✅ | ✅ | ✅ | ✅ | 点按(原子按下+释放,**推荐注入方式**);例 `AT+TAP=80,0,4`=a |
 | AT+KEY | `AT+KEY=<mods>,<k1>..<k6>` | ✅ | ✅ | ✅ | ✅ | 裸按下,仅限按住场景;必须补 `AT+KEY=0,0` 释放 |
 | AT+MOD | `AT+MOD=<mask>` | ✅ | ✅ | ✅ | ✅ | 按住/释放修饰键,`0`=全放 |
@@ -62,25 +62,25 @@
 | AT+PACE | `AT+PACE[=<ms 5-2000>]` | ✅ | ✅(每槽) | — | △ | KEY_STR 节奏,默认 30;法则 pace ≥ 2×连接间隔,持久 |
 | AT+NAME | `AT+NAME[=<BLEn>,<label>]` | — | ✅ | — | △ | 槽位助记名(≤11 字符 A-Za-z0-9-_),持久 |
 | AT+MAC | `AT+MAC[=<BLEn>[,<addr>]]` | — | ✅ | — | △ | 槽位本机 MAC,默认芯片MAC+槽号,持久 |
-| AT+LED | `AT+LED=ON|OFF|BLINK|FLASH|TOGGLE[,<ms>[,<duty%>]]` | ✅ | ✅ | — | △ | 板载 LED(PA0) |
-| AT+KEY_CFG | `AT+KEY_CFG=<pin 38|39>,<mods>,<k>` | ✅ | ✅ | — | △ | 自定义物理按键映射,持久 |
+| AT+LED | `AT+LED=ON\|OFF\|BLINK\|FLASH\|TOGGLE[,<ms>[,<duty%>]]` | ✅ | ✅ | — | △ | 板载 LED(PA0) |
+| AT+KEY_CFG | `AT+KEY_CFG=<pin 38\|39>,<mods>,<k>` | ✅ | ✅ | — | △ | 自定义物理按键映射,持久 |
 
 ### BLE-KBD(kbd 角色的配对管理)
 
 | 命令 | 格式 | KBD | KBD_MULTI | DONGLE | DUAL | 说明 |
 |------|------|-----|-----------|--------|------|------|
 | AT+BT_PAIR | 单模:`AT+BT_PAIR` 多模:`AT+BT_PAIR[=<BLEn>]` | ✅ | ✅ | — | △ | 多模=清该槽预留+开 **60s 配对窗**(不开窗未知主机拒连) |
-| AT+BT_DISC | `AT+BT_DISC[=<BLE1|BLE2|BLE3>]` | ✅ | ✅ | — | △ | 断开链路,绑定保留可回连 |
-| AT+BT_UNBIND | `AT+BT_UNBIND=<BLE1|BLE2|BLE3>` | — | ✅ | — | △ | **忘记一台主机**:清预留+绑定 |
+| AT+BT_DISC | `AT+BT_DISC[=<BLE1\|BLE2\|BLE3>]` | ✅ | ✅ | — | △ | 断开链路,绑定保留可回连 |
+| AT+BT_UNBIND | `AT+BT_UNBIND=<BLE1\|BLE2\|BLE3>` | — | ✅ | — | △ | **忘记一台主机**:清预留+绑定 |
 
 ### BLE-DONGLE(接收器)
 
 | 命令 | 格式 | KBD | KBD_MULTI | DONGLE | DUAL | 说明 |
 |------|------|-----|-----------|--------|------|------|
-| AT+BT_SCAN | `AT+BT_SCAN=<sec 1-30>[,<filter>]` | — | — | ✅ | △ | filter:`HID`=仅HID标记,或名字子串;按 RSSI 排序输出 |
+| AT+BT_SCAN | `AT+BT_SCAN=<sec 1-30>[,<filter HID\|名字>]` | — | — | ✅ | △ | filter:`HID`=仅HID标记,或名字子串;按 RSSI 排序输出 |
 | AT+BT_CONN | `AT+BT_CONN=mac,<addr>[,<sec>]` `AT+BT_CONN=name,<子串>[,<sec>]` `AT+BT_CONN=index,<n>` | — | — | ✅ | △ | mac/name=扫描匹配(默认 5s 超时);index=立即连扫描列表(先 AT+BT_SCAN);**同名设备多用 mac 形式** |
 | AT+BT_DISC | `AT+BT_DISC` | — | — | ✅ | △ | 断链并 hold 自动重连一次 |
-| AT+BT_AUTO | `AT+BT_AUTO[=0|1]` | — | — | ✅ | △ | 自动重连开关(掉线直连已绑定地址) |
+| AT+BT_AUTO | `AT+BT_AUTO[=0\|1]` | — | — | ✅ | △ | 自动重连开关(掉线直连已绑定地址) |
 | AT+BT_LIST | `AT+BT_LIST` | — | — | ✅ | △ | 已绑定键盘列表 |
 | AT+BT_PAIR | `AT+BT_PAIR` | — | — | ✅ | △ | 清本机绑定记录 |
 | AT+BT_BATT | `AT+BT_BATT` | — | — | ✅ | △ | 读对端键盘电量 → `+BT_BATT:<pct>%` |
@@ -91,8 +91,8 @@
 
 | 命令 | 格式 | KBD | KBD_MULTI | DONGLE | DUAL | 说明 |
 |------|------|-----|-----------|--------|------|------|
-| AT+GPIO_W | `AT+GPIO_W=<pin>,<level 0|1>[,<drive 5|20>]` | ✅ | ✅ | ✅ | ✅ | 推挽输出,驱动默认 5mA,可选 20mA |
-| AT+GPIO_R | `AT+GPIO_R=<pin>[,<mode>]` | ✅ | ✅ | ✅ | ✅ | mode:`0`=上拉(默认) `1`=浮空 `2`=下拉 |
+| AT+GPIO_W | `AT+GPIO_W=<pin>,<level 0\|1>[,<drive 5\|20>]` | ✅ | ✅ | ✅ | ✅ | 推挽输出,驱动默认 5mA,可选 20mA |
+| AT+GPIO_R | `AT+GPIO_R=<pin>[,<mode 0\|1\|2>]` | ✅ | ✅ | ✅ | ✅ | mode:`0`=上拉(默认) `1`=浮空 `2`=下拉 |
 | AT+ADC | `AT+ADC=<ch 0-13>[,<pga>]` | ✅ | ✅ | ✅ | ✅ | → `+ADC:<raw>,<mV>mV`,Vref 已校准 |
 | AT+TEMP | `AT+TEMP` | ✅ | ✅ | ✅ | ✅ | 片内温度 → `+TEMP:<raw>,<C>C` |
 | AT+SLEEP | `AT+SLEEP=<mode 0-2>[,<sec 1-3600>]` | △¹ | △¹ | △¹ | △¹ | mode:`0`=Idle `1`=Sleep `2`=Shutdown(RAM 保持,RTC 定时唤醒);¹**USB 构建直接拒绝**,仅 HWS_SLEEP 电池构建 |
