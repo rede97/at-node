@@ -48,6 +48,10 @@ def wait_urc(ser, pattern, timeout):
     return None
 
 
+def say(msg):
+    print(msg, flush=True)
+
+
 def type_sync(kbd, text):
     """Type text; a trailing \\n in the string becomes a paced Enter
     (firmware maps \\n -> Enter in the seq engine). Waits +KEY_DONE."""
@@ -69,7 +73,9 @@ def main():
 
     results = []
     for n in range(1, args.rounds + 1):
+        say(f"\n===== round {n}/{args.rounds} =====")
         # --- to dongle (BLE2) ---
+        say(f"[r{n}] AT+DEV=BLE2, waiting dongle connect (25s)...")
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE2\r\n")
         t0 = time.time()
@@ -77,31 +83,38 @@ def main():
         if not ok and n == 1:
             # already connected from a previous session — no URC comes;
             # verify with a DEV query instead of blindly proceeding
+            say(f"[r{n}] no URC (already connected?), checking AT+DEV...")
             kbd.write(b"AT+DEV\r\n"); time.sleep(0.8)
             dev = kbd.read(kbd.in_waiting or 1).decode(errors="replace")
             ok = time.time() if "BLE2" in dev and ",connected," in dev else None
         if not ok:
             results.append((n, "BLE2 reconnect FAIL", None))
-            print(f"round {n}: BLE2 reconnect FAIL")
+            say(f"[r{n}] BLE2 reconnect FAIL")
             continue
         recon = (ok - t0) if n > 1 else 0
+        say(f"[r{n}] dongle connected ({recon:.1f}s), settle 2.5s...")
         time.sleep(2.5)   # let the dongle finish GATT/arm
+        say(f"[r{n}] typing to dongle: echo D{n} >> {LOG}\\n")
         typed = type_sync(kbd, f"echo D{n} >> {LOG}\\n")
+        say(f"[r{n}] typed={'OK' if typed else 'TIMEOUT'}")
         # --- to Windows (BLE1) ---
+        say(f"[r{n}] AT+DEV=BLE1, waiting Windows reconnect (25s)...")
         kbd.reset_input_buffer()
         kbd.write(b"AT+DEV=BLE1\r\n")
         t1 = time.time()
         ok1 = wait_urc(kbd, "+BT_CONNECTED:1", 25)
         recon1 = (ok1 - t1) if ok1 else None
         if ok1:
+            say(f"[r{n}] Windows reconnected ({recon1:.1f}s), typing 'win round {n}'")
             time.sleep(1.5)
             type_sync(kbd, f"win round {n}")
-        results.append((n, recon, recon1))
-        if recon1 is not None:
-            print(f"round {n}: BLE2_recon={recon:.1f}s typed={'Y' if typed else 'N'} "
-                  f"BLE1_recon={recon1:.1f}s")
         else:
-            print(f"round {n}: BLE1 reconnect FAIL")
+            say(f"[r{n}] BLE1 reconnect FAIL (25s timeout)")
+        results.append((n, recon, recon1))
+        say(f"[r{n}] done: BLE2_recon={recon:.1f}s BLE1_recon="
+            + (f"{recon1:.1f}s" if recon1 is not None else "FAIL"))
+
+    say("\n===== self-verify =====")
 
     time.sleep(2)
     got = ""
