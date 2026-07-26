@@ -832,13 +832,20 @@ static void key_cfg_load(void) {
             key_cfg[i].mods = buf[4 + i*2];
             key_cfg[i].kc   = buf[4 + i*2 + 1];
         }
+    } else {
+        /* Fresh flash defaults: PB22 → F1, PB23 → Enter */
+        key_cfg[0].mods = 0;  key_cfg[0].kc = 0x3A;   /* F1 */
+        key_cfg[1].mods = 0;  key_cfg[1].kc = 0x28;   /* Enter/Return */
     }
-    /* else: fresh flash, all 0xFF → kc=0xFF → not active */
+    /* Saved config is not overwritten until explicit KEY_CFG */
 }
 
 void hws_key_cfg_factory_reset(void) {
     tmos_memset(key_cfg, 0, sizeof(key_cfg));
     key_cfg[0].pin = 38; key_cfg[1].pin = 39;
+    /* Factory defaults: PB22 → F1, PB23 → Enter */
+    key_cfg[0].kc = 0x3A;   /* F1 */
+    key_cfg[1].kc = 0x28;   /* Enter/Return */
     EEPROM_ERASE(APP_KEYCFG_FLASH_ADDR, 8);
 }
 
