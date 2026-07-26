@@ -52,28 +52,11 @@ at-node.siz \
 all: 
 	$(MAKE) --no-print-directory main-build 
 
-# Firmware variant: default = keyboard (Peripheral) firmware.
-#   make main-build DONGLE=1        → BLE HID receiver (dongle) firmware
-#   make main-build MODE=DUAL       → both roles, AT+ROLE runtime switch
-#   make main-build MODE=KBD_MULTI  → multi-mode keyboard (3 hosts, AT+DEV)
-# CFG_DEFS is referenced by every */subdir.mk compile rule.
-# NOTE: make does not track flag changes — always `make clean` when
-# switching variants (tools/ci/build_all.sh handles this for you).
-ifeq ($(DONGLE),1)
-CFG_DEFS := -DBLE_DONGLE=TRUE
-else ifeq ($(MODE),DUAL)
-CFG_DEFS := -DBLE_MODE=2
-else ifeq ($(MODE),KBD_MULTI)
-CFG_DEFS := -DBLE_MODE=3
-else
-CFG_DEFS :=
-endif
-
 main-build: at-node.elf secondary-outputs
 
 # Tool invocations
 at-node.elf: $(OBJS) $(USER_OBJS_ESCAPE)
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "../Ld/Link.ld" -nostartfiles -Xlinker --gc-sections -L".." -L"../LIB" -L"../StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"at-node.map" --specs=nano.specs --specs=nosys.specs -o "at-node.elf" $(OBJS) $(LIBS) -lprintf
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -T "e:\Projects\at_node\ch582\Ld\Link.ld" -nostartfiles -Xlinker --gc-sections -L"e:\Projects\at_node\ch582" -L"e:\Projects\at_node\ch582\LIB" -L"e:\Projects\at_node\ch582\StdPeriphDriver" -Xlinker --print-memory-usage -Wl,-Map,"at-node.map" --specs=nano.specs --specs=nosys.specs -o "at-node.elf" $(OBJS) $(LIBS) -lprintf
 at-node.hex: at-node.elf
 	@	riscv-none-embed-objcopy -O ihex "at-node.elf" "at-node.hex"
 at-node.lst: at-node.elf

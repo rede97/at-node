@@ -31,7 +31,7 @@
 | 承诺 | 含义 |
 |------|------|
 | **可读性优先** | 代码即文档。新加入的开发者不需要通过中文注释来理解，结构本身就是表达 |
-| **AI 原生可读** | 每个模块有文件头注释、分层 ASCII 图、CLAUDE.md 引导——AI 读完上下文直接能改代码 |
+| **AI 原生可读** | 每个模块有文件头注释、分层 ASCII 图、AGENTS.md 引导——AI 读完上下文直接能改代码 |
 | **分层干净** | HWS→BLE→APP 三层分离，下层不知上层，依赖方向单向 |
 | **命名一致** | 同层同风格，前缀统一，无 Hal/HAL/hal 混用 |
 | **扩展点明确** | 加新 BLE Service？加新 AT 命令？加新外设？有标准步骤，不用翻源码猜 |
@@ -111,14 +111,14 @@ HWS 故意不做跨平台 HAL。CH582 和 CH592 的寄存器兼容，抽象已�
 
 不是事后写文档，而是代码本身携带 AI 所需的上下文。设计决策：
 
-1. **CLAUDE.md 引导文件。** 仓库根目录的 CLAUDE.md 包含完整的分层架构、初始化序列、TMOS 任务注册表、命名规范、关键约束。AI 读完直接建立心智模型，不需要翻 20 个文件猜结构。
+1. **AGENTS.md 引导文件。** 仓库根目录的 AGENTS.md 包含完整的分层架构、初始化序列、TMOS 任务注册表、命名规范、关键约束。AI 读完直接建立心智模型，不需要翻 20 个文件猜结构。
 2. **每个模块的文件头注释。** 一句话说明职责 + 数据流向。例如 `at_parser.c` 的头注释直接写清了 UART 环形缓冲 → 行解析器 → CDC 回显 的完整数据流。
 3. **分层 ASCII 图。** `../REQUIREMENTS.md` 和 `DESIGN.md` 的架构图不是给人看的装饰——AI 从图里提取分层依赖关系和初始化顺序，精度比自然语言描述高。
 4. **命名自解释。** `hws_led_set()` 不需要注释也知道是硬件服务层的 LED 设置。`ble_stack_init()` 不需要看源码也知道初始化 BLE 协议栈。前缀 = 层级，动词 = 操作。
 5. **纯 ASCII 英文注释。** 没有 GB2312 乱码风险，所有文本编辑器、所有 AI 模型一致解析。
-6. **CLAUDE.md + DESIGN.md 双重引导。** CLAUDE.md 提供分层架构和约束，DESIGN.md 提供设计哲学和扩展指南——AI 读完即建立完整心智模型。
+6. **AGENTS.md + DESIGN.md 双重引导。** AGENTS.md 提供分层架构和约束，DESIGN.md 提供设计哲学和扩展指南——AI 读完即建立完整心智模型。
 
-**效果：** 一个没看过这个项目的 AI Agent，读完 CLAUDE.md + DESIGN.md + 目标文件的头注释，就能开始正确地修改代码。不需要人工解释"这个 HAL_SLEEP 其实是 HWS_SLEEP 但还没改完"这类上下文。
+**效果：** 一个没看过这个项目的 AI Agent，读完 AGENTS.md + DESIGN.md + 目标文件的头注释，就能开始正确地修改代码。
 
 ### 1.5 低功耗优先设计
 
@@ -224,8 +224,8 @@ int main(void) {
 AT 命令 → at_parser.c（行缓冲 + 参数分词）
        → at_cmds.c 命令表查找 + handler 执行
        → kb_* 函数（键盘路由层）
-       → kb_flush() 按 kb_mode 分发
-       → BLE: kb_ble_send_report() → ble_hid_dev_report()
+       → kb_flush() 按 kb_target 位掩码分发
+       → BLE: kb_ble_send_report_slot() → ble_hid_dev_report()
        → USB: kb_usb_send_report() → USB_HID_SendReport()
 ```
 
@@ -346,8 +346,8 @@ Flash (448KB)
 | 静态函数 | 同上，无特殊前缀 | `static void kb_flush(void)` |
 | 公共宏 | 层级前缀 + 大写 + 下划线 | `HWS_LED_MODE_ON`, `BLE_HID_RPT_ID_KEY_IN` |
 | 私有宏（仅在 .c 内用） | 小写或大写，前后一致 | `AT_RX_BUF_SIZE`, `EP0_SIZE` |
-| 类型 | 层级前缀 + 小写 + `_t` | `hws_key_cb_t`, `kb_mode_t` |
-| 枚举值 | 层级前缀 + 大写 | `KB_USB`, `KB_BLE`, `KB_BOTH` |
+| 类型 | 层级前缀 + 小写 + `_t` | `hws_key_cb_t`, `at_cmd_t` |
+| 枚举值 | 层级前缀 + 大写 | `KB_TGT_USB`, `KB_TGT_BLE1`, `HWS_KEY_SW_1` |
 
 ### 5.4 注释语言
 

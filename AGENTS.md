@@ -86,7 +86,7 @@ uv run python tools/broker/atnode_broker.py client list    # list devices
 | Layer | Path | Role |
 |-------|------|------|
 | APP | `ch582/APP/` | main, BLE keyboard (`hidkbd_ble.c`), USB keyboard (`hidkbd_usb.c`), USB CDC+HID (`usb_dev.c`), AT parser+cmds, runtime role (`role.c`), role init dispatch (`ble_init.c`) |
-| APP/HWS | `ch582/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. Peripheral drivers (GPIO/ADC/I2C/IR) land here, macro-gated. |
+| APP/HWS | `ch582/APP/HWS/` | Hardware services — core, LED, KEY, RTC, SLEEP. All `hws_` prefix. Peripheral drivers (GPIO/ADC/I2C) land here, macro-gated. |
 | APP/BLE | `ch582/APP/BLE/` | BLE stack init (`ble_stack.c`) + GATT services (HID Dev, HID Keyboard, Battery, Device Info) + dongle receiver (`ble_dongle.c`, Central/HID host) |
 | BLE Stack | `ch582/LIB/libCH58xBLE.a` | Pre-compiled LL/HCI/L2CAP/SM/GATT/GAP/TMOS |
 | StdPeriphDriver | `ch582/StdPeriphDriver/` | GPIO/UART/I2C/ADC/USB/Flash drivers + `libISP583.a` |
@@ -109,12 +109,12 @@ uv run python tools/broker/atnode_broker.py client list    # list devices
 ```
 AT command → at_cmds handler (at_cmd_KEY etc.)
   → kb_*() function (at_cmds.c)
-    → kb_flush() checks kb_mode
-      → kb_ble_send_report() [hidkbd_ble.c] → ble_hid_dev_report() [BLE/hiddev.c]
+    → kb_flush() checks kb_target bitmask
+      → kb_ble_send_report_slot() [hidkbd_ble.c] → ble_hid_dev_report() [BLE/ble_hid_dev.c]
       → kb_usb_send_report() [hidkbd_usb.c] → USB_HID_SendReport() [usb_dev.c]
 ```
 
-Modes: `KB_USB=1`, `KB_BLE=2`, `KB_BOTH=3`. Set via `AT+KB=USB|BLE|BOTH`.
+Target bitmask: `KB_TGT_USB=0x01`, `KB_TGT_BLE1=0x02`, `KB_TGT_BLE2=0x04`, `KB_TGT_BLE3=0x08`. Set via `AT+DEV=USB|BLE|BLE1|BLE2|BLE3`.
 
 ### Init sequence (7 linear stages)
 

@@ -10,7 +10,7 @@ C_SRCS += \
 ../APP/HWS/hws_core.c \
 ../APP/HWS/hws_gpio.c \
 ../APP/HWS/hws_i2c.c \
-../../APP/HWS/hws_key.c \
+../APP/HWS/hws_key.c \
 ../APP/HWS/hws_led.c \
 ../APP/HWS/hws_rtc.c \
 ../APP/HWS/hws_sleep.c \
@@ -22,7 +22,6 @@ C_DEPS += \
 ./APP/HWS/hws_core.d \
 ./APP/HWS/hws_gpio.d \
 ./APP/HWS/hws_i2c.d \
-./APP/HWS/hws_ir.d \
 ./APP/HWS/hws_key.d \
 ./APP/HWS/hws_led.d \
 ./APP/HWS/hws_rtc.d \
@@ -53,5 +52,5 @@ DIR_EXPANDS += \
 
 # Each subdirectory must supply rules for building sources it contributes
 APP/HWS/%.o: ../APP/HWS/%.c
-	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -DDEBUG=1 $(CFG_DEFS) -I"../Startup" -I"../APP/include" -I"../StdPeriphDriver/inc" -I"../Ld" -I"../LIB" -I"../RVMSIS" -I"../APP/BLE" -I"../APP/HWS" -std=gnu99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -c -o "$@" "$<"
+	@	riscv-none-embed-gcc -march=rv32imac -mabi=ilp32 -mcmodel=medany -msmall-data-limit=8 -mno-save-restore -fmax-errors=20 -Os -fmessage-length=0 -fsigned-char -ffunction-sections -fdata-sections -fno-common -g -DDEBUG=1 -I"e:/Projects/at_node/ch582/Startup" -I"e:/Projects/at_node/ch582/APP/include" -I"e:/Projects/at_node/ch582/StdPeriphDriver/inc" -I"e:/Projects/at_node/ch582/Ld" -I"e:/Projects/at_node/ch582/LIB" -I"e:/Projects/at_node/ch582/RVMSIS" -I"e:/Projects/at_node/ch582/APP/BLE" -I"e:/Projects/at_node/ch582/APP/HWS" -std=gnu99 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -c -o "$@" "$<"
 

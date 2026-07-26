@@ -87,7 +87,7 @@ void main_loop(void)
  *
  *   Current behavior (test/demo code):
  *     - SW_1 press:   holds F1 key (0x3A) via kb_* routing layer
- *                     (USB/BLE per AT+KB mode), turns LED1 on.
+ *                     (USB/BLE per AT+DEV target), turns LED1 on.
  *     - SW_1 release: releases all keys (zero report), turns LED1 off.
  *
  *   All HID output goes through the kb_*() routing layer — no direct
