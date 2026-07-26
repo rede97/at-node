@@ -108,9 +108,9 @@ static uint8_t ble_hid_emu_task_id = INVALID_TASK_ID;
 static uint8_t scanRspData[] = {
     0x05, // length of this data
     GAP_ADTYPE_SLAVE_CONN_INTERVAL_RANGE,
-    LO_UINT16(DEFAULT_DESIRED_MIN_CONN_INTERVAL), // 100ms
+    LO_UINT16(DEFAULT_DESIRED_MIN_CONN_INTERVAL), // min conn interval, 1.25ms units (multi: 12=15ms, else 8=10ms)
     HI_UINT16(DEFAULT_DESIRED_MIN_CONN_INTERVAL),
-    LO_UINT16(DEFAULT_DESIRED_MAX_CONN_INTERVAL), // 1s
+    LO_UINT16(DEFAULT_DESIRED_MAX_CONN_INTERVAL), // max conn interval, 1.25ms units (multi: 24=30ms, else 8=10ms)
     HI_UINT16(DEFAULT_DESIRED_MAX_CONN_INTERVAL),
 
     // service UUIDs

@@ -321,6 +321,10 @@ Subscribe to MQTT topic.
 
 ## 7. HTTP Configuration
 
+> **Security policy**: The HTTP control plane has **no authentication** and is intended for
+> **trusted local NAT networks only**. On untrusted networks, disable it with `AT+HTTP=0`
+> (or `POST /at-node/cmd/http/config` with `enable=0`) and use the MQTT (TLS) control plane instead.
+
 ### GET /at-node/cmd/http/status
 
 Read HTTP server state.

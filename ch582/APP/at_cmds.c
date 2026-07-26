@@ -114,8 +114,9 @@ static int        seq_count    = 0;
 static int        seq_idx      = 0;
 static uint16_t   seq_delay_ms = 0;
 
-/* KEY_STR state — full definitions live after at_cmd_KEY_SEQ */
-static char    keystr_buf[];
+/* KEY_STR state (defined once here, before first use in the tick handler) */
+#define KEYSTR_MAX  96
+static char    keystr_buf[KEYSTR_MAX + 1];
 static int     keystr_len, keystr_idx;
 static uint8_t keystr_active;
 static int keystr_map(char c, uint8_t *mods, uint8_t *key);
@@ -235,11 +236,7 @@ static int at_cmd_HELP(int argc, char *argv[])  {
         "  AT+BT_PASSKEY - SMP passkey <6digits> (dongle)\r\n"
         "  AT+BT_LIST  - bonded devices (dongle)\r\n"
         "  AT+BT_AUTO  - auto-reconnect [0|1] (dongle)");
-    AT_Response(
-        "  [Infrared]\r\n"
-        "  AT+IR=NEC   - send NEC <hex>\r\n"
-        "  AT+IR=SIRC  - send SIRC <hex>,<bits>\r\n"
-        "  AT+IR=RAW   - send raw <t1>,<t2>,...");
+
     return 0;
 }
 static int at_cmd_ECHO(int argc, char *argv[])  {
@@ -372,7 +369,7 @@ static int at_cmd_KEY(int argc, char *argv[])  {
         if (kc) keys[count++] = kc;
     }
     if (kb_flush(mods, keys, count) < 0) {
-        AT_Response("ERROR: no active output — check AT+KB status");
+        AT_Response("ERROR: no active output — check AT+DEV status");
         return -1;
     }
     return 0;
@@ -380,7 +377,7 @@ static int at_cmd_KEY(int argc, char *argv[])  {
 static int at_cmd_MOD(int argc, char *argv[])  {
     if (argc < 2) { AT_Response("usage: AT+MOD=<mask>"); return -1; }
     if (kb_set_mods(atoi(argv[1])) < 0) {
-        AT_Response("ERROR: no active output — check AT+KB status");
+        AT_Response("ERROR: no active output — check AT+DEV status");
         return -1;
     }
     return 0;
@@ -463,10 +460,6 @@ static int at_cmd_KEY_SEQ(int argc, char *argv[])
  *   non-blocking). Re-issuing replaces the running string.
  *   Limitations (tokenizer): no ',' or '=' inside the text.
  */
-#define KEYSTR_MAX  96
-static char    keystr_buf[KEYSTR_MAX + 1];
-static int     keystr_len, keystr_idx;
-static uint8_t keystr_active;
 
 /* US-layout char -> mods(2=Shift), HID key. Returns 1 if mapped. */
 static int keystr_map(char c, uint8_t *mods, uint8_t *key)
@@ -761,8 +754,7 @@ static int at_cmd_ADC(int argc, char *argv[]) {
     if (argc < 2) { AT_Response("usage: AT+ADC=<ch 0-13>[,<pga 0-3>]"); return -1; }
     uint8_t ch  = (uint8_t)atoi(argv[1]);
     uint8_t pga = (argc >= 3) ? (uint8_t)atoi(argv[2]) : 2;   /* default 0dB */
-    if (ch > 13 || pga > 3) { AT_Response("ERROR: ch 0-13, pga 0-3"); return -1; }
-    if (pga > 3) { AT_Response("ERROR: pga 0-3 (0=-12dB,1=-6dB,2=0dB,3=6dB)"); return -1; }
+    if (ch > 13 || pga > 3) { AT_Response("ERROR: ch 0-13, pga 0-3 (0=-12dB,1=-6dB,2=0dB,3=6dB)"); return -1; }
     uint16_t raw = 0;
     uint16_t mv  = hws_adc_read_mv(ch, pga, &raw);
     if (mv == 0xFFFF) { AT_Response("ERROR: bad channel"); return -1; }
@@ -1465,6 +1457,5 @@ const at_cmd_t cmd_table[] = {
     { "AT+BT_PASSKEY","SMP passkey <6digits> (dongle)", at_cmd_BT_PASSKEY },
     { "AT+BT_LIST", "bonded devices (dongle)",       at_cmd_BT_LIST },
     { "AT+BT_AUTO", "auto-reconnect [0|1] (dongle)", at_cmd_BT_AUTO },
-    /* Infrared */
 };
 const int cmd_table_count = sizeof(cmd_table) / sizeof(cmd_table[0]);

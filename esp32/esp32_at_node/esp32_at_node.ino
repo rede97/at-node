@@ -76,6 +76,9 @@ static struct {
 /* --- HTTP globals ----------------------------------------------------- */
 static WebServer g_http(80);
 static bool      g_wifi_ready = false;
+/* Security policy: the unauthenticated HTTP control plane is intended for
+ * trusted local NAT networks only. On untrusted networks the operator should
+ * disable it (AT+HTTP=0, persisted to NVS) and keep only the MQTT (TLS) plane. */
 static bool      g_http_enabled = true;
 static bool      g_pairing_mode = false;   /* default off for security */
 static uint32_t  g_pair_timeout_at = 0;    /* auto-stop advertising deadline */
@@ -320,6 +323,10 @@ void save_config(const String& key, const String& value)
     prefs.end();
 }
 
+/* Enable/disable the HTTP control plane (persisted to NVS as http_enable).
+ * Security policy: HTTP is unauthenticated and intended for trusted local
+ * NAT networks only; disable it (enable=false) on untrusted networks and
+ * rely on the MQTT (TLS) control plane instead. */
 static void set_http_enabled(bool enable, bool persist = true)
 {
     g_http_enabled = enable;
@@ -327,7 +334,7 @@ static void set_http_enabled(bool enable, bool persist = true)
     if (!g_wifi_ready) return;
     if (enable) {
         g_http.begin();
-        Serial.println("HTTP server started");
+        Serial.println("HTTP server started (trusted local NAT only; AT+HTTP=0 to disable)");
     } else {
         g_http.stop();
         Serial.println("HTTP server stopped");
@@ -514,6 +521,13 @@ static const char* HELP_PAGE_HTML = R"HTML(
 <body>
 <h1>AT-Node HTTP API</h1>
 <p>This interface is designed for agents. All endpoints return JSON unless noted.</p>
+
+<div class="note">
+  <strong>Security</strong>: This HTTP control plane has <strong>no authentication</strong> and is
+  intended for <strong>trusted local NAT networks only</strong>. On untrusted networks, disable it
+  with <code>AT+HTTP=0</code> (persisted; re-enable via serial / AP portal / MQTT) and use the
+  MQTT (TLS) control plane instead.
+</div>
 
 <h2>Device Discovery</h2>
 <div class="note">
@@ -2552,7 +2566,7 @@ void setup(void)
         g_http.onNotFound(handle_not_found);
         if (g_http_enabled) {
             g_http.begin();
-            Serial.println("HTTP server on port 80");
+            Serial.println("HTTP server on port 80 (trusted local NAT only; AT+HTTP=0 to disable)");
         } else {
             Serial.println("HTTP server disabled");
         }

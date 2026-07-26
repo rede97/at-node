@@ -28,8 +28,6 @@ uint32_t hws_sleep_enter(uint32_t time)
     unsigned long irq_status;
     
     SYS_DisableAllIrq(&irq_status);
-    
-    SYS_DisableAllIrq(&irq_status);
     time_curr = RTC_GetCycle32k();
     // compute sleep duration (handle RTC counter wrap)
     if (time < time_curr) {

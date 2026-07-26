@@ -143,7 +143,7 @@ static uint8_t  Ready = 0;
 static uint8_t  SetupReqCode;
 static uint16_t SetupReqLen;
 const uint8_t  *pDescr;
-static uint8_t  Idle_Value[2] = {0,0};
+static uint8_t  Idle_Value[3] = {0,0,0};  /* indexed by HID interface number (2); [0]/[1] unused */
 
 /*********************************************************************
  *  usb_ready — 1 when USB is enumerated and ready for HID reports

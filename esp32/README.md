@@ -47,6 +47,13 @@
 - ✅ NVS 擦除：`AT+NVS=clear` / `POST /at-node/cmd/nvs/clear` 恢复出厂设置并自动重启
 - 下一步：远程 MQTT broker 实测、connect 阻塞优化、更多外设
 
+## 安全策略
+
+> **HTTP 仅应在可信的本地 NAT 网络内开启。**
+> HTTP 控制面（`/at-node/*`）**无认证**，同网段任意设备都可调用写端点（注入按键、写 GPIO/I2C、清除绑定、改写凭据）。
+> 因此它只适合部署在可信的本地 NAT 环境；接入不可信网络时，请用 `AT+HTTP=0` 关闭 HTTP
+> （持久化到 NVS，重启保持），仅保留带 TLS 的 MQTT 控制面；需要时经串口 / AP portal / MQTT 重新开启。
+
 ## 快速开始
 
 1. 拷贝 WiFi 配置：
