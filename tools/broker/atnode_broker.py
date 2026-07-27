@@ -936,7 +936,7 @@ def role_deploy(args):
     # 2. build unit content
     python = sys.executable
     script = os.path.join(work_dir, "atnode_broker.py")
-    http_flag = "" if args.no_http else f" --http {args.http_port}"
+    http_flag = f" --http {args.http_port}" if args.http else ""
     unit_content = _UNIT_TEMPLATE.format(
         work_dir=work_dir,
         python=python,
@@ -1027,8 +1027,9 @@ def main():
                                    "status", "enable", "disable", "logs", "uninstall"])
     dp.add_argument("--mqtt-port", type=int, default=1883)
     dp.add_argument("--mqtt-tls-port", type=int, default=8883)
+    dp.add_argument("--http", action="store_true",
+                    help="enable HTTP proxy (INSECURE, off by default)")
     dp.add_argument("--http-port", type=int, default=8080)
-    dp.add_argument("--no-http", action="store_true")
     dp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"))
     dp.add_argument("--gen-certs", action="store_true",
                     help="generate CA + server cert (requires --ip)")

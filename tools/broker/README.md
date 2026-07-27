@@ -102,6 +102,13 @@ serve 参数：
 
 ## 4. HTTP API 参考
 
+> **⚠️ 安全警告**：HTTP 代理为**明文传输（无 TLS）**，且可直接操作硬件（GPIO、键盘注入、WOL 等），
+> 暴露公网极其危险。**默认不启动**。远程访问必须通过以下方式之一：
+> - **nginx 反向代理 + HTTPS**（推荐生产部署）
+> - **SSH 端口转发**：`ssh -L 8080:127.0.0.1:8080 Server`，然后访问 `localhost:8080`
+>
+> 绝对不要将 8080 端口直接暴露到公网安全组。
+
 Base: `http://<server>:8080`。除 `/api/help` 外全部需要
 header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON。
 
@@ -265,10 +272,10 @@ B="uv run python atnode_broker.py"
 $B serve --certs certs --http
 
 # systemd 用户服务（推荐，开机自启 + 崩溃自重启）
-$B deploy install                    # 使用已有 certs/，默认端口 1883/8883/8080
+$B deploy install                    # 使用已有 certs/，仅 MQTT（HTTP 默认关闭）
 $B deploy install --gen-certs --ip <SERVER_IP>  # 首次部署同时生成证书
-$B deploy install --http-port 9090   # 自定义 HTTP 端口
-$B deploy install --no-http          # 不启用 HTTP 代理
+$B deploy install --http             # 同时启用 HTTP 代理（仅限本地/隧道访问）
+$B deploy install --http --http-port 9090       # 自定义 HTTP 端口
 
 # 日常运维
 $B deploy status                     # 服务状态 + 证书指纹
@@ -283,7 +290,8 @@ $B deploy uninstall                  # 完全移除服务
 
 ### 9.3 防火墙 / 安全组
 
-- **云安全组**（腾讯云/阿里云控制台）：入站放行 TCP **8883**（MQTT-TLS）；可选 8080（HTTP 代理）。
+- **云安全组**（腾讯云/阿里云控制台）：入站仅需放行 TCP **8883**（MQTT-TLS）。
+- **HTTP 8080 禁止对外暴露**——明文传输 + 直接硬件操作，必须通过 nginx HTTPS 反代或 SSH 隧道访问。
 - 1883 仅绑 localhost/LAN，不对外暴露。
 - **本机测试注意**：Windows 防火墙会拦 LAN 入站 1883，需添加入站规则或临时关闭。
 
