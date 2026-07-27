@@ -327,8 +327,8 @@ class Bridge:
             have_ca = ca and os.path.exists(ca)
             self.mqtt.tls_set(ca_certs=ca if have_ca else None,
                               cert_reqs=ssl.CERT_REQUIRED if have_ca else ssl.CERT_NONE)
-            if not have_ca:
-                self.mqtt.tls_insecure_set(True)
+            # Skip hostname check: self-signed certs use IP SAN, tunnels change host
+            self.mqtt.tls_insecure_set(True)
         self.mqtt.connect(host, port, keepalive=30)
         self.mqtt.loop_start()
         self.connected.wait(5)
