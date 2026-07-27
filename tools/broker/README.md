@@ -224,18 +224,95 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 
 ## 9. 远程部署清单
 
-1. `scp tools/broker/atnode_broker.py tools/broker/certs user@server:`（或 git clone)。
-2. 服务器：`pip install amqtt paho-mqtt`（或 uv 环境）。
-3. **只暴露 8883(MQTT-TLS)**；1883 绑 LAN/localhost 即可。
-4. 需要 HTTP 代理时：`serve --http`，8080 建议套 nginx/Caddy 上 HTTPS；API key 即认证。
-   纯转发场景也可以只跑 MQTT broker（不带 `--http`），由你自己的服务直连 MQTT。
-5. ESP32 改指 `broker=<server-ip>` `port=8883` + CA 指纹（见 §8)。
-6. 防火墙：服务器放行 8883/443；**本机测试遇过 Windows 防火墙拦 LAN 入站**。
+> **安全原则**：证书在服务器上生成，私钥永远不离开服务器。
+> 项目 `.gitignore` 已排除 `tools/broker/certs/` 和 `esp32/esp32_at_node/certs/`。
+
+### 9.1 服务器初始化
+
+```bash
+# 1. 克隆仓库（项目不大，直接全量）
+git clone https://github.com/rede97/at-node.git ~/at-node
+cd ~/at-node/tools/broker
+
+# 2. 生成证书（CA + 服务器证书，SAN 填服务器公网 IP）
+mkdir -p certs && cd certs
+openssl genrsa -out ca.key 2048
+openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
+  -subj '/CN=AT-Node CA/O=atnode'
+openssl genrsa -out server.key 2048
+openssl req -new -key server.key -out server.csr \
+  -subj '/CN=<SERVER_IP>/O=atnode'
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
+  -CAcreateserial -out server.crt -days 3650 \
+  -extfile <(echo 'subjectAltName=IP:<SERVER_IP>')
+rm server.csr && chmod 600 *.key
+cd ..
+
+# 3. 用 uv 创建 Python 环境（pyproject.toml 已包含依赖）
+uv sync    # 国内服务器可加 UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+```
+
+### 9.2 启动服务
+
+```bash
+# 手动测试
+.venv/bin/python atnode_broker.py serve --certs certs --http
+
+# systemd 用户服务（推荐，开机自启）
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/atnode-broker.service << 'EOF'
+[Unit]
+Description=AT-Node MQTT Broker
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/at-node/tools/broker
+ExecStart=%h/at-node/tools/broker/.venv/bin/python atnode_broker.py serve --certs certs --http
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+systemctl --user enable --now atnode-broker.service
+```
+
+### 9.3 防火墙 / 安全组
+
+- **云安全组**（腾讯云/阿里云控制台）：入站放行 TCP **8883**（MQTT-TLS）；可选 8080（HTTP 代理）。
+- 1883 仅绑 localhost/LAN，不对外暴露。
+- **本机测试注意**：Windows 防火墙会拦 LAN 入站 1883，需添加入站规则或临时关闭。
+
+### 9.4 生成 API Key
+
+```bash
+.venv/bin/python atnode_broker.py manager add --name esp32-home
+# 输出 key（只展示一次，妥善保存）
+```
+
+### 9.5 ESP32 配置
+
+```bash
+# 获取服务器证书 SHA256 指纹（在服务器上执行）
+openssl x509 -in certs/server.crt -noout -fingerprint -sha256
+
+# ESP32 侧（HTTP 或串口 AT）
+AT+MQTT=broker,<SERVER_IP>
+AT+MQTT=port,8883
+AT+CONF=mqtt_user=<API_KEY>
+AT+MQTT=ca,<SHA256_FINGERPRINT>
+AT+MQTT=connect
+```
+
+设备上线后 `client list` 即可看到（retained state=online）。
 
 ## 10. 排障
 
 | 症状 | 原因/处理 |
 |------|----------|
+| ESP32 connect 后 HTTP/串口卡死 | 固件旧版 mqtt_connect() 阻塞主循环；升级到最新版（MQTT 已移至独立 task） |
 | ESP32 connect 卡住无响应 | 端口被其他 broker 占用（杀残留 `mqtt_broker.py` 进程）；或防火墙拦 LAN 入站 |
 | `mqtt_port` 配置不生效 | 曾有的 NVS 类型 bug 已修；确认固件为最新 |
 | `client list` 空 | 设备未连上（`AT+MQTT=status` 查）；设备带自动重连，broker 重启后 ~10s 内会自动恢复注册 |

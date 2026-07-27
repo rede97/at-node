@@ -92,8 +92,10 @@ static WiFiClientSecure g_mqtt_wifi_secure;
 static PubSubClient     g_mqtt(g_mqtt_wifi_plain);
 static bool             g_mqtt_connected = false;
 static bool             g_mqtt_connect_pending = false;
+static bool             g_mqtt_auto = false;   /* auto-reconnect on boot (NVS) */
 static String           g_mqtt_broker;
 static TaskHandle_t     g_mqtt_task = NULL;
+static SemaphoreHandle_t g_mqtt_sem = NULL;
 static int              g_mqtt_port = 8883;
 static String           g_mqtt_user;
 static String           g_mqtt_pass;
@@ -312,6 +314,7 @@ static void load_config(void)
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_cert = prefs.getString("mqtt_ca_cert", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
+    g_mqtt_auto    = prefs.getString("mqtt_auto", "0").toInt() != 0;
     g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
     prefs.end();
 }
@@ -402,6 +405,7 @@ static void mqtt_clear_config(void)
     prefs.remove("mqtt_pass");
     prefs.remove("mqtt_ca_cert");
     prefs.remove("mqtt_ca_fp");
+    prefs.remove("mqtt_auto");
     prefs.end();
     if (g_mqtt_connected) {
         g_mqtt.disconnect();
@@ -413,6 +417,7 @@ static void mqtt_clear_config(void)
     g_mqtt_pass    = "";
     g_mqtt_ca_cert = "";
     g_mqtt_ca_fp   = "";
+    g_mqtt_auto    = false;
 }
 
 /* --- typing queue ------------------------------------------------------ */
@@ -1077,13 +1082,19 @@ static void handle_at(void)
                 save_config("mqtt_port", val);
                 resp = "OK";
             } else if (sub == "connect") {
-                bool ok = mqtt_connect();
-                resp = ok ? "OK" : "ERROR";
+                g_mqtt_connect_pending = true;
+                if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);
+                resp = "OK";
             } else if (sub == "clear") {
                 mqtt_clear_config();
                 resp = "OK";
             } else if (sub == "status") {
-                resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected");
+                resp = "+MQTT:" + String(g_mqtt_connected ? "connected" : "disconnected") +
+                                     ",auto=" + String(g_mqtt_auto ? "1" : "0");
+            } else if (sub == "auto") {
+                g_mqtt_auto = (val == "1");
+                save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
+                resp = "OK";
             } else if (sub == "ca") {
                 /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
                 if (val == "status") {
@@ -1680,39 +1691,44 @@ static bool mqtt_connect(void)
     }
 
     g_mqtt_connected = ok;
+    if (ok && !g_mqtt_auto) {
+        /* First successful connect: enable auto-reconnect for future boots */
+        g_mqtt_auto = true;
+        save_config("mqtt_auto", "1");
+    }
     Serial.printf("MQTT connect %s\n", ok ? "OK" : "FAILED");
     return ok;
 }
 
 static void mqtt_task_func(void* arg)
 {
-    /* MQTT background task disabled — using main loop with short timeout */
+    /* All PubSubClient operations run here (single owner, thread-safe).
+     * Semaphore: given by mqtt_poll() on manual connect request;
+     * 1s timeout tick handles auto-reconnect + g_mqtt.loop(). */
+    uint32_t last_attempt = 0;
     for (;;) {
-        vTaskDelay(1000 / portTICK_PERIOD_MS);
-    }
-}
+        xSemaphoreTake(g_mqtt_sem, 1000 / portTICK_PERIOD_MS);
 
-static void mqtt_poll(void)
-{
-    static uint32_t last_attempt = 0;
-    /* Auto-(re)connect whenever a broker is configured and WiFi is up.
-     * Manual connect (mqtt/connect endpoint) retries fast (1s);
-     * unattended reconnect backs off to 10s. mqtt_connect() republishes
-     * state/info and resubscribes, so the broker registry self-heals.  */
-    bool want = (g_mqtt_broker.length() > 0) && g_wifi_ready;
-    if (want && !g_mqtt_connected) {
-        uint32_t now = millis();
-        uint32_t interval = g_mqtt_connect_pending ? 1000 : 10000;
-        if (now - last_attempt > interval) {
-            last_attempt = now;
-            g_mqtt_connect_pending = false;
-            mqtt_connect();
+        bool want = (g_mqtt_broker.length() > 0) && g_wifi_ready;
+        if (want && !g_mqtt_connected) {
+            /* Auto-reconnect only when mqtt_auto enabled (set after first
+             * successful connect); manual pending always tries. */
+            bool allowed = g_mqtt_connect_pending || g_mqtt_auto;
+            if (allowed) {
+                uint32_t now = millis();
+                uint32_t interval = g_mqtt_connect_pending ? 1000 : 10000;
+                if (now - last_attempt > interval) {
+                    last_attempt = now;
+                    g_mqtt_connect_pending = false;
+                    mqtt_connect();
+                }
+            }
         }
-        return;
-    }
-    if (!g_mqtt_connected) return;
-    if (!g_mqtt.loop()) {
-        g_mqtt_connected = false;
+        if (g_mqtt_connected) {
+            if (!g_mqtt.loop()) {
+                g_mqtt_connected = false;
+            }
+        }
     }
 }
 
@@ -1829,6 +1845,8 @@ static void handle_mqtt_status(void)
         json += "none";
     }
     json += "\"";
+    json += ",\"auto\":";
+    json += g_mqtt_auto ? "true" : "false";
     json += "}";
     send_json(json);
 }
@@ -1888,9 +1906,18 @@ static void handle_wifi_config(void)
     send_json("{\"ok\":true,\"cmd\":\"wifi/config\",\"ssid\":\"" + g_wifi_ssid + "\"}");
 }
 
+static void mqtt_poll(void)
+{
+    /* Wake MQTT task on manual connect request (non-blocking). */
+    if (g_mqtt_connect_pending && g_mqtt_sem) {
+        xSemaphoreGive(g_mqtt_sem);
+    }
+}
+
 static void handle_mqtt_connect(void)
 {
     g_mqtt_connect_pending = true;
+    if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);
     send_json("{\"ok\":true,\"cmd\":\"mqtt/connect\",\"queued\":true}");
 }
 
@@ -2361,11 +2388,18 @@ static void serial_exec(const String& line)
                 save_config("mqtt_port", val);
                 Serial.println("OK");
             } else if (sub == "connect") {
-                bool ok = mqtt_connect();
-                Serial.println(ok ? "OK" : "ERROR");
+                g_mqtt_connect_pending = true;
+                if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);
+                Serial.println("OK");
             } else if (sub == "status") {
                 Serial.print("+MQTT:");
-                Serial.println(g_mqtt_connected ? "connected" : "disconnected");
+                Serial.print(g_mqtt_connected ? "connected" : "disconnected");
+                Serial.print(",auto=");
+                Serial.println(g_mqtt_auto ? "1" : "0");
+                Serial.println("OK");
+            } else if (sub == "auto") {
+                g_mqtt_auto = (val == "1");
+                save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
                 Serial.println("OK");
             } else if (sub == "ca") {
                 /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
@@ -2587,7 +2621,9 @@ void setup(void)
 
     ble_init();
 
-    /* MQTT background task disabled — using main loop with short timeout */
+    /* MQTT background task — owns all PubSubClient operations */
+    g_mqtt_sem = xSemaphoreCreateBinary();
+    xTaskCreate(mqtt_task_func, "mqtt", 4096, NULL, 1, &g_mqtt_task);
 }
 
 void loop(void)

@@ -176,7 +176,8 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 
 ## 11. 后续工作
 
-- [x] MQTT 远程 broker 实测（TLS + CA 证书）—— 本地自签名 CA 已验证。
-- [ ] MQTT connect 阻塞优化（FreeRTOS 任务或 async TCP）。
+- [x] MQTT 远程 broker 实测（TLS + 指纹验证）—— 云服务器 8883 连接成功，RPC 调用验证通过。
+- [x] MQTT connect 阻塞优化 —— MQTT 操作移至独立 FreeRTOS task，主循环不再阻塞。
+- [x] MQTT auto-connect —— NVS `mqtt_auto` 开关，首次成功连接后自动启用，`AT+MQTT=auto,<0|1>` 可控制。
 - [ ] 更多外设（PWM、SPI、UART 透传等）。
 - [ ] Agent 工作流集成示例。
