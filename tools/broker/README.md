@@ -5,14 +5,14 @@
 >
 > **TL;DR**:
 > ```bash
-> uv run python tools/broker/atnode_broker.py serve --http   # 启动 broker+代理
+> uv run python tools/broker/atnode_broker.py deploy install  # 一键部署 systemd 服务
 > uv run python tools/broker/atnode_broker.py manager key add --name my-agent  # 发 key
-> uv run python tools/broker/atnode_broker.py manager certs gen --ip <IP>      # 生成证书
 > uv run python tools/broker/atnode_broker.py client list --key <KEY>      # 用 key 访问
+> uv run python tools/broker/atnode_broker.py deploy status   # 查看服务状态
 > ```
 >
-> **三种角色**：`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
-> `manager`(key 管理 + 证书工具，限本地）。三者说同一套 MQTT 协议。
+> **四种角色**：`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
+> `manager`(key 管理 + 证书工具）/ `deploy`(systemd 服务管理）。
 
 ---
 
@@ -259,29 +259,27 @@ uv sync    # 国内服务器可加 UV_INDEX_URL=https://mirrors.aliyun.com/pypi/
 ### 9.2 启动服务
 
 ```bash
-# 手动测试
-.venv/bin/python atnode_broker.py serve --certs certs --http
+B="uv run python atnode_broker.py"
 
-# systemd 用户服务（推荐，开机自启）
-mkdir -p ~/.config/systemd/user
-cat > ~/.config/systemd/user/atnode-broker.service << 'EOF'
-[Unit]
-Description=AT-Node MQTT Broker
-After=network.target
+# 手动测试（前台运行，Ctrl+C 停止）
+$B serve --certs certs --http
 
-[Service]
-Type=simple
-WorkingDirectory=%h/at-node/tools/broker
-ExecStart=%h/at-node/tools/broker/.venv/bin/python atnode_broker.py serve --certs certs --http
-Restart=on-failure
-RestartSec=5
+# systemd 用户服务（推荐，开机自启 + 崩溃自重启）
+$B deploy install                    # 使用已有 certs/，默认端口 1883/8883/8080
+$B deploy install --gen-certs --ip <SERVER_IP>  # 首次部署同时生成证书
+$B deploy install --http-port 9090   # 自定义 HTTP 端口
+$B deploy install --no-http          # 不启用 HTTP 代理
 
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user daemon-reload
-systemctl --user enable --now atnode-broker.service
+# 日常运维
+$B deploy status                     # 服务状态 + 证书指纹
+$B deploy restart                    # 重启
+$B deploy logs                       # 实时日志 (journalctl -f)
+$B deploy stop | start | enable | disable
+$B deploy uninstall                  # 完全移除服务
 ```
+
+> `deploy install` 幂等：重复执行只更新 unit 文件并 restart。
+> 自动执行 `loginctl enable-linger` 确保服务器重启后服务自启。
 
 ### 9.3 防火墙 / 安全组
 

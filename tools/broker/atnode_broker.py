@@ -832,6 +832,149 @@ def _print_fingerprint(cert_path):
 
 
 # ==================================================================
+# Section 7: Deploy — systemd user service management
+# ==================================================================
+
+_UNIT_TEMPLATE = """\
+[Unit]
+Description=AT-Node MQTT Broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={work_dir}
+ExecStart={python} {script} serve --certs {certs} --mqtt-port {mqtt_port} --mqtt-tls-port {tls_port}{http_flag}
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def _systemctl(*cmd, check=True):
+    """Run systemctl --user with given args."""
+    import subprocess
+    full = ["systemctl", "--user"] + list(cmd)
+    return subprocess.run(full, check=check)
+
+
+def role_deploy(args):
+    """Manage the broker as a systemd user service."""
+    import subprocess
+
+    if sys.platform == "win32":
+        print("ERROR: deploy requires Linux systemd. Run on the server.")
+        return 1
+
+    op = args.op
+    svc = args.name
+
+    # --- simple pass-through operations ---
+    if op in ("start", "stop", "restart", "enable", "disable"):
+        _systemctl(op, f"{svc}.service")
+        if op == "restart":
+            print(f"[deploy] {svc} restarted.")
+        return 0
+
+    if op == "status":
+        _systemctl("status", f"{svc}.service", check=False)
+        # show fingerprint as bonus info
+        certs_dir = args.certs
+        crt = os.path.join(certs_dir, "server.crt")
+        if os.path.exists(crt):
+            print()
+            _print_fingerprint(crt)
+        return 0
+
+    if op == "logs":
+        os.execvp("journalctl", ["journalctl", "--user", "-u", f"{svc}.service", "-f"])
+        return 0  # unreachable
+
+    if op == "uninstall":
+        _systemctl("stop", f"{svc}.service", check=False)
+        _systemctl("disable", f"{svc}.service", check=False)
+        unit_path = os.path.expanduser(f"~/.config/systemd/user/{svc}.service")
+        if os.path.exists(unit_path):
+            os.remove(unit_path)
+            print(f"[deploy] removed {unit_path}")
+        _systemctl("daemon-reload", check=False)
+        print(f"[deploy] {svc} uninstalled.")
+        return 0
+
+    # --- install ---
+    assert op == "install"
+    work_dir = os.path.dirname(os.path.abspath(__file__))
+    certs_dir = os.path.abspath(args.certs)
+
+    # 1. certificate handling
+    if args.gen_certs:
+        if not args.ip:
+            print("ERROR: --gen-certs requires --ip <server-public-IP>")
+            return 1
+        print(f"[deploy] generating certificates (SAN={args.ip}) ...")
+
+        class _CertsArgs:
+            pass
+
+        ca = _CertsArgs()
+        ca.op = "gen"
+        ca.certs = certs_dir
+        ca.ip = args.ip
+        ca.days = 3650
+        role_manager_certs(ca)
+    else:
+        crt = os.path.join(certs_dir, "server.crt")
+        key = os.path.join(certs_dir, "server.key")
+        if not os.path.exists(crt) or not os.path.exists(key):
+            print(f"ERROR: certs not found in {certs_dir}")
+            print("  Use --gen-certs --ip <IP> to generate, or --certs <DIR>.")
+            return 1
+
+    # 2. build unit content
+    python = sys.executable
+    script = os.path.join(work_dir, "atnode_broker.py")
+    http_flag = "" if args.no_http else f" --http {args.http_port}"
+    unit_content = _UNIT_TEMPLATE.format(
+        work_dir=work_dir,
+        python=python,
+        script=script,
+        certs=certs_dir,
+        mqtt_port=args.mqtt_port,
+        tls_port=args.mqtt_tls_port,
+        http_flag=http_flag,
+    )
+
+    # 3. write unit file
+    unit_dir = os.path.expanduser("~/.config/systemd/user")
+    os.makedirs(unit_dir, exist_ok=True)
+    unit_path = os.path.join(unit_dir, f"{svc}.service")
+    with open(unit_path, "w") as f:
+        f.write(unit_content)
+    print(f"[deploy] wrote {unit_path}")
+
+    # 4. enable linger (service survives logout / starts on boot)
+    user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
+    if user:
+        subprocess.run(["loginctl", "enable-linger", user],
+                       check=False, capture_output=True)
+
+    # 5. reload + enable + start
+    _systemctl("daemon-reload")
+    _systemctl("enable", f"{svc}.service")
+    _systemctl("restart", f"{svc}.service")
+    print(f"[deploy] {svc} installed and started.")
+
+    # 6. show status
+    import time
+    time.sleep(1)
+    _systemctl("status", f"{svc}.service", check=False)
+    return 0
+
+
+# ==================================================================
 # main
 # ==================================================================
 
@@ -879,6 +1022,19 @@ def main():
     mc.add_argument("--ip", default=None, help="server IP for SAN (gen)")
     mc.add_argument("--days", type=int, default=3650, help="cert validity days (gen)")
 
+    dp = sub.add_parser("deploy", help="systemd user service management (Linux)")
+    dp.add_argument("op", choices=["install", "start", "stop", "restart",
+                                   "status", "enable", "disable", "logs", "uninstall"])
+    dp.add_argument("--mqtt-port", type=int, default=1883)
+    dp.add_argument("--mqtt-tls-port", type=int, default=8883)
+    dp.add_argument("--http-port", type=int, default=8080)
+    dp.add_argument("--no-http", action="store_true")
+    dp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"))
+    dp.add_argument("--gen-certs", action="store_true",
+                    help="generate CA + server cert (requires --ip)")
+    dp.add_argument("--ip", default=None, help="server public IP for cert SAN")
+    dp.add_argument("--name", default="atnode-broker", help="service name")
+
     args = ap.parse_args()
 
     if args.mode == "client":
@@ -904,6 +1060,9 @@ def main():
             return role_manager_key(args)
         else:
             return role_manager_certs(args)
+
+    if args.mode == "deploy":
+        return role_deploy(args)
 
     return role_serve(args)
 
