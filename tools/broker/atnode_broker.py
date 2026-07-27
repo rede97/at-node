@@ -188,7 +188,14 @@ class AccessLog:
 # Section 3: amqtt plugins — key auth + manage-topic ACL
 # ==================================================================
 
-from amqtt.plugins.base import BaseAuthPlugin, BaseTopicPlugin  # noqa: E402
+try:
+    from amqtt.plugins.base import BaseAuthPlugin, BaseTopicPlugin  # noqa: E402
+except ModuleNotFoundError:
+    # client/manager/deploy modes don't need amqtt; provide stubs for class defs
+    class BaseAuthPlugin:  # type: ignore[no-redef]
+        pass
+    class BaseTopicPlugin:  # type: ignore[no-redef]
+        pass
 
 
 class ApiKeyAuthPlugin(BaseAuthPlugin):
