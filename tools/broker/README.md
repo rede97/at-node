@@ -6,12 +6,13 @@
 > **TL;DR**:
 > ```bash
 > uv run python tools/broker/atnode_broker.py serve --http   # 启动 broker+代理
-> uv run python tools/broker/atnode_broker.py manager add --name my-agent  # 发 key
+> uv run python tools/broker/atnode_broker.py manager key add --name my-agent  # 发 key
+> uv run python tools/broker/atnode_broker.py manager certs gen --ip <IP>      # 生成证书
 > uv run python tools/broker/atnode_broker.py client list --key <KEY>      # 用 key 访问
 > ```
 >
-> **三种角色**:`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
-> `manager`(MQTT 客户端，key 管理，限本地）。三者说同一套 MQTT 协议。
+> **三种角色**：`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
+> `manager`(key 管理 + 证书工具，限本地）。三者说同一套 MQTT 协议。
 
 ---
 
@@ -52,16 +53,28 @@ ESP32 ──MQTT/TLS outbound────────▶│    └── paho �
 - **HTTP 代理**:`Authorization: Bearer <api-key>`；本地请求免认证。
 - ESP32 也是普通客户端：`mqtt_user = <key>`（密码留空即可）。
 
-## 3. Key 管理（manager 角色，走 MQTT，无需重启服务）
+## 3. Key 管理（manager key，走 MQTT，无需重启服务）
 
 ```bash
 B=tools/broker/atnode_broker.py
-uv run python $B manager add --name esp32-home     # 生成 key（只打印一次）
-uv run python $B manager list                      # 全部 key + 状态
-uv run python $B manager revoke agent-alice        # 标记废弃（立即断认证）
-uv run python $B manager enable agent-alice        # 恢复
-uv run python $B manager remove agent-alice        # 彻底删除
+uv run python $B manager key add --name esp32-home     # 生成 key（只打印一次）
+uv run python $B manager key list                      # 全部 key + 状态
+uv run python $B manager key revoke agent-alice        # 标记废弃（立即断认证）
+uv run python $B manager key enable agent-alice        # 恢复
+uv run python $B manager key remove agent-alice        # 彻底删除
 # 接受 key 或名字定位；--server/--port 可指向 SSH 转发的端口
+```
+
+## 3b. 证书管理（manager certs，本地操作，无需 MQTT）
+
+```bash
+B=tools/broker/atnode_broker.py
+uv run python $B manager certs gen --ip 1.2.3.4       # 一键生成 CA + 服务器证书
+uv run python $B manager certs fingerprint             # SHA256 指纹（ESP32 配置用）
+uv run python $B manager certs info                    # 证书详情（subject/有效期/SAN）
+uv run python $B manager certs verify                  # 验证证书链完整性
+# --certs DIR 指定证书目录（默认 tools/broker/certs/）
+# --days N 指定有效期（默认 3650 天）
 ```
 
 **访问日志**（纯文件，不入库）:`~/.atnode_broker_logs/`
@@ -111,10 +124,10 @@ header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON�
   "online": true,
   "info": {"device":"AT-Node-ESP-5688","ip":"192.168.1.27",
            "ble_addr":"88:56:a6:7b:c8:42","ble_connected":true,
-           "services":["keyboard/tap","..."]},
-  "services": ["keyboard/tap","keyboard/text","...","net/wol","net/ping","sys/info"],
-  "usage": {"call":"POST /api/devices/atnodeesp-5688/cmd/<method>?k=v&...",
-            "examples":["..."]}
+           "services":{"keyboard/tap":{"d":"press+release one key",
+             "p":{"mods":"modifier mask","k":"HID keycode","ms":"hold ms"}},
+             "...":"17 services with full param descriptions"}},
+  "usage": "client call <device> <method> k=v ..."
 }
 ```
 
@@ -215,11 +228,12 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 | 清除配置 | `AT+MQTT=clear` — 清空全部 MQTT 设置（NVS+运行时）并断开，同时停止自动重连 |
 
 - 参数持久化在 NVS，重启后 `AT+MQTT=connect` 重连即可。
-- **TLS(8883)**：设备验证方式二选一——CA 证书或服务器证书 SHA256 指纹
-  （`AT+MQTT=ca,<fingerprint>`；查指纹：`openssl x509 -in server.crt -noout -fingerprint -sha256`）。
+- **TLS(8883)**：设备仅验证服务器证书 SHA256 指纹（无嵌入式 CA/PEM）
+  （`AT+MQTT=ca,<fingerprint>`；查指纹：`manager certs fingerprint`）。
 - 设备上线后 broker 立即可见（retained `state=online` + `info` 清单）；
   掉线由 LWT 置 `offline`。
-- **自动重连**：配置了 broker 且 WiFi 在线时，设备每 10s 重试直至连上；
+- **自动重连**：首次手动 `AT+MQTT=connect` 成功后自动启用 `mqtt_auto`，
+  重启后每 10s 重试直至连上；`AT+MQTT=auto,0` 可关闭，`AT+MQTT=clear` 重置。
   重连成功会重新发布 state/info，broker 重启后注册表自愈。
 
 ## 9. 远程部署清单
@@ -235,18 +249,8 @@ git clone https://github.com/rede97/at-node.git ~/at-node
 cd ~/at-node/tools/broker
 
 # 2. 生成证书（CA + 服务器证书，SAN 填服务器公网 IP）
-mkdir -p certs && cd certs
-openssl genrsa -out ca.key 2048
-openssl req -new -x509 -days 3650 -key ca.key -out ca.crt \
-  -subj '/CN=AT-Node CA/O=atnode'
-openssl genrsa -out server.key 2048
-openssl req -new -key server.key -out server.csr \
-  -subj '/CN=<SERVER_IP>/O=atnode'
-openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key \
-  -CAcreateserial -out server.crt -days 3650 \
-  -extfile <(echo 'subjectAltName=IP:<SERVER_IP>')
-rm server.csr && chmod 600 *.key
-cd ..
+uv run python atnode_broker.py manager certs gen --ip <SERVER_IP>
+chmod 600 certs/*.key
 
 # 3. 用 uv 创建 Python 环境（pyproject.toml 已包含依赖）
 uv sync    # 国内服务器可加 UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/

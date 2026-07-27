@@ -11,7 +11,7 @@ Architecture (one file, layered sections, ~900 lines):
   │  ManageService   $manage/cmd endpoint (key CRUD over MQTT)     │
   │  Bridge+HttpProxy (OPT-IN --http)  curl facade                 │
   ├─ client  ── pure MQTT client role (device control, any broker) │
-  └─ manager ─ pure MQTT client role (key admin, localhost/SSH) ───┘
+  └─ manager ─ key admin (MQTT) + cert tools (local, no MQTT) ────┘
 
 MQTT wire protocol:
   atnode/<id>/state   retained "online"/"offline" (LWT)
@@ -30,8 +30,10 @@ Usage:
   atnode_broker.py serve [--mqtt-port 1883] [--mqtt-tls-port 8883]
                          [--certs DIR] [--http [PORT]]
   atnode_broker.py client list|info|call|wol|ping ... [--server H] [--key K]
-  atnode_broker.py manager add --name alice
-  atnode_broker.py manager list|revoke|enable|remove ...
+  atnode_broker.py manager key add --name alice
+  atnode_broker.py manager key list|revoke|enable|remove ...
+  atnode_broker.py manager certs gen [--ip IP] [--certs DIR]
+  atnode_broker.py manager certs fingerprint|info|verify [--certs DIR]
 """
 
 import argparse
@@ -698,7 +700,7 @@ def role_client(args):
         bridge.mqtt.disconnect()
 
 
-def role_manager(args):
+def role_manager_key(args):
     mc = ManageClient(host=args.server, port=args.port)
     try:
         if args.op == "add":
@@ -729,6 +731,104 @@ def role_manager(args):
             print(json.dumps(mc.exec(args.op, target), ensure_ascii=False))
     finally:
         mc.close()
+
+
+def role_manager_certs(args):
+    """Local certificate management (no MQTT needed)."""
+    import hashlib
+    import subprocess
+
+    certs_dir = args.certs
+    os.makedirs(certs_dir, exist_ok=True)
+    ca_crt = os.path.join(certs_dir, "ca.crt")
+    ca_key = os.path.join(certs_dir, "ca.key")
+    srv_crt = os.path.join(certs_dir, "server.crt")
+    srv_key = os.path.join(certs_dir, "server.key")
+    srv_csr = os.path.join(certs_dir, "server.csr")
+
+    def run(cmd, **kw):
+        r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+        if r.returncode != 0:
+            print(f"error: {' '.join(cmd)}\n{r.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        return r.stdout.strip()
+
+    if args.op == "gen":
+        ip = args.ip
+        if not ip:
+            ip = input("Server public IP (for SAN): ").strip()
+        if not ip:
+            print("error: --ip required", file=sys.stderr)
+            sys.exit(2)
+        days = str(args.days)
+        # 1. CA
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", ca_key, "-out", ca_crt, "-days", days,
+             "-subj", "/CN=AT-Node-CA"])
+        # 2. Server key + CSR
+        run(["openssl", "req", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", srv_key, "-out", srv_csr,
+             "-subj", f"/CN={ip}"])
+        # 3. Sign with SAN
+        import tempfile
+        ext = f"subjectAltName=IP:{ip}"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf",
+                                         delete=False) as tf:
+            tf.write(ext)
+            ext_file = tf.name
+        try:
+            run(["openssl", "x509", "-req", "-in", srv_csr,
+                 "-CA", ca_crt, "-CAkey", ca_key, "-CAcreateserial",
+                 "-out", srv_crt, "-days", days,
+                 "-extfile", ext_file])
+        finally:
+            os.remove(ext_file)
+        os.remove(srv_csr)
+        print(f"[ok] certs generated in {certs_dir}")
+        print(f"     CA:     {ca_crt}")
+        print(f"     Server: {srv_crt} (SAN IP:{ip}, {days} days)")
+        # auto-show fingerprint
+        _print_fingerprint(srv_crt)
+
+    elif args.op == "fingerprint":
+        if not os.path.exists(srv_crt):
+            print(f"error: {srv_crt} not found (run: manager certs gen)",
+                  file=sys.stderr)
+            sys.exit(1)
+        _print_fingerprint(srv_crt)
+
+    elif args.op == "info":
+        target = srv_crt if os.path.exists(srv_crt) else ca_crt
+        if not os.path.exists(target):
+            print(f"error: no certs in {certs_dir}", file=sys.stderr)
+            sys.exit(1)
+        out = run(["openssl", "x509", "-in", target, "-noout",
+                   "-subject", "-issuer", "-dates", "-ext",
+                   "subjectAltName"])
+        print(out)
+
+    elif args.op == "verify":
+        if not os.path.exists(ca_crt) or not os.path.exists(srv_crt):
+            print("error: need both ca.crt and server.crt", file=sys.stderr)
+            sys.exit(1)
+        out = run(["openssl", "verify", "-CAfile", ca_crt, srv_crt])
+        print(out)
+
+
+def _print_fingerprint(cert_path):
+    """Print SHA256 fingerprint of a DER-encoded cert."""
+    import hashlib
+    import subprocess
+    der = subprocess.run(
+        ["openssl", "x509", "-in", cert_path, "-outform", "DER"],
+        capture_output=True)
+    if der.returncode != 0:
+        print("error: cannot parse cert", file=sys.stderr)
+        return
+    fp = hashlib.sha256(der.stdout).hexdigest()
+    pairs = ":".join(fp[i:i+2].upper() for i in range(0, len(fp), 2))
+    print(f"SHA256 fingerprint ({os.path.basename(cert_path)}):")
+    print(f"  {pairs}")
 
 
 # ==================================================================
@@ -762,12 +862,22 @@ def main():
     cp.add_argument("--key", default=None, help="API key (or $ATNODE_KEY)")
     cp.add_argument("--count", default="4")
 
-    mp = sub.add_parser("manager", help="API key admin (MQTT, localhost/SSH)")
-    mp.add_argument("op", choices=["add", "list", "revoke", "enable", "remove"])
-    mp.add_argument("target", nargs="?", help="key or name (revoke/enable/remove)")
-    mp.add_argument("--name", default=None, help="name for 'add'")
-    mp.add_argument("--server", default="127.0.0.1")
-    mp.add_argument("--port", type=int, default=1883)
+    mp = sub.add_parser("manager", help="admin: key management + cert tools")
+    msub = mp.add_subparsers(dest="mgr_mode", required=True)
+
+    mk = msub.add_parser("key", help="API key admin (MQTT, localhost/SSH)")
+    mk.add_argument("op", choices=["add", "list", "revoke", "enable", "remove"])
+    mk.add_argument("target", nargs="?", help="key or name (revoke/enable/remove)")
+    mk.add_argument("--name", default=None, help="name for 'add'")
+    mk.add_argument("--server", default="127.0.0.1")
+    mk.add_argument("--port", type=int, default=1883)
+
+    mc = msub.add_parser("certs", help="TLS certificate tools (local, no MQTT)")
+    mc.add_argument("op", choices=["gen", "fingerprint", "info", "verify"])
+    mc.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"),
+                    help="certs directory")
+    mc.add_argument("--ip", default=None, help="server IP for SAN (gen)")
+    mc.add_argument("--days", type=int, default=3650, help="cert validity days (gen)")
 
     args = ap.parse_args()
 
@@ -790,7 +900,10 @@ def main():
         return role_client(args)
 
     if args.mode == "manager":
-        return role_manager(args)
+        if args.mgr_mode == "key":
+            return role_manager_key(args)
+        else:
+            return role_manager_certs(args)
 
     return role_serve(args)
 

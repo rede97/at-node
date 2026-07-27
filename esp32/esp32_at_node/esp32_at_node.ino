@@ -101,7 +101,6 @@ static String           g_mqtt_user;
 static String           g_mqtt_pass;
 static String           g_mqtt_client_id;
 static String           g_mqtt_topic_prefix;
-static String           g_mqtt_ca_cert;
 static String           g_mqtt_ca_fp;
 static String           g_wifi_ssid;
 static String           g_wifi_pass;
@@ -312,7 +311,6 @@ static void load_config(void)
     if (g_mqtt_port <= 0) g_mqtt_port = 8883;
     g_mqtt_user   = prefs.getString("mqtt_user", "");
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
-    g_mqtt_ca_cert = prefs.getString("mqtt_ca_cert", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
     g_mqtt_auto    = prefs.getString("mqtt_auto", "0").toInt() != 0;
     g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
@@ -403,7 +401,6 @@ static void mqtt_clear_config(void)
     prefs.remove("mqtt_port");
     prefs.remove("mqtt_user");
     prefs.remove("mqtt_pass");
-    prefs.remove("mqtt_ca_cert");
     prefs.remove("mqtt_ca_fp");
     prefs.remove("mqtt_auto");
     prefs.end();
@@ -415,7 +412,6 @@ static void mqtt_clear_config(void)
     g_mqtt_port    = 8883;
     g_mqtt_user    = "";
     g_mqtt_pass    = "";
-    g_mqtt_ca_cert = "";
     g_mqtt_ca_fp   = "";
     g_mqtt_auto    = false;
 }
@@ -588,22 +584,22 @@ host OS first (hosts cache the GATT table per MAC).</p>
 
 <h2>Keyboard</h2>
 <table>
-  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/tap</code></td><td><code>mods,k,ms</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/text</code></td><td><code>s,ms,gap</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/key</code></td><td><code>mods,k0..k5</code></td></tr>
+  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/tap</code></td><td><code>mods,k,ms</code></td><td>Press+release one key</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/text</code></td><td><code>s,ms,gap</code></td><td>Type ASCII string via BLE</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/key</code></td><td><code>mods,k0..k5</code></td><td>Raw 6KRO report (hold until released)</td></tr>
 </table>
 
 <h2>Peripherals</h2>
 <table>
-  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/gpio/write</code></td><td><code>pin,level</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/gpio/read</code></td><td><code>pin</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/adc/read</code></td><td><code>ch</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/scan</code></td><td><code></code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/read</code></td><td><code>addr,reg,len</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/write</code></td><td><code>addr,reg,data</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ir/send</code></td><td><code>protocol,data,bits</code></td></tr>
+  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/gpio/write</code></td><td><code>pin,level</code></td><td>Set GPIO output level</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/gpio/read</code></td><td><code>pin</code></td><td>Read GPIO input (pullup)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/adc/read</code></td><td><code>ch</code></td><td>Read ADC millivolts</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/scan</code></td><td><code></code></td><td>Scan I2C bus for devices</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/read</code></td><td><code>addr,reg,len</code></td><td>Read I2C register</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/i2c/write</code></td><td><code>addr,reg,data</code></td><td>Write I2C register</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ir/send</code></td><td><code>protocol,data,bits</code></td><td>Send IR via RMT (NEC/SIRC/RAW)</td></tr>
 </table>
 
 <h2>Network</h2>
@@ -615,20 +611,20 @@ host OS first (hosts cache the GATT table per MAC).</p>
 
 <h2>Configuration</h2>
 <table>
-  <tr><th>Method</th><th>Path</th><th>Params</th></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td></tr>
-  <tr><td colspan="3"><small>Clear all MQTT settings via raw AT: <code>AT+MQTT=clear</code></small></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>plain (PEM) or fp</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ap</code></td><td><code>1=start,0=stop</code></td></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/http/status</code></td><td></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/http/config</code></td><td><code>enable=1|0</code></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/http/clear</code></td><td></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/nvs/clear</code></td><td>erase all settings & restart</td></tr>
+  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td><td>MQTT connection state</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td><td>Set WiFi credentials (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td><td>Set MQTT broker (NVS)</td></tr>
+  <tr><td colspan="4"><small>Clear all MQTT settings via raw AT: <code>AT+MQTT=clear</code></small></td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>fp</code></td><td>Set SHA256 fingerprint for TLS</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td><td>Trigger MQTT connect (async)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td><td>Publish arbitrary message</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td><td>Subscribe to topic</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/ap</code></td><td><code>1=start,0=stop</code></td><td>Provisioning AP portal</td></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/http/status</code></td><td></td><td>HTTP server state</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/http/config</code></td><td><code>enable=1|0</code></td><td>Enable/disable HTTP (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/http/clear</code></td><td></td><td>Reset HTTP config</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/nvs/clear</code></td><td></td><td>Erase all settings &amp; restart</td></tr>
 </table>
 
 <h2>Examples</h2>
@@ -659,6 +655,11 @@ curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/bonds/clear"
 static void handle_help_html(void)
 {
     send_html(HELP_PAGE_HTML);
+}
+
+static void handle_help_json(void)
+{
+    send_json("{\"ok\":true,\"services\":" + build_services_json() + "}");
 }
 
 /* --- BLE status / pairing ---------------------------------------------- */
@@ -701,8 +702,112 @@ static void handle_ble_status(void)
     send_json(build_ble_status_json());
 }
 
+/* --- API catalog (single source of truth for MQTT info / help.json) ---- */
+struct ApiParam { const char* name; const char* desc; };
+struct ApiEntry { const char* method; const ApiParam* params; uint8_t n; const char* desc; };
+
+static const ApiParam P_TAP[] = {
+    {"mods", "modifier mask (0x01=Ctrl 0x02=Shift 0x04=Alt 0x08=GUI 0x10=LCtrl)"},
+    {"k",    "HID keycode (4=a 5=b ... 0x39=CapsLock)"},
+    {"ms",   "hold duration ms, default 100"},
+};
+static const ApiParam P_TEXT[] = {
+    {"s",   "ASCII text to type"},
+    {"ms",  "per-key hold ms, default 60"},
+    {"gap", "inter-key gap ms, default 80"},
+};
+static const ApiParam P_KEY[] = {
+    {"mods",   "modifier mask"},
+    {"k0..k5", "up to 6 simultaneous HID keycodes (0=none)"},
+};
+static const ApiParam P_GW[] = {
+    {"pin",   "GPIO number (0-10, 18, 19, 20, 21)"},
+    {"level", "0=LOW 1=HIGH"},
+};
+static const ApiParam P_GR[] = {
+    {"pin", "GPIO number (input pullup)"},
+};
+static const ApiParam P_ADC[] = {
+    {"ch", "ADC channel (0=GPIO0 1=GPIO1 2=GPIO2 3=GPIO3 4=GPIO4)"},
+};
+static const ApiParam P_I2CR[] = {
+    {"addr", "I2C device address (hex ok)"},
+    {"reg",  "register address"},
+    {"len",  "bytes to read, default 1"},
+};
+static const ApiParam P_I2CW[] = {
+    {"addr", "I2C device address (hex ok)"},
+    {"reg",  "register address"},
+    {"data", "hex bytes to write (e.g. FF01)"},
+};
+static const ApiParam P_IR[] = {
+    {"protocol", "NEC | SIRC | RAW"},
+    {"data",     "NEC/SIRC: hex code; RAW: comma-separated us timings"},
+    {"bits",     "NEC/SIRC bit count (default 32/12)"},
+};
+static const ApiParam P_PAIR[] = {
+    {"enable", "1=start 60s public advertising, 0=stop"},
+};
+static const ApiParam P_BD[] = {
+    {"idx", "bond index (from ble/status list)"},
+};
+static const ApiParam P_WOL[] = {
+    {"mac", "target MAC address (AA:BB:CC:DD:EE:FF)"},
+};
+static const ApiParam P_PING[] = {
+    {"host",  "hostname or IP to ping"},
+    {"count", "echo count, default 4"},
+};
+
+static const ApiEntry API_CATALOG[] = {
+    {"keyboard/tap",      P_TAP,  3, "press+release one key"},
+    {"keyboard/text",     P_TEXT, 3, "type ASCII string via BLE"},
+    {"keyboard/key",      P_KEY,  2, "raw 6KRO report (hold until released)"},
+    {"gpio/write",        P_GW,   2, "set GPIO output level"},
+    {"gpio/read",         P_GR,   1, "read GPIO input (pullup)"},
+    {"adc/read",          P_ADC,  1, "read ADC millivolts"},
+    {"i2c/scan",          NULL,   0, "scan I2C bus for devices"},
+    {"i2c/read",          P_I2CR, 3, "read I2C register"},
+    {"i2c/write",         P_I2CW, 3, "write I2C register"},
+    {"ir/send",           P_IR,   3, "send IR via RMT (NEC/SIRC/RAW)"},
+    {"ble/status",        NULL,   0, "BLE name, addr, connections, bonds"},
+    {"ble/pair",          P_PAIR, 1, "start/stop public pairing mode"},
+    {"ble/bonds/delete",  P_BD,   1, "delete one bonded host by index"},
+    {"ble/bonds/clear",   NULL,   0, "delete all bonded hosts"},
+    {"net/wol",           P_WOL,  1, "send Wake-on-LAN magic packet"},
+    {"net/ping",          P_PING, 2, "ICMP ping from device LAN"},
+    {"sys/info",          NULL,   0, "device manifest + this API catalog"},
+};
+#define API_COUNT (sizeof(API_CATALOG) / sizeof(API_CATALOG[0]))
+
+/* Build the "services" JSON object from API_CATALOG. */
+static String build_services_json(void)
+{
+    String s = "{";
+    for (uint8_t i = 0; i < API_COUNT; i++) {
+        const ApiEntry& e = API_CATALOG[i];
+        if (i > 0) s += ",";
+        s += "\"";
+        s += e.method;
+        s += "\":{\"d\":\"";
+        s += e.desc;
+        s += "\",\"p\":{";
+        for (uint8_t j = 0; j < e.n; j++) {
+            if (j > 0) s += ",";
+            s += "\"";
+            s += e.params[j].name;
+            s += "\":\"";
+            s += e.params[j].desc;
+            s += "\"";
+        }
+        s += "}}";
+    }
+    s += "}";
+    return s;
+}
+
 /* System info manifest - also published to MQTT atnode/<id>/info.
- * The "services" list doubles as the remote API catalog.            */
+ * The "services" object is the full remote API catalog.              */
 static String build_sys_info_json(void)
 {
     String json = "{";
@@ -713,11 +818,7 @@ static String build_sys_info_json(void)
     json += ",\"ble_connected\":" + String(is_connected() ? "true" : "false");
     json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
     json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
-    json += ",\"services\":[\"keyboard/tap\",\"keyboard/text\",\"keyboard/key\",";
-    json += "\"gpio/write\",\"gpio/read\",\"adc/read\",";
-    json += "\"i2c/scan\",\"i2c/read\",\"i2c/write\",\"ir/send\",";
-    json += "\"ble/status\",\"ble/pair\",\"ble/bonds/delete\",\"ble/bonds/clear\",";
-    json += "\"net/wol\",\"net/ping\",\"sys/info\"]";
+    json += ",\"services\":" + build_services_json();
     json += "}";
     return json;
 }
@@ -892,6 +993,15 @@ static bool ir_send_raw(const uint16_t* timings, size_t count);
 static bool ir_send_nec(uint32_t data);
 static bool ir_send_sirc(uint32_t data, int bits);
 
+/* Write hex-encoded bytes to I2C (e.g. "FF01" -> 0xFF, 0x01). */
+static void i2c_write_hex(const String& hexData)
+{
+    for (int i = 0; i < hexData.length(); i += 2) {
+        uint8_t b = (uint8_t)strtoul(hexData.substring(i, i + 2).c_str(), NULL, 16);
+        Wire.write(b);
+    }
+}
+
 static void handle_at(void)
 {
     String cmd = g_http.arg("plain");
@@ -1019,11 +1129,7 @@ static void handle_at(void)
             hexData.replace(" ", "");
             Wire.beginTransmission(addr);
             Wire.write(reg);
-            for (int i = 0; i < hexData.length(); i += 2) {
-                String byteStr = hexData.substring(i, i + 2);
-                uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
-                Wire.write(b);
-            }
+            i2c_write_hex(hexData);
             if (Wire.endTransmission() == 0) {
                 resp = "OK";
             } else {
@@ -1096,19 +1202,13 @@ static void handle_at(void)
                 save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
                 resp = "OK";
             } else if (sub == "ca") {
-                /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
+                /* val = SHA256 fingerprint or "status" */
                 if (val == "status") {
                     if (g_mqtt_ca_fp.length() > 0) {
-                        resp = "+MQTT_CA:fingerprint";
-                    } else if (g_mqtt_ca_cert.length() > 0) {
-                        resp = "+MQTT_CA:pem";
+                        resp = "+MQTT_CA:" + g_mqtt_ca_fp;
                     } else {
                         resp = "+MQTT_CA:none";
                     }
-                } else if (val.startsWith("-----BEGIN")) {
-                    g_mqtt_ca_cert = val;
-                    save_config("mqtt_ca_cert", val);
-                    resp = "OK";
                 } else {
                     g_mqtt_ca_fp = val;
                     save_config("mqtt_ca_fp", val);
@@ -1361,11 +1461,7 @@ static void handle_i2c_write(void)
     }
     Wire.beginTransmission(addr);
     Wire.write(reg);
-    for (int i = 0; i < hexData.length(); i += 2) {
-        String byteStr = hexData.substring(i, i + 2);
-        uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
-        Wire.write(b);
-    }
+    i2c_write_hex(hexData);
     if (Wire.endTransmission() != 0) {
         send_json("{\"ok\":false,\"error\":\"i2c no ack\"}", 500);
         return;
@@ -1484,27 +1580,8 @@ static void handle_ir_send(void)
 }
 
 /* --- MQTT client ------------------------------------------------------- */
-static const char* MQTT_CA_CERT = R"EOF(
------BEGIN CERTIFICATE-----
-MIIDFTCCAf2gAwIBAgIUeR4LwVptVWTNmEFJT+rG6+1MGm4wDQYJKoZIhvcNAQEL
-BQAwGjEYMBYGA1UEAwwPYXRub2RlLWxvY2FsLWNhMB4XDTI2MDcyNDAyMzYxOFoX
-DTM2MDcyMTAyMzYxOFowGjEYMBYGA1UEAwwPYXRub2RlLWxvY2FsLWNhMIIBIjAN
-BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA7FZZ0kDppbeuzBIHdmeqFOreWxX7
-/cRlk6xdh80E1LAwEYs2iby/JxQNauqLZ1BsFOf86wzTkuEmSy/qcsR9yyNwEz2+
-RFQRwEF3FGI/y02TCEgl1RCkKcM9eaGJp2DdtI5+Rib8IISiszM9JP9WfVxvMkrG
-qtccp67H2GpKVtNFt08QbEeCObEma26VFsnFMRDEU6zewb3GOXpKFjTXkf0UbkYM
-cBaRn3rCYtP3dF3YnNXNnRJsDFNcO2DSQtWT0wlz2uQYrcJtKiDN+gzY+6ulCRlk
-G4iwAFnOQVSRw7lMHfJPb85Nxo5/U+zsbrY6bE60ERIYDqgAnwcptyHVdQIDAQAB
-o1MwUTAdBgNVHQ4EFgQUu7bfD4HnVOGCIqoAzl5/L1Tf8mowHwYDVR0jBBgwFoAU
-u7bfD4HnVOGCIqoAzl5/L1Tf8mowDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B
-AQsFAAOCAQEADrl5eLSenj2Zkh4PbimN2eNAmQDZrE3t6jdqjF5Q8VIhFwJVPHad
-zSHuvWa6ZN9W2rgkoe+/XP1SwxUfPJJQBaQoESvYiajZ9A2nqRDqGR4qk5J8G79c
-IwlkYviYJLnIqDq+apb3LC/6bdvUAuwILerIc7CqancynFrZva1S9Ggn0RQ00Rhv
-+SKierZMW+Xk9ED5J60yzl9qcydKAG+XVTUGO8oC7aNVuArMfbTQ5WlxEMaUueys
-cZzQ5YIW0qBqzAp812DkzAvqzIOzI4C2zOpq1LxzxlxVmoIY8gEIN6a9XBNnLTiC
-dcHklz6t6u/6dLL/gDCbE4sAFO2opEBnPw==
------END CERTIFICATE-----
-)EOF";
+/* TLS: setInsecure() + post-connect SHA256 fingerprint verification.
+ * No embedded CA cert needed — fingerprint stored in NVS (mqtt_ca_fp). */
 
 /* forward declaration - defined after the network helpers below */
 static String mqtt_exec(const String& method, const String& query);
@@ -1646,13 +1723,7 @@ static bool mqtt_connect(void)
     if (g_mqtt_port == 8883) {
         /* TLS mode */
         g_mqtt.setClient(g_mqtt_wifi_secure);
-        if (g_mqtt_ca_fp.length() > 0) {
-            g_mqtt_wifi_secure.setInsecure();
-        } else if (g_mqtt_ca_cert.length() > 0) {
-            g_mqtt_wifi_secure.setCACert(g_mqtt_ca_cert.c_str());
-        } else {
-            g_mqtt_wifi_secure.setInsecure();
-        }
+        g_mqtt_wifi_secure.setInsecure();  /* skip chain; fingerprint verified post-connect */
         g_mqtt_wifi_secure.setTimeout(15);   /* seconds (ESP32 Arduino) */
     } else {
         /* Plain TCP mode */
@@ -1661,7 +1732,7 @@ static bool mqtt_connect(void)
     }
     g_mqtt.setServer(g_mqtt_broker.c_str(), g_mqtt_port);
     g_mqtt.setCallback(mqtt_callback);
-    g_mqtt.setBufferSize(1024);   /* sys/info manifest ~400B */
+    g_mqtt.setBufferSize(4096);   /* sys/info with full API catalog ~3KB */
 
     String willTopic = g_mqtt_topic_prefix + "/state";
     bool ok;
@@ -1836,14 +1907,8 @@ static void handle_mqtt_status(void)
     json += ",\"broker\":\"" + g_mqtt_broker + "\"";
     json += ",\"port\":" + String(g_mqtt_port);
     json += ",\"client_id\":\"" + g_mqtt_client_id + "\"";
-    json += ",\"ca_type\":\"";
-    if (g_mqtt_ca_fp.length() > 0) {
-        json += "fingerprint";
-    } else if (g_mqtt_ca_cert.length() > 0) {
-        json += "pem";
-    } else {
-        json += "none";
-    }
+    json += ",\"ca_fp\":\"";
+    json += g_mqtt_ca_fp;
     json += "\"";
     json += ",\"auto\":";
     json += g_mqtt_auto ? "true" : "false";
@@ -1878,15 +1943,10 @@ static void handle_mqtt_config(void)
 
 static void handle_mqtt_ca(void)
 {
-    String ca_cert = g_http.arg("plain");
-    String ca_fp   = g_http.arg("fp");
-    if (ca_cert.length() > 0) {
-        g_mqtt_ca_cert = ca_cert;
-        save_config("mqtt_ca_cert", ca_cert);
-    }
-    if (ca_fp.length() > 0) {
-        g_mqtt_ca_fp = ca_fp;
-        save_config("mqtt_ca_fp", ca_fp);
+    String fp = g_http.arg("fp");
+    if (fp.length() > 0) {
+        g_mqtt_ca_fp = fp;
+        save_config("mqtt_ca_fp", fp);
     }
     send_json("{\"ok\":true,\"cmd\":\"mqtt/ca\"}");
 }
@@ -2133,6 +2193,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
         Serial.println("  AT+PAIR=<1|0|status>       BLE public pairing advertising (60s timeout)");
         Serial.println("  AT+NVS=clear                 erase all NVS settings and restart");
+        Serial.println("  Full API catalog: GET /at-node/help.json or MQTT sys/info");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
         Serial.println("OK");
@@ -2321,11 +2382,7 @@ static void serial_exec(const String& line)
             hexData.replace(" ", "");
             Wire.beginTransmission(addr);
             Wire.write(reg);
-            for (int i = 0; i < hexData.length(); i += 2) {
-                String byteStr = hexData.substring(i, i + 2);
-                uint8_t b = (uint8_t)strtoul(byteStr.c_str(), NULL, 16);
-                Wire.write(b);
-            }
+            i2c_write_hex(hexData);
             if (Wire.endTransmission() == 0) {
                 Serial.println("OK");
             } else {
@@ -2402,19 +2459,13 @@ static void serial_exec(const String& line)
                 save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
                 Serial.println("OK");
             } else if (sub == "ca") {
-                /* val should be the CA cert PEM or SHA256 fingerprint, or "status" */
+                /* val = SHA256 fingerprint or "status" */
                 if (val == "status") {
                     if (g_mqtt_ca_fp.length() > 0) {
-                        Serial.println("+MQTT_CA:fingerprint");
-                    } else if (g_mqtt_ca_cert.length() > 0) {
-                        Serial.println("+MQTT_CA:pem");
+                        Serial.println("+MQTT_CA:" + g_mqtt_ca_fp);
                     } else {
                         Serial.println("+MQTT_CA:none");
                     }
-                } else if (val.startsWith("-----BEGIN")) {
-                    g_mqtt_ca_cert = val;
-                    save_config("mqtt_ca_cert", val);
-                    Serial.println("OK");
                 } else {
                     g_mqtt_ca_fp = val;
                     save_config("mqtt_ca_fp", val);
@@ -2567,6 +2618,7 @@ void setup(void)
         g_http.on("/at-node/status", HTTP_GET, handle_status_html);
         g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
         g_http.on("/at-node/help", HTTP_GET, handle_help_html);
+        g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
         g_http.on("/at-node/pair", HTTP_GET, handle_pair_html);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
