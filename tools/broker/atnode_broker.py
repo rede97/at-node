@@ -646,12 +646,39 @@ def role_serve(args):
         pass
 
 
+_CLIENT_CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.toml")
+
+
+def _load_client_config():
+    """Load client.toml if present. Returns dict with server/port/ca/key."""
+    if not os.path.exists(_CLIENT_CFG):
+        return {}
+    try:
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # Python < 3.11 fallback
+        with open(_CLIENT_CFG, "rb") as f:
+            data = tomllib.load(f)
+        return data.get("client", data)  # allow flat or [client] section
+    except Exception as e:
+        print(f"warn: failed to parse {_CLIENT_CFG}: {e}", file=sys.stderr)
+        return {}
+
+
 def role_client(args):
-    cred_key = args.key or os.environ.get("ATNODE_KEY", "")
-    bridge = Bridge(host=args.server, port=args.port, ca=args.ca,
+    cfg = _load_client_config()
+    host = args.server or cfg.get("server", "127.0.0.1")
+    port = args.port or int(cfg.get("port", 1883))
+    ca = args.ca or cfg.get("ca", None)
+    # resolve relative ca path against config file dir
+    if ca and not os.path.isabs(ca):
+        ca = os.path.join(os.path.dirname(_CLIENT_CFG), ca)
+    cred_key = args.key or os.environ.get("ATNODE_KEY", "") or cfg.get("key", "")
+    bridge = Bridge(host=host, port=port, ca=ca,
                     key=cred_key or None, client_id="atnode-client")
     if not bridge.connected.is_set():
-        print(f"error: cannot connect to {args.server}:{args.port}",
+        print(f"error: cannot connect to {host}:{port}",
               file=sys.stderr)
         sys.exit(2)
 
@@ -999,8 +1026,8 @@ def main():
     cp.add_argument("device", nargs="?")
     cp.add_argument("method", nargs="?")
     cp.add_argument("params", nargs="*")
-    cp.add_argument("--server", default="127.0.0.1", help="broker host")
-    cp.add_argument("--port", type=int, default=1883)
+    cp.add_argument("--server", default=None, help="broker host (or client.toml)")
+    cp.add_argument("--port", type=int, default=None, help="broker port (or client.toml)")
     cp.add_argument("--ca", default=None, help="CA cert for TLS (port 8883)")
     cp.add_argument("--key", default=None, help="API key (or $ATNODE_KEY)")
     cp.add_argument("--count", default="4")

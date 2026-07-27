@@ -64,8 +64,9 @@ tools/ci/out/
 tools/demo/esp32c3_kbd/wifi_config.h
 esp32/esp32_at_node/wifi_config.h
 
-# === Certificates (never commit) ===
+# === Certificates & credentials (never commit) ===
 tools/broker/certs/
+tools/broker/client.toml
 esp32/esp32_at_node/certs/
 
 # === logs ===

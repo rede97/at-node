@@ -204,12 +204,31 @@ uv run python tools/broker/atnode_broker.py client list \
   --server broker.example.com --port 8883 --ca ca.crt --key <API_KEY>
 ```
 
+### 配置文件 `client.toml`（免重复传参）
+
+将连接信息保存到 `tools/broker/client.toml`（已 gitignore），之后所有 client 命令自动读取：
+
+```toml
+[client]
+server = "122.51.226.5"
+port = 8883
+ca = "certs/ca.crt"       # 相对路径基于脚本目录
+key = "your-api-key"
+```
+
+```bash
+cp client.toml.example client.toml   # 首次: 复制模板并填入真实值
+uv run python atnode_broker.py client list   # 无需任何额外参数
+```
+
+优先级：CLI 参数 > `$ATNODE_KEY` 环境变量 > `client.toml` > 默认值。
+
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--server` | 127.0.0.1 | broker 地址 |
-| `--port` | 1883 | broker 端口（8883 自动启用 TLS） |
-| `--ca` | — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
-| `--key` | `$ATNODE_KEY` | API key（manager 发放） |
+| `--server` | client.toml / 127.0.0.1 | broker 地址 |
+| `--port` | client.toml / 1883 | broker 端口（8883 自动启用 TLS） |
+| `--ca` | client.toml / — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
+| `--key` | client.toml / `$ATNODE_KEY` | API key（manager 发放） |
 
 ## 7b. 任何 MQTT 客户端都能直接操作设备
 
