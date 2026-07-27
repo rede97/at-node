@@ -12,6 +12,19 @@
 
 ## 1. 服务器部署（首次 / 重建）
 
+> ⚠️ **部署前必须先检查服务状态**，避免对已运行的服务执行无意义的重复部署。
+
+### 1.0 检查是否已部署
+
+```bash
+ssh Server "systemctl --user is-active atnode-broker 2>/dev/null && echo DEPLOYED || echo NOT_DEPLOYED"
+```
+
+- 输出 `DEPLOYED`（active）→ 服务已在运行，**跳过部署**，仅需同步代码时执行 `deploy restart`
+- 输出 `NOT_DEPLOYED` → 继续下方完整部署流程
+
+### 1.1 部署流程
+
 ```bash
 # 同步代码
 ssh Server "cd ~/at-node && git pull --ff-only"
@@ -21,11 +34,11 @@ ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.p
 ```
 
 **注意：**
-- `deploy install` 幂等——重复执行只更新 unit 并 restart
+- `deploy install` 幂等——重复执行只更新 unit 并 restart，但仍应先检查以避免不必要的中断
 - HTTP 代理**默认关闭**（明文 + 直接硬件操作，极其危险）
 - 如需 HTTP，仅限 `--http` 显式开启 + nginx/SSH 隧道访问
 
-### 1.1 证书策略（三选一）
+### 1.2 证书策略（三选一）
 
 | 场景 | 命令 |
 |------|------|
@@ -35,7 +48,7 @@ ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.p
 
 > ⚠️ **重新生成证书后**，所有已连接设备的 CA 指纹会失效，需更新（见 §4）。
 
-### 1.2 验证服务
+### 1.3 验证服务
 
 ```bash
 ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.py deploy status'"
