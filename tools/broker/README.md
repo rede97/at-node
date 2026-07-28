@@ -212,7 +212,8 @@ uv run python tools/broker/atnode_broker.py client list \
 [client]
 server = "122.51.226.5"
 port = 8883
-ca = "certs/ca.crt"       # 相对路径基于脚本目录
+fp = "A7:0E:E1:74:..."    # 服务器证书 SHA256 指纹（manager certs fingerprint）；推荐
+# ca = "certs/ca.crt"      # 备选：CA 验证；设置了 fp 时被忽略
 key = "your-api-key"
 ```
 
@@ -227,7 +228,8 @@ uv run python tools/broker/atnode_broker.py client list   # 无需任何额外�
 |------|------|------|
 | `--server` | client.toml / 127.0.0.1 | broker 地址 |
 | `--port` | client.toml / 1883 | broker 端口（8883 自动启用 TLS） |
-| `--ca` | client.toml / — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
+| `--fp` | client.toml / — | 服务器证书 SHA256 指纹（pin，推荐；设置后忽略 `--ca`） |
+| `--ca` | client.toml / — | CA 证书（备选；无 `fp`/`ca` 时 8883 不校验证书，不安全） |
 | `--key` | client.toml / `$ATNODE_KEY` | API key（manager 发放） |
 
 ## 7b. 任何 MQTT 客户端都能直接操作设备

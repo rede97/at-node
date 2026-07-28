@@ -5,5 +5,12 @@
 [client]
 server = "122.51.226.5"
 port = 8883
-ca = "certs/ca.crt"       # relative to this file's directory
+
+# 推荐：只填服务器证书 SHA256 指纹（无需分发 ca.crt）
+# 查看指纹: uv run python tools/broker/atnode_broker.py manager certs fingerprint
+fp = "A7:0E:E1:74:7D:A8:25:89:68:5A:4F:32:D4:DC:90:2B:C6:03:5A:52:BA:FE:3D:A3:44:AB:B7:C8:59:E3:96:DB"
+
+# 备选：CA 验证（设置了 fp 时会被忽略）
+# ca = "certs/ca.crt"       # relative to this file's directory
+
 key = "your-api-key-here"

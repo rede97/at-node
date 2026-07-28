@@ -65,17 +65,18 @@ ssh Server "bash -lc 'cd ~/at-node && uv run python tools/broker/atnode_broker.p
 [client]
 server = "122.51.226.5"
 port = 8883
-ca = "certs/ca.crt"       # 相对路径，基于脚本目录
-key = "<API_KEY>"          # manager key add 发放
+fp = "<SERVER_CERT_SHA256>"   # 服务器证书指纹，见 1.3 输出或 manager certs fingerprint
+key = "<API_KEY>"              # manager key add 发放
 ```
 
-### 2.2 同步 CA 证书到本地
+### 2.2 获取服务器证书指纹
 
-```powershell
-scp Server:~/at-node/tools/broker/certs/ca.crt tools\broker\certs\ca.crt
+```bash
+ssh Server "cd ~/at-node && uv run python tools/broker/atnode_broker.py manager certs fingerprint"
 ```
 
-> 证书重新生成后必须重新拉取，否则 TLS 验证失败。
+> 重新生成证书后指纹会变，需同步更新本地 `fp` 与 ESP32 的 `AT+MQTT=ca,<fp>`。
+> 仍可用 `ca = "certs/ca.crt"` 走 CA 验证；但配置了 `fp` 时优先使用指纹，无需分发 `ca.crt`。
 
 ### 2.3 验证连接
 
@@ -125,7 +126,7 @@ Invoke-RestMethod -Uri "http://192.168.1.27/at-node/cmd/mqtt/status"
 | 症状 | 原因 | 修复 |
 |------|------|------|
 | `ConnectionRefusedError` (8883) | 服务未启动 / 正在重启 | `ssh Server "systemctl --user status atnode-broker"` |
-| `CERTIFICATE_VERIFY_FAILED` | 本地 CA 与服务器不匹配 | 重新 `scp` CA（§2.2） |
+| `CERTIFICATE_VERIFY_FAILED` / 指纹不匹配 | 本地 `fp`/`ca` 与服务器证书不一致 | 重新获取指纹并更新 `client.toml`（§2.2） |
 | `IP address mismatch` | 通过隧道连接 / 证书 SAN 是 IP | 代码已修复（`tls_insecure_set`） |
 | `ModuleNotFoundError: amqtt` | 未使用 uv 统一环境 / 依赖未安装 | 在项目根目录执行 `uv sync --all-packages` |
 | ESP32 `connected: false` | CA 指纹过期 | 更新指纹（§4） |

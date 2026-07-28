@@ -303,17 +303,37 @@ class BrokerService:
 # Section 5: Bridge — MQTT client: device registry + RPC correlation
 # ==================================================================
 
+def _normalize_fp(s):
+    """Normalize a SHA256 fingerprint to lowercase hex (no colons/spaces)."""
+    return re.sub(r"[^0-9a-fA-F]", "", s or "").lower()
+
+
+def _fmt_fp(hexstr):
+    return ":".join(hexstr[i:i+2].upper() for i in range(0, len(hexstr), 2))
+
+
+def _peer_cert_sha256(sock):
+    """Return peer certificate SHA256 as lowercase hex, or None."""
+    import hashlib
+    der = sock.getpeercert(binary_form=True)
+    if not der:
+        return None
+    return hashlib.sha256(der).hexdigest()
+
 class Bridge:
     """Used by the HTTP proxy (localhost) and the client role (any broker)."""
 
     def __init__(self, host="127.0.0.1", port=1883, ca=None, key=None,
-                 client_id="atnode-broker-bridge"):
+                 fp=None, client_id="atnode-broker-bridge"):
         import paho.mqtt.client as mqtt
 
         self.devices = {}            # id -> {"online","info","last_seen"}
         self.pending = {}            # reqid -> {"event","resp"}
         self.lock = threading.Lock()
         self.connected = threading.Event()
+        self._expect_fp = _normalize_fp(fp)
+        if self._expect_fp and len(self._expect_fp) != 64:
+            raise ValueError("fp must be a SHA256 fingerprint (64 hex chars)")
 
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2,
                                 client_id=client_id)
@@ -323,10 +343,27 @@ class Bridge:
             self.mqtt.username_pw_set("local", None)
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_message = self._on_message
-        if ca or port == 8883:
-            have_ca = ca and os.path.exists(ca)
-            self.mqtt.tls_set(ca_certs=ca if have_ca else None,
-                              cert_reqs=ssl.CERT_REQUIRED if have_ca else ssl.CERT_NONE)
+        if self._expect_fp or ca or port == 8883:
+            if self._expect_fp:
+                # Fingerprint pinning: no CA needed. Verify peer cert in
+                # on_socket_open (after TLS handshake, before MQTT CONNECT).
+                self.mqtt.tls_set(ca_certs=None, cert_reqs=ssl.CERT_NONE)
+                expected = self._expect_fp
+
+                def _check_fp(client, userdata, sock):
+                    actual = _peer_cert_sha256(sock)
+                    if actual != expected:
+                        raise ValueError(
+                            "broker cert fingerprint mismatch: "
+                            f"expected {_fmt_fp(expected)}, got {_fmt_fp(actual or '')}")
+                self.mqtt.on_socket_open = _check_fp
+            else:
+                have_ca = ca and os.path.exists(ca)
+                self.mqtt.tls_set(ca_certs=ca if have_ca else None,
+                                  cert_reqs=ssl.CERT_REQUIRED if have_ca else ssl.CERT_NONE)
+                if port == 8883 and not have_ca:
+                    print("warn: TLS without CA/fp (insecure); set fp in client.toml",
+                          file=sys.stderr)
             # Skip hostname check: self-signed certs use IP SAN, tunnels change host
             self.mqtt.tls_insecure_set(True)
         self.mqtt.connect(host, port, keepalive=30)
@@ -678,11 +715,12 @@ def role_client(args):
     host = args.server or cfg.get("server", "127.0.0.1")
     port = args.port or int(cfg.get("port", 1883))
     ca = args.ca or cfg.get("ca", None)
+    fp = args.fp or cfg.get("fp") or cfg.get("ca_fp")
     # resolve relative ca path against config file dir
     if ca and not os.path.isabs(ca):
         ca = os.path.join(os.path.dirname(_CLIENT_CFG), ca)
     cred_key = args.key or os.environ.get("ATNODE_KEY", "") or cfg.get("key", "")
-    bridge = Bridge(host=host, port=port, ca=ca,
+    bridge = Bridge(host=host, port=port, ca=ca, fp=fp,
                     key=cred_key or None, client_id="atnode-client")
     if not bridge.connected.is_set():
         print(f"error: cannot connect to {host}:{port}",
@@ -1041,6 +1079,8 @@ def main():
     cp.add_argument("--server", default=None, help="broker host (or client.toml)")
     cp.add_argument("--port", type=int, default=None, help="broker port (or client.toml)")
     cp.add_argument("--ca", default=None, help="CA cert for TLS (port 8883)")
+    cp.add_argument("--fp", default=None,
+                    help="server cert SHA256 fingerprint (pin; overrides --ca)")
     cp.add_argument("--key", default=None, help="API key (or $ATNODE_KEY)")
     cp.add_argument("--count", default="4")
 
