@@ -38,6 +38,28 @@ Device status (pure JSON).
 
 API documentation page (HTML).
 
+### GET /at-node/help.json
+
+Machine-readable API catalog (same data as MQTT `sys/info` services).
+
+**Response**:
+```json
+{
+  "ok": true,
+  "services": {
+    "keyboard/tap": {
+      "d": "press+release one key",
+      "p": {"mods": "modifier mask (0x01=Ctrl 0x02=Shift 0x04=Alt 0x08=GUI 0x10=LCtrl)", "k": "HID keycode (4=a 5=b ... 0x39=CapsLock)", "ms": "hold duration ms, default 100"}
+    },
+    "keyboard/text": {"d": "type ASCII string via BLE", "p": {"s": "ASCII text to type", "ms": "per-key hold ms, default 60", "gap": "inter-key gap ms, default 80"}},
+    "gpio/write": {"d": "set GPIO output level", "p": {"pin": "GPIO number (0-10, 18, 19, 20, 21)", "level": "0=LOW 1=HIGH"}},
+    "...": "17 services total"
+  }
+}
+```
+
+> Agent 可通过此端点或 MQTT `sys/info` RPC 自动发现全部 API 及参数。
+
 ---
 
 ## 2. Raw AT Command
@@ -244,12 +266,17 @@ MQTT connection status.
 ```json
 {
   "connected": true,
-  "broker": "192.168.1.7",
+  "broker": "122.51.226.5",
   "port": 8883,
   "client_id": "atnode-atnodeesp-5688",
-  "ca_type": "fingerprint"
+  "ca_fp": "E1:82:7D:...:40:02:A9",
+  "auto": true
 }
 ```
+
+Fields:
+- `ca_fp`: SHA256 fingerprint used for TLS verification (empty if plain TCP)
+- `auto`: whether auto-reconnect on boot is enabled (NVS `mqtt_auto`)
 
 ### POST /at-node/cmd/mqtt/config
 
@@ -268,20 +295,22 @@ Configure MQTT broker.
 
 ### POST /at-node/cmd/mqtt/ca
 
-Configure MQTT CA certificate or SHA256 fingerprint.
+Set SHA256 fingerprint for TLS certificate verification.
 
 **Params**:
-- `plain` (text): CA certificate PEM (starts with `-----BEGIN`) or SHA256 fingerprint (64 hex chars)
-- `fp` (string): SHA256 fingerprint (alternative to plain)
+- `fp` (string): SHA256 fingerprint — 64 hex chars (colons optional)
 
 **Response**:
 ```json
 {"ok": true, "cmd": "mqtt/ca"}
 ```
 
-**Auto-detection**:
-- Starts with `-----BEGIN` → CA certificate (PEM)
-- Otherwise → SHA256 fingerprint
+**Notes**:
+- Only SHA256 fingerprint is supported (no full CA/PEM).
+- The device uses `setInsecure()` for the TLS handshake, then verifies the
+  peer certificate's SHA256 hash against the stored fingerprint post-connect.
+- Fingerprint is persisted in NVS (`mqtt_ca_fp`).
+- Generate with: `openssl x509 -in server.crt -noout -fingerprint -sha256`
 
 ### POST /at-node/cmd/mqtt/connect
 

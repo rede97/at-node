@@ -1,0 +1,9 @@
+# AT-Node Broker client configuration
+# Copy to client.toml and fill in your values.
+# client.toml is gitignored — never commit credentials.
+
+[client]
+server = "122.51.226.5"
+port = 8883
+ca = "certs/ca.crt"       # relative to this file's directory
+key = "your-api-key-here"

@@ -5,13 +5,14 @@
 >
 > **TL;DR**:
 > ```bash
-> uv run python tools/broker/atnode_broker.py serve --http   # 启动 broker+代理
-> uv run python tools/broker/atnode_broker.py manager add --name my-agent  # 发 key
+> uv run python tools/broker/atnode_broker.py deploy install  # 一键部署 systemd 服务
+> uv run python tools/broker/atnode_broker.py manager key add --name my-agent  # 发 key
 > uv run python tools/broker/atnode_broker.py client list --key <KEY>      # 用 key 访问
+> uv run python tools/broker/atnode_broker.py deploy status   # 查看服务状态
 > ```
 >
-> **三种角色**:`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
-> `manager`(MQTT 客户端，key 管理，限本地）。三者说同一套 MQTT 协议。
+> **四种角色**：`serve`(broker 服务端）/ `client`(MQTT 客户端，设备控制）/
+> `manager`(key 管理 + 证书工具）/ `deploy`(systemd 服务管理）。
 
 ---
 
@@ -52,16 +53,28 @@ ESP32 ──MQTT/TLS outbound────────▶│    └── paho �
 - **HTTP 代理**:`Authorization: Bearer <api-key>`；本地请求免认证。
 - ESP32 也是普通客户端：`mqtt_user = <key>`（密码留空即可）。
 
-## 3. Key 管理（manager 角色，走 MQTT，无需重启服务）
+## 3. Key 管理（manager key，走 MQTT，无需重启服务）
 
 ```bash
 B=tools/broker/atnode_broker.py
-uv run python $B manager add --name esp32-home     # 生成 key（只打印一次）
-uv run python $B manager list                      # 全部 key + 状态
-uv run python $B manager revoke agent-alice        # 标记废弃（立即断认证）
-uv run python $B manager enable agent-alice        # 恢复
-uv run python $B manager remove agent-alice        # 彻底删除
+uv run python $B manager key add --name esp32-home     # 生成 key（只打印一次）
+uv run python $B manager key list                      # 全部 key + 状态
+uv run python $B manager key revoke agent-alice        # 标记废弃（立即断认证）
+uv run python $B manager key enable agent-alice        # 恢复
+uv run python $B manager key remove agent-alice        # 彻底删除
 # 接受 key 或名字定位；--server/--port 可指向 SSH 转发的端口
+```
+
+## 3b. 证书管理（manager certs，本地操作，无需 MQTT）
+
+```bash
+B=tools/broker/atnode_broker.py
+uv run python $B manager certs gen --ip 1.2.3.4       # 一键生成 CA + 服务器证书
+uv run python $B manager certs fingerprint             # SHA256 指纹（ESP32 配置用）
+uv run python $B manager certs info                    # 证书详情（subject/有效期/SAN）
+uv run python $B manager certs verify                  # 验证证书链完整性
+# --certs DIR 指定证书目录（默认 tools/broker/certs/）
+# --days N 指定有效期（默认 3650 天）
 ```
 
 **访问日志**（纯文件，不入库）:`~/.atnode_broker_logs/`
@@ -89,6 +102,13 @@ serve 参数：
 
 ## 4. HTTP API 参考
 
+> **⚠️ 安全警告**：HTTP 代理为**明文传输（无 TLS）**，且可直接操作硬件（GPIO、键盘注入、WOL 等），
+> 暴露公网极其危险。**默认不启动**。远程访问必须通过以下方式之一：
+> - **nginx 反向代理 + HTTPS**（推荐生产部署）
+> - **SSH 端口转发**：`ssh -L 8080:127.0.0.1:8080 Server`，然后访问 `localhost:8080`
+>
+> 绝对不要将 8080 端口直接暴露到公网安全组。
+
 Base: `http://<server>:8080`。除 `/api/help` 外全部需要
 header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON。
 
@@ -111,10 +131,10 @@ header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON�
   "online": true,
   "info": {"device":"AT-Node-ESP-5688","ip":"192.168.1.27",
            "ble_addr":"88:56:a6:7b:c8:42","ble_connected":true,
-           "services":["keyboard/tap","..."]},
-  "services": ["keyboard/tap","keyboard/text","...","net/wol","net/ping","sys/info"],
-  "usage": {"call":"POST /api/devices/atnodeesp-5688/cmd/<method>?k=v&...",
-            "examples":["..."]}
+           "services":{"keyboard/tap":{"d":"press+release one key",
+             "p":{"mods":"modifier mask","k":"HID keycode","ms":"hold ms"}},
+             "...":"17 services with full param descriptions"}},
+  "usage": "client call <device> <method> k=v ..."
 }
 ```
 
@@ -184,12 +204,31 @@ uv run python tools/broker/atnode_broker.py client list \
   --server broker.example.com --port 8883 --ca ca.crt --key <API_KEY>
 ```
 
+### 配置文件 `client.toml`（免重复传参）
+
+将连接信息保存到 `tools/broker/client.toml`（已 gitignore），之后所有 client 命令自动读取：
+
+```toml
+[client]
+server = "122.51.226.5"
+port = 8883
+ca = "certs/ca.crt"       # 相对路径基于脚本目录
+key = "your-api-key"
+```
+
+```bash
+cp client.toml.example client.toml   # 首次: 复制模板并填入真实值
+uv run python atnode_broker.py client list   # 无需任何额外参数
+```
+
+优先级：CLI 参数 > `$ATNODE_KEY` 环境变量 > `client.toml` > 默认值。
+
 | 参数 | 默认 | 说明 |
 |------|------|------|
-| `--server` | 127.0.0.1 | broker 地址 |
-| `--port` | 1883 | broker 端口（8883 自动启用 TLS） |
-| `--ca` | — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
-| `--key` | `$ATNODE_KEY` | API key（manager 发放） |
+| `--server` | client.toml / 127.0.0.1 | broker 地址 |
+| `--port` | client.toml / 1883 | broker 端口（8883 自动启用 TLS） |
+| `--ca` | client.toml / — | CA 证书（存在则严格校验；8883 无 CA 则跳过校验） |
+| `--key` | client.toml / `$ATNODE_KEY` | API key（manager 发放） |
 
 ## 7b. 任何 MQTT 客户端都能直接操作设备
 
@@ -215,27 +254,94 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 | 清除配置 | `AT+MQTT=clear` — 清空全部 MQTT 设置（NVS+运行时）并断开，同时停止自动重连 |
 
 - 参数持久化在 NVS，重启后 `AT+MQTT=connect` 重连即可。
-- **TLS(8883)**：设备验证方式二选一——CA 证书或服务器证书 SHA256 指纹
-  （`AT+MQTT=ca,<fingerprint>`；查指纹：`openssl x509 -in server.crt -noout -fingerprint -sha256`）。
+- **TLS(8883)**：设备仅验证服务器证书 SHA256 指纹（无嵌入式 CA/PEM）
+  （`AT+MQTT=ca,<fingerprint>`；查指纹：`manager certs fingerprint`）。
 - 设备上线后 broker 立即可见（retained `state=online` + `info` 清单）；
   掉线由 LWT 置 `offline`。
-- **自动重连**：配置了 broker 且 WiFi 在线时，设备每 10s 重试直至连上；
+- **自动重连**：首次手动 `AT+MQTT=connect` 成功后自动启用 `mqtt_auto`，
+  重启后每 10s 重试直至连上；`AT+MQTT=auto,0` 可关闭，`AT+MQTT=clear` 重置。
   重连成功会重新发布 state/info，broker 重启后注册表自愈。
 
 ## 9. 远程部署清单
 
-1. `scp tools/broker/atnode_broker.py tools/broker/certs user@server:`（或 git clone)。
-2. 服务器：`pip install amqtt paho-mqtt`（或 uv 环境）。
-3. **只暴露 8883(MQTT-TLS)**；1883 绑 LAN/localhost 即可。
-4. 需要 HTTP 代理时：`serve --http`，8080 建议套 nginx/Caddy 上 HTTPS；API key 即认证。
-   纯转发场景也可以只跑 MQTT broker（不带 `--http`），由你自己的服务直连 MQTT。
-5. ESP32 改指 `broker=<server-ip>` `port=8883` + CA 指纹（见 §8)。
-6. 防火墙：服务器放行 8883/443；**本机测试遇过 Windows 防火墙拦 LAN 入站**。
+> **安全原则**：证书在服务器上生成，私钥永远不离开服务器。
+> 项目 `.gitignore` 已排除 `tools/broker/certs/` 和 `esp32/esp32_at_node/certs/`。
+
+### 9.1 服务器初始化
+
+```bash
+# 1. 克隆仓库（项目不大，直接全量）
+git clone https://github.com/rede97/at-node.git ~/at-node
+cd ~/at-node/tools/broker
+
+# 2. 生成证书（CA + 服务器证书，SAN 填服务器公网 IP）
+uv run python atnode_broker.py manager certs gen --ip <SERVER_IP>
+chmod 600 certs/*.key
+
+# 3. 用 uv 创建 Python 环境（pyproject.toml 已包含依赖）
+uv sync    # 国内服务器可加 UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+```
+
+### 9.2 启动服务
+
+```bash
+B="uv run python atnode_broker.py"
+
+# 手动测试（前台运行，Ctrl+C 停止）
+$B serve --certs certs --http
+
+# systemd 用户服务（推荐，开机自启 + 崩溃自重启）
+$B deploy install                    # 使用已有 certs/，仅 MQTT（HTTP 默认关闭）
+$B deploy install --gen-certs --ip <SERVER_IP>  # 首次部署同时生成证书
+$B deploy install --http             # 同时启用 HTTP 代理（仅限本地/隧道访问）
+$B deploy install --http --http-port 9090       # 自定义 HTTP 端口
+
+# 日常运维
+$B deploy status                     # 服务状态 + 证书指纹
+$B deploy restart                    # 重启
+$B deploy logs                       # 实时日志 (journalctl -f)
+$B deploy stop | start | enable | disable
+$B deploy uninstall                  # 完全移除服务
+```
+
+> `deploy install` 幂等：重复执行只更新 unit 文件并 restart。
+> 自动执行 `loginctl enable-linger` 确保服务器重启后服务自启。
+
+### 9.3 防火墙 / 安全组
+
+- **云安全组**（腾讯云/阿里云控制台）：入站仅需放行 TCP **8883**（MQTT-TLS）。
+- **HTTP 8080 禁止对外暴露**——明文传输 + 直接硬件操作，必须通过 nginx HTTPS 反代或 SSH 隧道访问。
+- 1883 仅绑 localhost/LAN，不对外暴露。
+- **本机测试注意**：Windows 防火墙会拦 LAN 入站 1883，需添加入站规则或临时关闭。
+
+### 9.4 生成 API Key
+
+```bash
+.venv/bin/python atnode_broker.py manager add --name esp32-home
+# 输出 key（只展示一次，妥善保存）
+```
+
+### 9.5 ESP32 配置
+
+```bash
+# 获取服务器证书 SHA256 指纹（在服务器上执行）
+openssl x509 -in certs/server.crt -noout -fingerprint -sha256
+
+# ESP32 侧（HTTP 或串口 AT）
+AT+MQTT=broker,<SERVER_IP>
+AT+MQTT=port,8883
+AT+CONF=mqtt_user=<API_KEY>
+AT+MQTT=ca,<SHA256_FINGERPRINT>
+AT+MQTT=connect
+```
+
+设备上线后 `client list` 即可看到（retained state=online）。
 
 ## 10. 排障
 
 | 症状 | 原因/处理 |
 |------|----------|
+| ESP32 connect 后 HTTP/串口卡死 | 固件旧版 mqtt_connect() 阻塞主循环；升级到最新版（MQTT 已移至独立 task） |
 | ESP32 connect 卡住无响应 | 端口被其他 broker 占用（杀残留 `mqtt_broker.py` 进程）；或防火墙拦 LAN 入站 |
 | `mqtt_port` 配置不生效 | 曾有的 NVS 类型 bug 已修；确认固件为最新 |
 | `client list` 空 | 设备未连上（`AT+MQTT=status` 查）；设备带自动重连，broker 重启后 ~10s 内会自动恢复注册 |

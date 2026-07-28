@@ -1,0 +1,12 @@
+[project]
+name = "atnode-broker"
+version = "1.0.0"
+description = "AT-Node remote MQTT broker + HTTP proxy (single-file service)"
+requires-python = ">=3.10"
+dependencies = [
+    "amqtt>=0.11",
+    "paho-mqtt>=2.0",
+]
+
+[tool.uv]
+package = false

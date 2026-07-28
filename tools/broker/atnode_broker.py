@@ -11,7 +11,7 @@ Architecture (one file, layered sections, ~900 lines):
   │  ManageService   $manage/cmd endpoint (key CRUD over MQTT)     │
   │  Bridge+HttpProxy (OPT-IN --http)  curl facade                 │
   ├─ client  ── pure MQTT client role (device control, any broker) │
-  └─ manager ─ pure MQTT client role (key admin, localhost/SSH) ───┘
+  └─ manager ─ key admin (MQTT) + cert tools (local, no MQTT) ────┘
 
 MQTT wire protocol:
   atnode/<id>/state   retained "online"/"offline" (LWT)
@@ -30,8 +30,10 @@ Usage:
   atnode_broker.py serve [--mqtt-port 1883] [--mqtt-tls-port 8883]
                          [--certs DIR] [--http [PORT]]
   atnode_broker.py client list|info|call|wol|ping ... [--server H] [--key K]
-  atnode_broker.py manager add --name alice
-  atnode_broker.py manager list|revoke|enable|remove ...
+  atnode_broker.py manager key add --name alice
+  atnode_broker.py manager key list|revoke|enable|remove ...
+  atnode_broker.py manager certs gen [--ip IP] [--certs DIR]
+  atnode_broker.py manager certs fingerprint|info|verify [--certs DIR]
 """
 
 import argparse
@@ -186,7 +188,14 @@ class AccessLog:
 # Section 3: amqtt plugins — key auth + manage-topic ACL
 # ==================================================================
 
-from amqtt.plugins.base import BaseAuthPlugin, BaseTopicPlugin  # noqa: E402
+try:
+    from amqtt.plugins.base import BaseAuthPlugin, BaseTopicPlugin  # noqa: E402
+except ModuleNotFoundError:
+    # client/manager/deploy modes don't need amqtt; provide stubs for class defs
+    class BaseAuthPlugin:  # type: ignore[no-redef]
+        pass
+    class BaseTopicPlugin:  # type: ignore[no-redef]
+        pass
 
 
 class ApiKeyAuthPlugin(BaseAuthPlugin):
@@ -318,8 +327,8 @@ class Bridge:
             have_ca = ca and os.path.exists(ca)
             self.mqtt.tls_set(ca_certs=ca if have_ca else None,
                               cert_reqs=ssl.CERT_REQUIRED if have_ca else ssl.CERT_NONE)
-            if not have_ca:
-                self.mqtt.tls_insecure_set(True)
+            # Skip hostname check: self-signed certs use IP SAN, tunnels change host
+            self.mqtt.tls_insecure_set(True)
         self.mqtt.connect(host, port, keepalive=30)
         self.mqtt.loop_start()
         self.connected.wait(5)
@@ -644,12 +653,39 @@ def role_serve(args):
         pass
 
 
+_CLIENT_CFG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "client.toml")
+
+
+def _load_client_config():
+    """Load client.toml if present. Returns dict with server/port/ca/key."""
+    if not os.path.exists(_CLIENT_CFG):
+        return {}
+    try:
+        try:
+            import tomllib
+        except ModuleNotFoundError:
+            import tomli as tomllib  # Python < 3.11 fallback
+        with open(_CLIENT_CFG, "rb") as f:
+            data = tomllib.load(f)
+        return data.get("client", data)  # allow flat or [client] section
+    except Exception as e:
+        print(f"warn: failed to parse {_CLIENT_CFG}: {e}", file=sys.stderr)
+        return {}
+
+
 def role_client(args):
-    cred_key = args.key or os.environ.get("ATNODE_KEY", "")
-    bridge = Bridge(host=args.server, port=args.port, ca=args.ca,
+    cfg = _load_client_config()
+    host = args.server or cfg.get("server", "127.0.0.1")
+    port = args.port or int(cfg.get("port", 1883))
+    ca = args.ca or cfg.get("ca", None)
+    # resolve relative ca path against config file dir
+    if ca and not os.path.isabs(ca):
+        ca = os.path.join(os.path.dirname(_CLIENT_CFG), ca)
+    cred_key = args.key or os.environ.get("ATNODE_KEY", "") or cfg.get("key", "")
+    bridge = Bridge(host=host, port=port, ca=ca,
                     key=cred_key or None, client_id="atnode-client")
     if not bridge.connected.is_set():
-        print(f"error: cannot connect to {args.server}:{args.port}",
+        print(f"error: cannot connect to {host}:{port}",
               file=sys.stderr)
         sys.exit(2)
 
@@ -698,7 +734,7 @@ def role_client(args):
         bridge.mqtt.disconnect()
 
 
-def role_manager(args):
+def role_manager_key(args):
     mc = ManageClient(host=args.server, port=args.port)
     try:
         if args.op == "add":
@@ -731,6 +767,247 @@ def role_manager(args):
         mc.close()
 
 
+def role_manager_certs(args):
+    """Local certificate management (no MQTT needed)."""
+    import hashlib
+    import subprocess
+
+    certs_dir = args.certs
+    os.makedirs(certs_dir, exist_ok=True)
+    ca_crt = os.path.join(certs_dir, "ca.crt")
+    ca_key = os.path.join(certs_dir, "ca.key")
+    srv_crt = os.path.join(certs_dir, "server.crt")
+    srv_key = os.path.join(certs_dir, "server.key")
+    srv_csr = os.path.join(certs_dir, "server.csr")
+
+    def run(cmd, **kw):
+        r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+        if r.returncode != 0:
+            print(f"error: {' '.join(cmd)}\n{r.stderr.strip()}", file=sys.stderr)
+            sys.exit(1)
+        return r.stdout.strip()
+
+    if args.op == "gen":
+        ip = args.ip
+        if not ip:
+            ip = input("Server public IP (for SAN): ").strip()
+        if not ip:
+            print("error: --ip required", file=sys.stderr)
+            sys.exit(2)
+        days = str(args.days)
+        # 1. CA
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", ca_key, "-out", ca_crt, "-days", days,
+             "-subj", "/CN=AT-Node-CA"])
+        # 2. Server key + CSR
+        run(["openssl", "req", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", srv_key, "-out", srv_csr,
+             "-subj", f"/CN={ip}"])
+        # 3. Sign with SAN
+        import tempfile
+        ext = f"subjectAltName=IP:{ip}"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".cnf",
+                                         delete=False) as tf:
+            tf.write(ext)
+            ext_file = tf.name
+        try:
+            run(["openssl", "x509", "-req", "-in", srv_csr,
+                 "-CA", ca_crt, "-CAkey", ca_key, "-CAcreateserial",
+                 "-out", srv_crt, "-days", days,
+                 "-extfile", ext_file])
+        finally:
+            os.remove(ext_file)
+        os.remove(srv_csr)
+        print(f"[ok] certs generated in {certs_dir}")
+        print(f"     CA:     {ca_crt}")
+        print(f"     Server: {srv_crt} (SAN IP:{ip}, {days} days)")
+        # auto-show fingerprint
+        _print_fingerprint(srv_crt)
+
+    elif args.op == "fingerprint":
+        if not os.path.exists(srv_crt):
+            print(f"error: {srv_crt} not found (run: manager certs gen)",
+                  file=sys.stderr)
+            sys.exit(1)
+        _print_fingerprint(srv_crt)
+
+    elif args.op == "info":
+        target = srv_crt if os.path.exists(srv_crt) else ca_crt
+        if not os.path.exists(target):
+            print(f"error: no certs in {certs_dir}", file=sys.stderr)
+            sys.exit(1)
+        out = run(["openssl", "x509", "-in", target, "-noout",
+                   "-subject", "-issuer", "-dates", "-ext",
+                   "subjectAltName"])
+        print(out)
+
+    elif args.op == "verify":
+        if not os.path.exists(ca_crt) or not os.path.exists(srv_crt):
+            print("error: need both ca.crt and server.crt", file=sys.stderr)
+            sys.exit(1)
+        out = run(["openssl", "verify", "-CAfile", ca_crt, srv_crt])
+        print(out)
+
+
+def _print_fingerprint(cert_path):
+    """Print SHA256 fingerprint of a DER-encoded cert."""
+    import hashlib
+    import subprocess
+    der = subprocess.run(
+        ["openssl", "x509", "-in", cert_path, "-outform", "DER"],
+        capture_output=True)
+    if der.returncode != 0:
+        print("error: cannot parse cert", file=sys.stderr)
+        return
+    fp = hashlib.sha256(der.stdout).hexdigest()
+    pairs = ":".join(fp[i:i+2].upper() for i in range(0, len(fp), 2))
+    print(f"SHA256 fingerprint ({os.path.basename(cert_path)}):")
+    print(f"  {pairs}")
+
+
+# ==================================================================
+# Section 7: Deploy — systemd user service management
+# ==================================================================
+
+_UNIT_TEMPLATE = """\
+[Unit]
+Description=AT-Node MQTT Broker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory={work_dir}
+ExecStart={python} {script} serve --certs {certs} --mqtt-port {mqtt_port} --mqtt-tls-port {tls_port}{http_flag}
+Restart=on-failure
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+"""
+
+
+def _systemctl(*cmd, check=True):
+    """Run systemctl --user with given args."""
+    import subprocess
+    full = ["systemctl", "--user"] + list(cmd)
+    return subprocess.run(full, check=check)
+
+
+def role_deploy(args):
+    """Manage the broker as a systemd user service."""
+    import subprocess
+
+    if sys.platform == "win32":
+        print("ERROR: deploy requires Linux systemd. Run on the server.")
+        return 1
+
+    op = args.op
+    svc = args.name
+
+    # --- simple pass-through operations ---
+    if op in ("start", "stop", "restart", "enable", "disable"):
+        _systemctl(op, f"{svc}.service")
+        if op == "restart":
+            print(f"[deploy] {svc} restarted.")
+        return 0
+
+    if op == "status":
+        _systemctl("status", f"{svc}.service", check=False)
+        # show fingerprint as bonus info
+        certs_dir = args.certs
+        crt = os.path.join(certs_dir, "server.crt")
+        if os.path.exists(crt):
+            print()
+            _print_fingerprint(crt)
+        return 0
+
+    if op == "logs":
+        os.execvp("journalctl", ["journalctl", "--user", "-u", f"{svc}.service", "-f"])
+        return 0  # unreachable
+
+    if op == "uninstall":
+        _systemctl("stop", f"{svc}.service", check=False)
+        _systemctl("disable", f"{svc}.service", check=False)
+        unit_path = os.path.expanduser(f"~/.config/systemd/user/{svc}.service")
+        if os.path.exists(unit_path):
+            os.remove(unit_path)
+            print(f"[deploy] removed {unit_path}")
+        _systemctl("daemon-reload", check=False)
+        print(f"[deploy] {svc} uninstalled.")
+        return 0
+
+    # --- install ---
+    assert op == "install"
+    work_dir = os.path.dirname(os.path.abspath(__file__))
+    certs_dir = os.path.abspath(args.certs)
+
+    # 1. certificate handling
+    if args.gen_certs:
+        if not args.ip:
+            print("ERROR: --gen-certs requires --ip <server-public-IP>")
+            return 1
+        print(f"[deploy] generating certificates (SAN={args.ip}) ...")
+
+        class _CertsArgs:
+            pass
+
+        ca = _CertsArgs()
+        ca.op = "gen"
+        ca.certs = certs_dir
+        ca.ip = args.ip
+        ca.days = 3650
+        role_manager_certs(ca)
+    else:
+        crt = os.path.join(certs_dir, "server.crt")
+        key = os.path.join(certs_dir, "server.key")
+        if not os.path.exists(crt) or not os.path.exists(key):
+            print(f"ERROR: certs not found in {certs_dir}")
+            print("  Use --gen-certs --ip <IP> to generate, or --certs <DIR>.")
+            return 1
+
+    # 2. build unit content
+    python = sys.executable
+    script = os.path.join(work_dir, "atnode_broker.py")
+    http_flag = f" --http {args.http_port}" if args.http else ""
+    unit_content = _UNIT_TEMPLATE.format(
+        work_dir=work_dir,
+        python=python,
+        script=script,
+        certs=certs_dir,
+        mqtt_port=args.mqtt_port,
+        tls_port=args.mqtt_tls_port,
+        http_flag=http_flag,
+    )
+
+    # 3. write unit file
+    unit_dir = os.path.expanduser("~/.config/systemd/user")
+    os.makedirs(unit_dir, exist_ok=True)
+    unit_path = os.path.join(unit_dir, f"{svc}.service")
+    with open(unit_path, "w") as f:
+        f.write(unit_content)
+    print(f"[deploy] wrote {unit_path}")
+
+    # 4. enable linger (service survives logout / starts on boot)
+    user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
+    if user:
+        subprocess.run(["loginctl", "enable-linger", user],
+                       check=False, capture_output=True)
+
+    # 5. reload + enable + start
+    _systemctl("daemon-reload")
+    _systemctl("enable", f"{svc}.service")
+    _systemctl("restart", f"{svc}.service")
+    print(f"[deploy] {svc} installed and started.")
+
+    # 6. show status
+    import time
+    time.sleep(1)
+    _systemctl("status", f"{svc}.service", check=False)
+    return 0
+
+
 # ==================================================================
 # main
 # ==================================================================
@@ -756,18 +1033,42 @@ def main():
     cp.add_argument("device", nargs="?")
     cp.add_argument("method", nargs="?")
     cp.add_argument("params", nargs="*")
-    cp.add_argument("--server", default="127.0.0.1", help="broker host")
-    cp.add_argument("--port", type=int, default=1883)
+    cp.add_argument("--server", default=None, help="broker host (or client.toml)")
+    cp.add_argument("--port", type=int, default=None, help="broker port (or client.toml)")
     cp.add_argument("--ca", default=None, help="CA cert for TLS (port 8883)")
     cp.add_argument("--key", default=None, help="API key (or $ATNODE_KEY)")
     cp.add_argument("--count", default="4")
 
-    mp = sub.add_parser("manager", help="API key admin (MQTT, localhost/SSH)")
-    mp.add_argument("op", choices=["add", "list", "revoke", "enable", "remove"])
-    mp.add_argument("target", nargs="?", help="key or name (revoke/enable/remove)")
-    mp.add_argument("--name", default=None, help="name for 'add'")
-    mp.add_argument("--server", default="127.0.0.1")
-    mp.add_argument("--port", type=int, default=1883)
+    mp = sub.add_parser("manager", help="admin: key management + cert tools")
+    msub = mp.add_subparsers(dest="mgr_mode", required=True)
+
+    mk = msub.add_parser("key", help="API key admin (MQTT, localhost/SSH)")
+    mk.add_argument("op", choices=["add", "list", "revoke", "enable", "remove"])
+    mk.add_argument("target", nargs="?", help="key or name (revoke/enable/remove)")
+    mk.add_argument("--name", default=None, help="name for 'add'")
+    mk.add_argument("--server", default="127.0.0.1")
+    mk.add_argument("--port", type=int, default=1883)
+
+    mc = msub.add_parser("certs", help="TLS certificate tools (local, no MQTT)")
+    mc.add_argument("op", choices=["gen", "fingerprint", "info", "verify"])
+    mc.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"),
+                    help="certs directory")
+    mc.add_argument("--ip", default=None, help="server IP for SAN (gen)")
+    mc.add_argument("--days", type=int, default=3650, help="cert validity days (gen)")
+
+    dp = sub.add_parser("deploy", help="systemd user service management (Linux)")
+    dp.add_argument("op", choices=["install", "start", "stop", "restart",
+                                   "status", "enable", "disable", "logs", "uninstall"])
+    dp.add_argument("--mqtt-port", type=int, default=1883)
+    dp.add_argument("--mqtt-tls-port", type=int, default=8883)
+    dp.add_argument("--http", action="store_true",
+                    help="enable HTTP proxy (INSECURE, off by default)")
+    dp.add_argument("--http-port", type=int, default=8080)
+    dp.add_argument("--certs", default=os.path.join(os.path.dirname(__file__), "certs"))
+    dp.add_argument("--gen-certs", action="store_true",
+                    help="generate CA + server cert (requires --ip)")
+    dp.add_argument("--ip", default=None, help="server public IP for cert SAN")
+    dp.add_argument("--name", default="atnode-broker", help="service name")
 
     args = ap.parse_args()
 
@@ -790,7 +1091,13 @@ def main():
         return role_client(args)
 
     if args.mode == "manager":
-        return role_manager(args)
+        if args.mgr_mode == "key":
+            return role_manager_key(args)
+        else:
+            return role_manager_certs(args)
+
+    if args.mode == "deploy":
+        return role_deploy(args)
 
     return role_serve(args)
 

@@ -19,7 +19,7 @@
 | 维度 | CH582 版 | ESP32-C3 版 |
 |------|----------|-------------|
 | 主控 | CH582F | ESP32-C3 |
-| 传输 | USB CDC + BLE HID/NUS | WiFi HTTP + MQTT（规划） |
+| 传输 | USB CDC + BLE HID/NUS | WiFi HTTP + MQTT (TLS) |
 | 键盘 | BLE HID Peripheral | BLE HID Peripheral（同 C3 测试台） |
 | 接收器 | BLE HID Central | 无（可选后续） |
 | AT 命令 | `AT+...` 文本协议 | `POST /at/<cmd>` JSON 协议 |
@@ -40,12 +40,14 @@
 - ✅ WiFi 凭据：NVS 持久化，HTTP/串口可配置
 - ✅ AP 配网：GPIO10 触发（3 秒）或 `AT+AP=1`，Captive Portal 页面
 - ✅ 设备名/hostname：默认含芯片 ID 后缀（如 `AT-Node-ESP-5688`），可配置
-- ✅ HTTP 页面：`/` 重定向到 `/at-node/status`（HTML），`/at-node/cmd/status`（JSON），`/at-node/help`（API 文档）
-- ✅ MQTT：本地 TLS broker 连接/发布成功，自签名 CA 验证；plain TCP (1883) 和 TLS (8883) 双模式；CA 证书/SHA256 指纹可配置
+- ✅ HTTP 页面：`/` 重定向到 `/at-node/status`（HTML），`/at-node/cmd/status`（JSON），`/at-node/help`（API 文档），`/at-node/help.json`（机器可读 API 目录）
+- ✅ MQTT：TLS (8883) + SHA256 指纹验证；plain TCP (1883) 兼容模式；指纹 NVS 可配置（无嵌入式 CA/PEM）
+- ✅ MQTT 远程 broker：TLS + 指纹验证连接云服务器成功；MQTT 操作移至独立 FreeRTOS task（不阻塞 HTTP/串口）
+- ✅ MQTT auto-connect：NVS `mqtt_auto` 开关，首次手动连接成功后自动启用，重启自愈；`AT+MQTT=auto,<0|1>` 可控制
 - ✅ HTTP 开关：`AT+HTTP=status|enable,<0|1>|clear|0|1` 与 `/at-node/cmd/http/{status,config,clear}` 对齐 MQTT 风格，状态持久化到 NVS
 - ✅ BLE 配对安全：默认不广播，需通过 `AT+PAIR=1` / `POST /at-node/cmd/ble/pair?enable=1` / MQTT `ble/pair?enable=1` 显式进入 60s 公共配对模式；配对后断连转为定向广播，仅已绑定主机可连
 - ✅ NVS 擦除：`AT+NVS=clear` / `POST /at-node/cmd/nvs/clear` 恢复出厂设置并自动重启
-- 下一步：远程 MQTT broker 实测、connect 阻塞优化、更多外设
+- 下一步：更多外设、Agent 工作流集成
 
 ## 安全策略
 
