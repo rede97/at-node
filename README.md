@@ -5,6 +5,8 @@
 > Designed for **AI Agents**, not humans. No GUI, no app — just AT commands over serial.
 > Connect an LLM to the physical world: type keystrokes, read sensors, control GPIO.
 
+📡 **Remote control / cloud broker quickstart**: [`tools/broker/GET_START.md`](tools/broker/GET_START.md)
+
 [🇬🇧 English](#english) · [🇨🇳 中文](#chinese)
 
 ---

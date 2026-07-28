@@ -72,12 +72,14 @@ uv run python tools/test/c3_type.py --ip 192.168.1.27 "Hello World"
 uv run python tools/test/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
 ```
 
-Remote broker (MQTT + HTTP proxy for remote device access, see `tools/broker/README.md`):
+Remote broker (MQTT + HTTP proxy for remote device access, step-by-step runbook see `tools/broker/GET_START.md`; full reference see `tools/broker/README.md`):
 ```bash
 uv run python tools/broker/atnode_broker.py serve          # MQTT broker only
 uv run python tools/broker/atnode_broker.py serve --http   # + HTTP proxy :8080
 uv run python tools/broker/atnode_broker.py client list    # list devices
 ```
+
+> Broker is now a workspace member of the root project. Run `uv sync --all-packages` once from the repo root to install all dependencies; all broker commands can be executed from the project root without `cd tools/broker`.
 
 ## Architecture
 
@@ -156,7 +158,7 @@ LED self-schedules blink timing outside the table.
 - **Feature conflicts are compile errors**: `config.h` uses first-class macros (`USB_ENABLE`, `HWS_SLEEP`, `BLE_DONGLE`); invalid combos (#error): USB+sleep, dongle without USB.
 - **BLE SNV**: Flash at `0x77E00` (last 512B of Data Flash), 1 bonded device, new pairing overwrites.
 - **BLE heap**: `MEM_BUF[BLE_MEMHEAP_SIZE/4]` at top of RAM, default 5KB (hard floor 4KB, checked in `ble_stack_init`).
-- **Tools** under `tools/` use Python + `uv` venv. Layout: `broker/` (application services: remote MQTT+HTTP broker), `test/` (test scripts), `demo/` (demo/recon sketches), `utils/`, `ci/` — see `tools/README.md`.
+- **Tools** under `tools/` use Python + `uv` venv. Layout: `broker/` (remote MQTT+HTTP broker; quick runbook `tools/broker/GET_START.md`, full reference `tools/broker/README.md`), `test/` (test scripts), `demo/` (demo/recon sketches), `utils/`, `ci/` — see `tools/README.md`.
 
 ## Notes
 

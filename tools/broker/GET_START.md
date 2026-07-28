@@ -6,7 +6,7 @@
 
 | 项目 | 要求 |
 |------|------|
-| 本地 | Windows, Python 3.11+, `paho-mqtt` (`pip install paho-mqtt`) |
+| 本地 | Windows/Linux/macOS, `uv`（项目根目录 `.venv` 已包含 `paho-mqtt` + `amqtt`） |
 | 服务器 | Linux + systemd, `uv`, SSH 别名 `Server` 可达 |
 | 网络 | 云安全组入站放行 TCP **8883**（MQTT-TLS）；**禁止**放行 8080 |
 
@@ -30,7 +30,7 @@ ssh Server "systemctl --user is-active atnode-broker 2>/dev/null && echo DEPLOYE
 ssh Server "cd ~/at-node && git pull --ff-only"
 
 # 一键部署（生成 unit + enable linger + start）
-ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.py deploy install'"
+ssh Server "bash -lc 'cd ~/at-node && uv run python tools/broker/atnode_broker.py deploy install'"
 ```
 
 **注意：**
@@ -51,7 +51,7 @@ ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.p
 ### 1.3 验证服务
 
 ```bash
-ssh Server "bash -lc 'cd ~/at-node/tools/broker && uv run python atnode_broker.py deploy status'"
+ssh Server "bash -lc 'cd ~/at-node && uv run python tools/broker/atnode_broker.py deploy status'"
 ```
 
 期望输出：`active (running)` + `enabled` + 端口 1883/8883 监听 + SHA256 指纹。
@@ -79,8 +79,7 @@ scp Server:~/at-node/tools/broker/certs/ca.crt tools\broker\certs\ca.crt
 ### 2.3 验证连接
 
 ```powershell
-cd tools\broker
-python atnode_broker.py client list
+uv run python tools/broker/atnode_broker.py client list
 ```
 
 期望：`[bridge] connected to broker` + 设备列表。
@@ -90,12 +89,12 @@ python atnode_broker.py client list
 ## 3. 常用 Client 命令
 
 ```bash
-python atnode_broker.py client list                          # 在线设备
-python atnode_broker.py client info atnodeesp-5688           # 设备详情
-python atnode_broker.py client call atnodeesp-5688 sys/info  # 远程 RPC
-python atnode_broker.py client call atnodeesp-5688 keyboard/text s=Hello
-python atnode_broker.py client wol atnodeesp-5688 AA:BB:CC:DD:EE:FF
-python atnode_broker.py client ping atnodeesp-5688 192.168.1.1
+uv run python tools/broker/atnode_broker.py client list                          # 在线设备
+uv run python tools/broker/atnode_broker.py client info atnodeesp-5688           # 设备详情
+uv run python tools/broker/atnode_broker.py client call atnodeesp-5688 sys/info  # 远程 RPC
+uv run python tools/broker/atnode_broker.py client call atnodeesp-5688 keyboard/text s=Hello
+uv run python tools/broker/atnode_broker.py client wol atnodeesp-5688 AA:BB:CC:DD:EE:FF
+uv run python tools/broker/atnode_broker.py client ping atnodeesp-5688 192.168.1.1
 ```
 
 所有命令自动读取 `client.toml`，无需重复指定 `--server/--port/--key`。
@@ -127,7 +126,7 @@ Invoke-RestMethod -Uri "http://192.168.1.27/at-node/cmd/mqtt/status"
 | `ConnectionRefusedError` (8883) | 服务未启动 / 正在重启 | `ssh Server "systemctl --user status atnode-broker"` |
 | `CERTIFICATE_VERIFY_FAILED` | 本地 CA 与服务器不匹配 | 重新 `scp` CA（§2.2） |
 | `IP address mismatch` | 通过隧道连接 / 证书 SAN 是 IP | 代码已修复（`tls_insecure_set`） |
-| `ModuleNotFoundError: amqtt` | 本地无 broker 依赖 | 已修复（lazy import），确保代码最新 |
+| `ModuleNotFoundError: amqtt` | 未使用 uv 统一环境 / 依赖未安装 | 在项目根目录执行 `uv sync --all-packages` |
 | ESP32 `connected: false` | CA 指纹过期 | 更新指纹（§4） |
 | 服务反复重启 | 短时间内多次 `deploy restart` | 等待 10s 稳定，或 `stop` + `start` |
 | `client list` → `no devices` | ESP32 未通电 / MQTT 断开 | 检查 ESP32 HTTP `/mqtt/status` |
@@ -135,15 +134,15 @@ Invoke-RestMethod -Uri "http://192.168.1.27/at-node/cmd/mqtt/status"
 ## 6. 运维速查
 
 ```bash
-# 日常运维（服务器上）
-uv run python atnode_broker.py deploy status|start|stop|restart|logs
+# 日常运维（服务器上，项目根目录）
+uv run python tools/broker/atnode_broker.py deploy status|start|stop|restart|logs
 
 # 远程一键同步+重启（本地）
-ssh Server "cd ~/at-node && git pull --ff-only && bash -lc 'cd tools/broker && uv run python atnode_broker.py deploy restart'"
+ssh Server "cd ~/at-node && git pull --ff-only && bash -lc 'uv run python tools/broker/atnode_broker.py deploy restart'"
 
 # API Key 管理
-uv run python atnode_broker.py manager key add --name <name>
-uv run python atnode_broker.py manager key list
+uv run python tools/broker/atnode_broker.py manager key add --name <name>
+uv run python tools/broker/atnode_broker.py manager key list
 
 # SSH 隧道访问 HTTP（如需调试）
 ssh -f -N -L 8080:127.0.0.1:8080 Server

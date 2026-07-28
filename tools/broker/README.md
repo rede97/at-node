@@ -217,8 +217,8 @@ key = "your-api-key"
 ```
 
 ```bash
-cp client.toml.example client.toml   # 首次: 复制模板并填入真实值
-uv run python atnode_broker.py client list   # 无需任何额外参数
+cp tools/broker/client.toml.example tools/broker/client.toml   # 首次: 复制模板并填入真实值
+uv run python tools/broker/atnode_broker.py client list   # 无需任何额外参数
 ```
 
 优先级：CLI 参数 > `$ATNODE_KEY` 环境变量 > `client.toml` > 默认值。
@@ -272,23 +272,23 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 ```bash
 # 1. 克隆仓库（项目不大，直接全量）
 git clone https://github.com/rede97/at-node.git ~/at-node
-cd ~/at-node/tools/broker
+cd ~/at-node
 
 # 2. 生成证书（CA + 服务器证书，SAN 填服务器公网 IP）
-uv run python atnode_broker.py manager certs gen --ip <SERVER_IP>
-chmod 600 certs/*.key
+uv run python tools/broker/atnode_broker.py manager certs gen --ip <SERVER_IP>
+chmod 600 tools/broker/certs/*.key
 
-# 3. 用 uv 创建 Python 环境（pyproject.toml 已包含依赖）
-uv sync    # 国内服务器可加 UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+# 3. 用 uv 创建 Python 环境并安装全部依赖（含 broker）
+uv sync --all-packages   # 国内服务器已配置阿里云镜像
 ```
 
 ### 9.2 启动服务
 
 ```bash
-B="uv run python atnode_broker.py"
+B="uv run python tools/broker/atnode_broker.py"
 
 # 手动测试（前台运行，Ctrl+C 停止）
-$B serve --certs certs --http
+$B serve --certs tools/broker/certs --http
 
 # systemd 用户服务（推荐，开机自启 + 崩溃自重启）
 $B deploy install                    # 使用已有 certs/，仅 MQTT（HTTP 默认关闭）
@@ -317,7 +317,7 @@ $B deploy uninstall                  # 完全移除服务
 ### 9.4 生成 API Key
 
 ```bash
-.venv/bin/python atnode_broker.py manager add --name esp32-home
+uv run python tools/broker/atnode_broker.py manager key add --name esp32-home
 # 输出 key（只展示一次，妥善保存）
 ```
 
@@ -325,7 +325,7 @@ $B deploy uninstall                  # 完全移除服务
 
 ```bash
 # 获取服务器证书 SHA256 指纹（在服务器上执行）
-openssl x509 -in certs/server.crt -noout -fingerprint -sha256
+openssl x509 -in tools/broker/certs/server.crt -noout -fingerprint -sha256
 
 # ESP32 侧（HTTP 或串口 AT）
 AT+MQTT=broker,<SERVER_IP>
