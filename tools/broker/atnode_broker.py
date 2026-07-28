@@ -992,8 +992,13 @@ def role_deploy(args):
     # 4. enable linger (service survives logout / starts on boot)
     user = os.environ.get("USER", os.environ.get("LOGNAME", ""))
     if user:
-        subprocess.run(["loginctl", "enable-linger", user],
-                       check=False, capture_output=True)
+        r = subprocess.run(["loginctl", "enable-linger", user],
+                           check=False, capture_output=True, text=True)
+        if r.returncode != 0:
+            print("[deploy] WARN: enable-linger failed; run as root:")
+            print(f"         sudo loginctl enable-linger {user}")
+            if r.stderr:
+                print(f"         ({r.stderr.strip()})")
 
     # 5. reload + enable + start
     _systemctl("daemon-reload")

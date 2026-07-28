@@ -35,6 +35,7 @@ ssh Server "bash -lc 'cd ~/at-node && uv run python tools/broker/atnode_broker.p
 
 **注意：**
 - `deploy install` 幂等——重复执行只更新 unit 并 restart，但仍应先检查以避免不必要的中断
+- **部署后必须确认 linger**：`loginctl show-user $USER -p Linger` 应为 `yes`；否则 SSH 会话退出后服务会被停止。若为 `no`，执行 `sudo loginctl enable-linger $USER` 后 `deploy restart`
 - HTTP 代理**默认关闭**（明文 + 直接硬件操作，极其危险）
 - 如需 HTTP，仅限 `--http` 显式开启 + nginx/SSH 隧道访问
 
@@ -128,7 +129,7 @@ Invoke-RestMethod -Uri "http://192.168.1.27/at-node/cmd/mqtt/status"
 | `IP address mismatch` | 通过隧道连接 / 证书 SAN 是 IP | 代码已修复（`tls_insecure_set`） |
 | `ModuleNotFoundError: amqtt` | 未使用 uv 统一环境 / 依赖未安装 | 在项目根目录执行 `uv sync --all-packages` |
 | ESP32 `connected: false` | CA 指纹过期 | 更新指纹（§4） |
-| 服务反复重启 | 短时间内多次 `deploy restart` | 等待 10s 稳定，或 `stop` + `start` |
+| 服务反复重启 / 过几秒自动停止 | `systemd --user` 未开 linger（`loginctl show-user $USER -p Linger` 为 `no`） | 服务器上执行 `sudo loginctl enable-linger $USER`，再 `deploy restart` |
 | `client list` → `no devices` | ESP32 未通电 / MQTT 断开 | 检查 ESP32 HTTP `/mqtt/status` |
 
 ## 6. 运维速查

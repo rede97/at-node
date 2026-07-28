@@ -80,6 +80,8 @@ uv run python tools/broker/atnode_broker.py client list    # list devices
 ```
 
 > Broker is now a workspace member of the root project. Run `uv sync --all-packages` once from the repo root to install all dependencies; all broker commands can be executed from the project root without `cd tools/broker`.
+>
+> **Server persistence pitfall**: the broker runs as a `systemd --user` service. After `deploy install`, verify `loginctl show-user $USER -p Linger` is `yes`; otherwise the service is stopped when the SSH session ends. Fix once with `sudo loginctl enable-linger $USER`, then `systemctl --user restart atnode-broker`.
 
 ## Architecture
 

@@ -305,7 +305,7 @@ $B deploy uninstall                  # 完全移除服务
 ```
 
 > `deploy install` 幂等：重复执行只更新 unit 文件并 restart。
-> 自动执行 `loginctl enable-linger` 确保服务器重启后服务自启。
+> 自动执行 `loginctl enable-linger` 确保服务器重启后服务自启；若提示权限不足，需手动执行 `sudo loginctl enable-linger $USER`。
 
 ### 9.3 防火墙 / 安全组
 
