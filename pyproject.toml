@@ -1,15 +1,14 @@
 [project]
 name = "at-node"
 version = "1.0.0"
-description = "CH582F AT-Node host-side test tools (AT command, HID key injection, dongle loop)"
+description = "CH582F AT-Node host-side test tools (AT command, HID key injection, dongle loop, broker)"
 requires-python = ">=3.10"
 dependencies = [
     "pyserial>=3.5",
     "requests>=2.34.2",
+    "amqtt>=0.11",
+    "paho-mqtt>=2.0",
 ]
 
 [tool.uv]
 package = false
-
-[tool.uv.workspace]
-members = ["tools/broker"]
