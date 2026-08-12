@@ -50,6 +50,16 @@
 - ✅ rathole 内网穿透客户端：2 条并发隧道（plain TCP transport），`AT+TUNNEL=<1|2>,...` 串口配置 + `/at-node/tunnel` HTML 配置页 + REST 端点，NVS 持久化可开机自连；实测穿透 HTTP 控制面与 TCP echo 全通
 - ✅ MQTT HTML 配置页：`/at-node/mqtt`（broker/凭据/CA 指纹/auto），REST 增加 `/at-node/cmd/mqtt/clear` 与 `auto` 参数
 
+### 统一配置层
+
+所有持久化配置收敛到单一注册表入口 `config_set/get/list`,AT / HTTP / MQTT 三通道等价：
+
+- AT:`AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS`
+- HTTP:`POST /at-node/cmd/config?key=..&val=..`,`GET` 同路径读取，`GET /at-node/cmd/config/list` 全量
+- MQTT:`config/set` `config/get` `config/list` 方法
+- 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|auto`、`http.enable`、`rathole.enable`、`tunnel.<1|2>.server|token|service|local|auto|retry`；密码/token 类为只写
+- 存量命令(`AT+WIFI=`、`AT+MQTT=`、`AT+HTTP=`、`AT+CONF=`、`/at-node/cmd/{wifi,mqtt,http}/config` 等）保留为注册表别名，老脚本不受影响
+
 ### rathole 隧道（`rathole_client.cpp`）
 
 - 协议：rathole v1（bincode 定长消息），plain TCP transport；TLS/noise 未实现——**只穿透自带加密的协议**（SSH/HTTPS/MQTT-TLS），或把服务 bind 在 server 侧 `127.0.0.1`

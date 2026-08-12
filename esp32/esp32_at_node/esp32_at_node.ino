@@ -424,6 +424,136 @@ static void mqtt_clear_config(void)
     g_mqtt_auto    = false;
 }
 
+/* --- unified configuration layer ----------------------------------------
+ * THE single entry point for every persistent setting. AT (AT+SET/GET/KEYS),
+ * HTTP (/at-node/cmd/config) and MQTT (config/* methods) all delegate here;
+ * legacy commands/endpoints are thin aliases over the same registry.
+ * NVS keys are unchanged, so previously stored values stay valid.       */
+static bool cfg_truthy(const String& v) { return v == "1" || v == "true"; }
+
+static bool cfg_s_name(const String& v)  { g_device_name = v; save_config("name", v); return true; }
+static bool cfg_s_hostn(const String& v) { g_hostname = v;    save_config("hostname", v); return true; }
+static bool cfg_s_wssid(const String& v) { g_wifi_ssid = v;   save_config("wifi_ssid", v); return true; }
+static bool cfg_s_wpass(const String& v) { g_wifi_pass = v;   save_config("wifi_pass", v); return true; }
+static bool cfg_s_mbroker(const String& v) { g_mqtt_broker = v; save_config("mqtt_broker", v); return true; }
+static bool cfg_s_mport(const String& v) {
+    int p = v.toInt();
+    if (p <= 0 || p > 65535) return false;
+    g_mqtt_port = p;
+    save_config("mqtt_port", String(p));
+    return true;
+}
+static bool cfg_s_muser(const String& v) { g_mqtt_user = v; save_config("mqtt_user", v); return true; }
+static bool cfg_s_mpass(const String& v) { g_mqtt_pass = v; save_config("mqtt_pass", v); return true; }
+static bool cfg_s_mca(const String& v)   { g_mqtt_ca_fp = v; save_config("mqtt_ca_fp", v); return true; }
+static bool cfg_s_mauto(const String& v) { g_mqtt_auto = cfg_truthy(v); save_config("mqtt_auto", g_mqtt_auto ? "1" : "0"); return true; }
+static bool cfg_s_httpen(const String& v) { set_http_enabled(cfg_truthy(v)); return true; }
+static bool cfg_s_tunen(const String& v)  { rathole_set_enabled(cfg_truthy(v)); return true; }
+
+struct CfgEntry {
+    const char* key;
+    bool        secret;             /* write-only; get/list mask the value */
+    bool   (*set)(const String&);
+    String (*get)(void);
+};
+
+static const CfgEntry CFG_TABLE[] = {
+    {"device.name",     false, cfg_s_name,    [](void){ return g_device_name; }},
+    {"device.hostname", false, cfg_s_hostn,   [](void){ return g_hostname; }},
+    {"wifi.ssid",       false, cfg_s_wssid,   [](void){ return g_wifi_ssid; }},
+    {"wifi.pass",       true,  cfg_s_wpass,   [](void){ return String(); }},
+    {"mqtt.broker",     false, cfg_s_mbroker, [](void){ return g_mqtt_broker; }},
+    {"mqtt.port",       false, cfg_s_mport,   [](void){ return String(g_mqtt_port); }},
+    {"mqtt.user",       false, cfg_s_muser,   [](void){ return g_mqtt_user; }},
+    {"mqtt.pass",       true,  cfg_s_mpass,   [](void){ return String(); }},
+    {"mqtt.ca",         false, cfg_s_mca,     [](void){ return g_mqtt_ca_fp; }},
+    {"mqtt.auto",       false, cfg_s_mauto,   [](void){ return String(g_mqtt_auto ? 1 : 0); }},
+    {"http.enable",     false, cfg_s_httpen,  [](void){ return String(g_http_enabled ? 1 : 0); }},
+    {"rathole.enable",  false, cfg_s_tunen,   [](void){ return String(rathole_is_enabled() ? 1 : 0); }},
+};
+#define CFG_TABLE_COUNT (sizeof(CFG_TABLE) / sizeof(CFG_TABLE[0]))
+
+/* tunnel.<1|2>.<server|token|service|local|auto|retry> — delegated to the
+ * rathole module, which owns its NVS keys and restart semantics.       */
+static bool config_tunnel_key(const String& key, int* idx, String* field)
+{
+    if (!key.startsWith("tunnel.")) return false;
+    int dot = key.indexOf('.', 7);
+    if (dot < 0) return false;
+    int id = key.substring(7, dot).toInt();
+    if (id < 1 || id > RATHOLE_MAX_TUNNELS) return false;
+    *idx = id - 1;
+    *field = key.substring(dot + 1);
+    return true;
+}
+
+static bool config_set(const String& key, const String& val)
+{
+    int idx;
+    String field;
+    if (config_tunnel_key(key, &idx, &field)) return rathole_set(idx, field, val);
+    for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
+        if (key == CFG_TABLE[i].key) return CFG_TABLE[i].set(val);
+    }
+    return false;
+}
+
+static String config_get(const String& key)
+{
+    int idx;
+    String field;
+    if (config_tunnel_key(key, &idx, &field)) {
+        return (field == "token") ? String() : rathole_get(idx, field);
+    }
+    for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
+        if (key == CFG_TABLE[i].key) return CFG_TABLE[i].get();
+    }
+    return String();
+}
+
+static bool config_known(const String& key)
+{
+    int idx;
+    String field;
+    if (config_tunnel_key(key, &idx, &field)) {
+        return field == "server" || field == "token" || field == "service" ||
+               field == "local" || field == "auto" || field == "retry";
+    }
+    for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
+        if (key == CFG_TABLE[i].key) return true;
+    }
+    return false;
+}
+
+static String config_list_json(void)
+{
+    String j = "[";
+    for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
+        if (i) j += ",";
+        j += "{\"key\":\"" + String(CFG_TABLE[i].key) + "\"";
+        if (CFG_TABLE[i].secret) {
+            j += ",\"secret\":true";
+        } else {
+            j += ",\"value\":\"" + CFG_TABLE[i].get() + "\"";
+        }
+        j += "}";
+    }
+    static const char* tfields[] = {"server", "token", "service", "local", "auto", "retry"};
+    for (int t = 0; t < RATHOLE_MAX_TUNNELS; t++) {
+        for (uint8_t f = 0; f < 6; f++) {
+            j += ",{\"key\":\"tunnel." + String(t + 1) + "." + tfields[f] + "\"";
+            if (String(tfields[f]) == "token") {
+                j += ",\"secret\":true";
+            } else {
+                j += ",\"value\":\"" + rathole_get(t, tfields[f]) + "\"";
+            }
+            j += "}";
+        }
+    }
+    j += "]";
+    return j;
+}
+
 /* --- typing queue ------------------------------------------------------ */
 static void type_poll(void)
 {
@@ -620,6 +750,18 @@ host OS first (hosts cache the GATT table per MAC).</p>
 </table>
 
 <h2>Configuration</h2>
+<div class="note">
+  <strong>Unified config layer</strong>: every persistent setting lives behind one registry.
+  Use <code>AT+SET=&lt;key&gt;=&lt;val&gt;</code> / <code>AT+GET=&lt;key&gt;</code> / <code>AT+KEYS</code> on serial,
+  <code>POST /at-node/cmd/config?key=..&amp;val=..</code> (+ <code>GET</code> same path, <code>GET /at-node/cmd/config/list</code>) over HTTP,
+  or MQTT <code>config/set|get|list</code> methods &mdash; all equivalent.
+  Keys: <code>device.name</code>, <code>device.hostname</code>, <code>wifi.ssid</code>, <code>wifi.pass</code>,
+  <code>mqtt.broker|port|user|pass|ca|auto</code>, <code>http.enable</code>, <code>rathole.enable</code>,
+  <code>tunnel.&lt;1|2&gt;.server|token|service|local|auto|retry</code>.
+  Secret keys (passwords, tokens) are write-only.
+  Legacy commands (<code>AT+WIFI=</code>, <code>AT+MQTT=</code>, <code>AT+HTTP=</code>, <code>AT+CONF=</code>,
+  domain endpoints below) are aliases over the same registry.
+</div>
 <table>
   <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
   <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td><td>MQTT connection state</td></tr>
@@ -792,6 +934,13 @@ static const ApiParam P_TUNID[] = {
 static const ApiParam P_TUNEN[] = {
     {"enable", "1|0 rathole master switch (NVS)"},
 };
+static const ApiParam P_CFGSET[] = {
+    {"key", "config key (see config/list)"},
+    {"val", "value"},
+};
+static const ApiParam P_CFGGET[] = {
+    {"key", "config key"},
+};
 
 static const ApiEntry API_CATALOG[] = {
     {"keyboard/tap",      P_TAP,  3, "press+release one key"},
@@ -816,6 +965,9 @@ static const ApiEntry API_CATALOG[] = {
     {"tunnel/disconnect", P_TUNID, 1, "stop tunnel"},
     {"tunnel/clear",      P_TUNID, 1, "wipe tunnel config (NVS)"},
     {"tunnel/enable",     P_TUNEN, 1, "rathole master switch (NVS)"},
+    {"config/set",        P_CFGSET,2, "unified config: set key=val (NVS)"},
+    {"config/get",        P_CFGGET,1, "unified config: read key"},
+    {"config/list",       NULL,    0, "unified config: list all keys"},
     {"sys/info",          NULL,    0, "device manifest + this API catalog"},
 };
 #define API_COUNT (sizeof(API_CATALOG) / sizeof(API_CATALOG[0]))
@@ -1317,6 +1469,37 @@ static void handle_mqtt_clear(void)
 {
     mqtt_clear_config();
     send_json("{\"ok\":true,\"cmd\":\"mqtt/clear\"}");
+}
+
+/* --- unified config endpoints (thin HTTP wrapper over config_set/get) --- */
+static void handle_config_get(void)
+{
+    String key = g_http.arg("key");
+    if (!config_known(key)) {
+        send_json("{\"ok\":false,\"error\":\"unknown key\"}", 400);
+        return;
+    }
+    send_json("{\"ok\":true,\"key\":\"" + key + "\",\"value\":\"" + config_get(key) + "\"}");
+}
+
+static void handle_config_set(void)
+{
+    if (!g_http.hasArg("key")) {
+        send_json("{\"ok\":false,\"error\":\"missing key\"}", 400);
+        return;
+    }
+    String key = g_http.arg("key");
+    String val = g_http.hasArg("val") ? g_http.arg("val") : g_http.arg("value");
+    if (!config_set(key, val)) {
+        send_json("{\"ok\":false,\"error\":\"unknown key or invalid value\"}", 400);
+        return;
+    }
+    send_json("{\"ok\":true,\"cmd\":\"config\",\"key\":\"" + key + "\"}");
+}
+
+static void handle_config_list(void)
+{
+    send_json("{\"ok\":true,\"keys\":" + config_list_json() + "}");
 }
 
 /* forward declarations for IR functions defined later */
@@ -2271,6 +2454,20 @@ static String mqtt_exec(const String& method, const String& query)
         }
         return err("unknown tunnel method");
     }
+    if (method == "config/set") {
+        String key = query_get(query, "key");
+        String val = query_get(query, "val");
+        if (key.length() == 0) return err("missing key");
+        return config_set(key, val) ? "\"ok\":true" : err("unknown key or invalid value");
+    }
+    if (method == "config/get") {
+        String key = query_get(query, "key");
+        if (!config_known(key)) return err("unknown key");
+        return String("\"ok\":true,\"value\":\"") + config_get(key) + "\"";
+    }
+    if (method == "config/list") {
+        return String("\"ok\":true,\"keys\":") + config_list_json();
+    }
     if (method == "net/wol") {
         String mac = query_get(query, "mac");
         if (mac.length() == 0) return err("missing mac");
@@ -2313,55 +2510,27 @@ static void handle_mqtt_status(void)
 
 static void handle_mqtt_config(void)
 {
-    String broker = g_http.arg("broker");
-    String port   = g_http.arg("port");
-    String user   = g_http.arg("user");
-    String pass   = g_http.arg("pass");
-    if (broker.length() > 0) {
-        g_mqtt_broker = broker;
-        save_config("mqtt_broker", broker);
-    }
-    if (port.length() > 0) {
-        g_mqtt_port = port.toInt();
-        save_config("mqtt_port", port);
-    }
-    if (user.length() > 0) {
-        g_mqtt_user = user;
-        save_config("mqtt_user", user);
-    }
-    if (pass.length() > 0) {
-        g_mqtt_pass = pass;
-        save_config("mqtt_pass", pass);
-    }
-    if (g_http.hasArg("auto")) {
-        g_mqtt_auto = g_http.arg("auto") == "1";
-        save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
-    }
+    /* legacy alias over the unified config layer */
+    if (g_http.hasArg("broker")) config_set("mqtt.broker", g_http.arg("broker"));
+    if (g_http.hasArg("port"))   config_set("mqtt.port",   g_http.arg("port"));
+    if (g_http.hasArg("user"))   config_set("mqtt.user",   g_http.arg("user"));
+    if (g_http.hasArg("pass"))   config_set("mqtt.pass",   g_http.arg("pass"));
+    if (g_http.hasArg("auto"))   config_set("mqtt.auto",   g_http.arg("auto"));
     send_json("{\"ok\":true,\"cmd\":\"mqtt/config\"}");
 }
 
 static void handle_mqtt_ca(void)
 {
     String fp = g_http.arg("fp");
-    if (fp.length() > 0) {
-        g_mqtt_ca_fp = fp;
-        save_config("mqtt_ca_fp", fp);
-    }
+    if (fp.length() > 0) config_set("mqtt.ca", fp);
     send_json("{\"ok\":true,\"cmd\":\"mqtt/ca\"}");
 }
 
 static void handle_wifi_config(void)
 {
-    String ssid = g_http.arg("ssid");
-    String pass = g_http.arg("pass");
-    if (ssid.length() > 0) {
-        g_wifi_ssid = ssid;
-        save_config("wifi_ssid", ssid);
-    }
-    if (pass.length() > 0) {
-        g_wifi_pass = pass;
-        save_config("wifi_pass", pass);
-    }
+    /* legacy alias over the unified config layer */
+    if (g_http.hasArg("ssid")) config_set("wifi.ssid", g_http.arg("ssid"));
+    if (g_http.hasArg("pass")) config_set("wifi.pass", g_http.arg("pass"));
     send_json("{\"ok\":true,\"cmd\":\"wifi/config\",\"ssid\":\"" + g_wifi_ssid + "\"}");
 }
 
@@ -2434,12 +2603,10 @@ static void handle_http_config(void)
     String val = g_http.arg("enable");
     if (val.length() == 0) val = g_http.arg("plain");
     val.trim();
-    if (val == "1" || val == "true") {
-        set_http_enabled(true);
-        send_json("{\"ok\":true,\"cmd\":\"http/config\",\"enabled\":true}");
-    } else if (val == "0" || val == "false") {
-        set_http_enabled(false);
-        send_json("{\"ok\":true,\"cmd\":\"http/config\",\"enabled\":false}");
+    if (val == "1" || val == "true" || val == "0" || val == "false") {
+        config_set("http.enable", val);
+        send_json("{\"ok\":true,\"cmd\":\"http/config\",\"enabled\":" +
+                  String(g_http_enabled ? "true" : "false") + "}");
     } else {
         send_json("{\"ok\":false,\"error\":\"expected enable=1|0\"}", 400);
     }
@@ -2580,7 +2747,8 @@ static void serial_exec(const String& line)
         Serial.println("  AT+MOD=<mask>                modifiers only");
         Serial.println("  AT+KEY_SEQ=<ms>,<mods>,<k1..6>,... batch reports");
         Serial.println("  AT+TEXT=<text>               type ASCII text");
-        Serial.println("  AT+CONF=<key>=<val>          name/hostname (NVS)");
+        Serial.println("  AT+SET=<key>=<val> / AT+GET=<key> / AT+KEYS  unified config");
+        Serial.println("  AT+CONF=<key>=<val>          name/hostname (NVS, legacy alias)");
         Serial.println("  AT+BT_LIST / AT+BT_DISC / AT+BT_PAIR");
         Serial.println("  AT+GPIO_W=<pin>,<level> / AT+GPIO_R=<pin>");
         Serial.println("  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R / AT+I2C_W");
@@ -2694,20 +2862,41 @@ static void serial_exec(const String& line)
         g_type_idx  = 0;
         g_type_busy = true;
         Serial.println("OK");
+    } else if (line.startsWith("AT+SET=")) {
+        /* AT+SET=<config-key>=<value> — unified config layer */
+        String kv = line.substring(7);
+        int eq = kv.indexOf('=');
+        if (eq > 0 && config_set(kv.substring(0, eq), kv.substring(eq + 1))) {
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+GET=")) {
+        String key = line.substring(7);
+        if (config_known(key)) {
+            Serial.println("+GET:" + key + "=" + config_get(key));
+            Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line == "AT+KEYS") {
+        Serial.println("+KEYS:" + config_list_json());
+        Serial.println("OK");
     } else if (line.startsWith("AT+CONF=")) {
+        /* legacy alias: name -> device.name, hostname -> device.hostname,
+         * http_enable -> http.enable; anything else falls through to a raw
+         * NVS write in the atnode namespace.                            */
         String kv = line.substring(8);
         int eq = kv.indexOf('=');
         if (eq > 0) {
             String key = kv.substring(0, eq);
             String val = kv.substring(eq + 1);
             if (key == "name") {
-                g_device_name = val;
-                save_config(key, val);
+                config_set("device.name", val);
             } else if (key == "hostname") {
-                g_hostname = val;
-                save_config(key, val);
+                config_set("device.hostname", val);
             } else if (key == "http_enable") {
-                set_http_enabled(val.toInt() != 0);
+                config_set("http.enable", val);
             } else {
                 save_config(key, val);
             }
@@ -2836,16 +3025,12 @@ static void serial_exec(const String& line)
             String sub = (c1 > 0) ? args.substring(0, c1) : args;
             String val = (c1 > 0) ? args.substring(c1 + 1) : "";
             if (sub == "broker") {
-                g_mqtt_broker = val;
-                save_config("mqtt_broker", val);
-                Serial.println("OK");
+                Serial.println(config_set("mqtt.broker", val) ? "OK" : "ERROR");
             } else if (sub == "clear") {
                 mqtt_clear_config();
                 Serial.println("OK");
             } else if (sub == "port") {
-                g_mqtt_port = val.toInt();
-                save_config("mqtt_port", val);
-                Serial.println("OK");
+                Serial.println(config_set("mqtt.port", val) ? "OK" : "ERROR");
             } else if (sub == "connect") {
                 g_mqtt_connect_pending = true;
                 if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);
@@ -2857,9 +3042,7 @@ static void serial_exec(const String& line)
                 Serial.println(g_mqtt_auto ? "1" : "0");
                 Serial.println("OK");
             } else if (sub == "auto") {
-                g_mqtt_auto = (val == "1");
-                save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
-                Serial.println("OK");
+                Serial.println(config_set("mqtt.auto", val) ? "OK" : "ERROR");
             } else if (sub == "ca") {
                 /* val = SHA256 fingerprint or "status" */
                 if (val == "status") {
@@ -2869,9 +3052,7 @@ static void serial_exec(const String& line)
                         Serial.println("+MQTT_CA:none");
                     }
                 } else {
-                    g_mqtt_ca_fp = val;
-                    save_config("mqtt_ca_fp", val);
-                    Serial.println("OK");
+                    Serial.println(config_set("mqtt.ca", val) ? "OK" : "ERROR");
                 }
             } else {
                 Serial.println("ERROR");
@@ -2886,13 +3067,9 @@ static void serial_exec(const String& line)
             String sub = args.substring(0, c1);
             String val = args.substring(c1 + 1);
             if (sub == "ssid") {
-                g_wifi_ssid = val;
-                save_config("wifi_ssid", val);
-                Serial.println("OK");
+                Serial.println(config_set("wifi.ssid", val) ? "OK" : "ERROR");
             } else if (sub == "pass") {
-                g_wifi_pass = val;
-                save_config("wifi_pass", val);
-                Serial.println("OK");
+                Serial.println(config_set("wifi.pass", val) ? "OK" : "ERROR");
             } else if (sub == "status") {
                 Serial.print("+WIFI:");
                 Serial.println(g_wifi_ssid);
@@ -2915,11 +3092,10 @@ static void serial_exec(const String& line)
             prefs.end();
             Serial.println("OK");
         } else if (args.startsWith("enable,")) {
-            int val = args.substring(7).toInt();
-            set_http_enabled(val != 0);
+            config_set("http.enable", args.substring(7));
             Serial.println("OK");
         } else if (args == "1" || args == "0") {
-            set_http_enabled(args == "1");
+            config_set("http.enable", args);
             Serial.println("OK");
         } else {
             Serial.println("ERROR");
@@ -3097,6 +3273,9 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
         g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
+        g_http.on("/at-node/cmd/config", HTTP_GET, handle_config_get);
+        g_http.on("/at-node/cmd/config", HTTP_POST, handle_config_set);
+        g_http.on("/at-node/cmd/config/list", HTTP_GET, handle_config_list);
         g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
         g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
         g_http.on("/at-node/cmd/tunnel/enable", HTTP_POST, handle_tunnel_enable);
