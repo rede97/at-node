@@ -38,6 +38,16 @@ Device status (pure JSON).
 
 API documentation page (HTML).
 
+### Browser pages (HTML)
+
+| Page | Purpose |
+|------|---------|
+| `/at-node/status` | Device status dashboard |
+| `/at-node/pair` | BLE pairing (advertising, bonds) |
+| `/at-node/mqtt` | MQTT broker config form |
+| `/at-node/tunnel` | rathole tunnel config (2 tunnels + master switch) |
+| `/at-node/help` | This API documentation |
+
 ### GET /at-node/help.json
 
 Machine-readable API catalog (same data as MQTT `sys/info` services).
@@ -77,9 +87,10 @@ Execute raw AT command.
 {"ok": true, "response": "OK"}
 ```
 
-**Supported commands**:
+**Supported commands** (the HTTP raw-AT endpoint supports this subset; the full
+AT set — `AT+VER`, `AT+SET/GET/KEYS`, `AT+TUNNEL`, `AT+MOD`, `AT+KEY_SEQ`,
+`AT+BT_*`, ... — is available on the USB serial port):
 - `AT`
-- `AT+STATUS`
 - `AT+TAP=<ms>,<mods>,<key>`
 - `AT+KEY=<mods>,<k0>,<k1>,...,<k5>`
 - `AT+TEXT=<string>`
@@ -287,11 +298,23 @@ Configure MQTT broker.
 - `port` (int): broker port (1883=plain, 8883=TLS)
 - `user` (string): username (optional)
 - `pass` (string): password (optional)
+- `auto` (int): `1` = auto-connect on boot (NVS)
 
 **Response**:
 ```json
 {"ok": true, "cmd": "mqtt/config"}
 ```
+
+### POST /at-node/cmd/mqtt/clear
+
+Wipe all MQTT settings (NVS + runtime) and disconnect.
+
+**Response**:
+```json
+{"ok": true, "cmd": "mqtt/clear"}
+```
+
+**Browser UI**: `GET /at-node/mqtt` — form for broker/credentials/fingerprint/auto.
 
 ### POST /at-node/cmd/mqtt/ca
 
@@ -448,30 +471,104 @@ Erase all persisted settings in the `atnode` NVS namespace and restart the devic
 
 ---
 
-## 10. Device Configuration
+## 10. Unified Configuration
 
-### POST /at-node/cmd/config/set
+Every persistent setting lives behind one registry: `config_set(key, val)` /
+`config_get(key)` / `config_list_json()`. Serial AT, HTTP and MQTT all delegate
+to it, and legacy domain commands (`AT+WIFI=`, `AT+MQTT=`, `AT+HTTP=`,
+`AT+CONF=`, `/at-node/cmd/wifi/config`, `/at-node/cmd/mqtt/config`, ...) are
+thin aliases over the same registry. NVS keys are unchanged.
 
-Set device configuration (NVS persistent).
+**Key space**:
 
-**Params** (JSON body or query):
-- `name`: BLE device name
-- `hostname`: mDNS hostname
-- `wifi_ssid`: WiFi SSID
-- `wifi_pass`: WiFi password
-- `mqtt_broker`: MQTT broker
-- `mqtt_port`: MQTT port
-- `mqtt_user`: MQTT username
-- `mqtt_pass`: MQTT password
+| Key | Notes |
+|-----|-------|
+| `device.name` | BLE device name |
+| `device.hostname` | mDNS hostname |
+| `wifi.ssid` / `wifi.pass` | WiFi credentials (pass is write-only) |
+| `mqtt.broker` / `mqtt.port` / `mqtt.user` / `mqtt.pass` / `mqtt.ca` / `mqtt.auto` | pass is write-only |
+| `http.enable` | `1`/`0`, takes effect immediately |
+| `rathole.enable` | rathole master switch, `1`/`0` |
+| `tunnel.<1\|2>.server` / `.token` / `.service` / `.local` / `.auto` / `.retry` | token is write-only; retry = reconnect backoff base 1-60 s |
+
+### POST /at-node/cmd/config
+
+Set a config value.
+
+**Params**:
+- `key` (string): config key from the table above
+- `val` (string): value
 
 **Response**:
 ```json
-{"ok": true, "cmd": "config/set"}
+{"ok": true, "cmd": "config", "key": "tunnel.1.retry"}
 ```
+
+### GET /at-node/cmd/config
+
+Read a config value. **Params**: `key`. Secret keys return an empty value.
+
+```json
+{"ok": true, "key": "device.name", "value": "AT-Node-ESP-5688"}
+```
+
+### GET /at-node/cmd/config/list
+
+List all config keys (secret keys marked, values omitted).
+
+```json
+{"ok": true, "keys": [{"key": "wifi.pass", "secret": true}, {"key": "mqtt.broker", "value": "122.51.226.5"}, ...]}
+```
+
+**Serial equivalents**: `AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS`.
+**MQTT equivalents**: `config/set` (`key,val`), `config/get` (`key`), `config/list`.
 
 ---
 
-## 11. AP Portal
+## 11. rathole Tunnels
+
+Reverse-tunnel client compatible with [rathole](https://github.com/rapiz1/rathole)
+(protocol v1, **plain TCP transport** — tunnel only protocols that carry their
+own encryption like SSH/HTTPS, or bind the service to `127.0.0.1` on the
+rathole server). Two concurrent tunnels, NVS-persisted, optional autostart.
+
+### GET /at-node/cmd/tunnel/status
+
+Both tunnels' state.
+
+```json
+{"ok": true, "tunnels": [
+  {"id": 1, "configured": true, "server": "192.168.1.7:2333", "service": "c3http",
+   "local": "127.0.0.1:80", "auto": false, "retry": 5, "enabled": true,
+   "running": true, "connected": true, "pool": 2, "data_channels": 2,
+   "free_heap": 24232, "last_error": ""}
+]}
+```
+
+### POST /at-node/cmd/tunnel/config
+
+**Params**: `id` (`1`|`2`), plus any of `server`, `token`, `service`, `local`,
+`auto` (`1`=connect at boot), `retry` (reconnect backoff base, seconds, 1-60).
+Empty fields keep their current value. A running tunnel restarts on change.
+
+### POST /at-node/cmd/tunnel/enable
+
+Global master switch (NVS). **Params**: `enable=1|0`. When disabled all tunnels
+stop and none auto-start at boot.
+
+### POST /at-node/cmd/tunnel/connect | disconnect | clear
+
+**Params**: `id`. `clear` also wipes the tunnel's NVS keys.
+
+**Browser UI**: `GET /at-node/tunnel`.
+**Serial**: `AT+TUNNEL=enable,<0|1>`, `AT+TUNNEL=<id>,server|token|service|local|auto|retry,<val>`,
+`AT+TUNNEL=<id>,connect|disconnect|clear|status`, `AT+TUNNEL=status`.
+**MQTT**: `tunnel/status`, `tunnel/config`, `tunnel/enable`, `tunnel/connect`,
+`tunnel/disconnect`, `tunnel/clear`.
+
+---
+
+## 12. AP Portal
 
 ### POST /at-node/cmd/ap
 

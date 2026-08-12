@@ -28,7 +28,7 @@ CH582F RISC-V firmware — BLE HID keyboard + USB CDC+HID composite, plus a BLE 
 - **`AT+VER` role tag**: reports `AT-Node v1.0 [kbd|dongle]` (runtime role in DUAL) — distinguishes identical boards.
 - **RAM budget**: kbd 19076 B (58%) / dongle 19740 B (60%) / dual ~21000 B (64%). `.highcode` (~8KB) is WCH RAM-resident code — untouchable.
 - **Two-board dev rig**: kbd board (test keyboard, inject keys via `AT+KEY`) + dongle board (receiver). `tools/test/test_dongle_loop.py` + `tools/test/test_dongle_hardening.py` drive both; `tools/ci/loop_test.sh` one-click build+flash+test.
-- **ESP32-C3 variant**: `esp32/esp32_at_node/` — WiFi HTTP (`/at-node/*`) + MQTT + BLE HID keyboard + rathole tunnel client (2 services, plain TCP, `AT+TUNNEL` / `/at-node/tunnel` page), full AT command parity with CH582. **Flash ONLY via `esp32/esp32_at_node/build.ps1 -Port <COM>`** — its fqbn carries `CDCOnBoot=cdc`. Any other path (bare `arduino-cli`, Arduino IDE default) silently routes `Serial` to UART0 pads: native-USB COM port shows only the ROM boot log, AT dead, while WiFi/HTTP keep working. Symptom → reflash with build.ps1, do not debug the sketch.
+- **ESP32-C3 variant**: `esp32/esp32_at_node/` — WiFi HTTP (`/at-node/*`) + MQTT + BLE HID keyboard + rathole tunnel client (2 services, plain TCP), full AT command parity with CH582. **All persistent config goes through one registry** (`config_set/get/list`): `AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS` on serial, `/at-node/cmd/config` over HTTP, `config/set|get|list` over MQTT; key space `device.*`, `wifi.*`, `mqtt.*`, `http.enable`, `rathole.enable`, `tunnel.<1|2>.*`. Legacy commands/endpoints are aliases. **Flash ONLY via `esp32/esp32_at_node/build.ps1 -Port <COM>`** — its fqbn carries `CDCOnBoot=cdc`. Any other path (bare `arduino-cli`, Arduino IDE default) silently routes `Serial` to UART0 pads: native-USB COM port shows only the ROM boot log, AT dead, while WiFi/HTTP keep working. Symptom → reflash with build.ps1, do not debug the sketch.
 
 ## Commands
 
@@ -167,7 +167,9 @@ LED self-schedules blink timing outside the table.
 - `DESIGN.md` — design philosophy, memory layout, BLE callback registration, USB/low-power exclusion details.
 - `ch582/USER-MANUAL.md` — AT 命令使用手册(命令/模式/参数/注意细节)。
 - `ch582/FIELD-NOTES.md` — 实战坑录(F1–F19)。
-- `esp32/PLAN.md` — ESP32-C3 AT Node network variant plan (E1–E7).
+- `esp32/PLAN.md` — ESP32-C3 AT Node network variant plan (E1–E8).
+- `esp32/README.md` — ESP32 版状态/统一配置层/rathole 隧道说明。
+- `esp32/API.md` — ESP32 HTTP API 参考(agent 集成用)。
 - `.pi/skills/esp32-windows/` — Windows/ESP32-C3 development pit list (pi skill).
 - `.pi/skills/ch582-linux/` — Linux build/flash/test ops manual (pi skill).
 - `EVT/` — WCH CH583 SDK reference code (gitignored, not compiled).

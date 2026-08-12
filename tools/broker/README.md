@@ -153,6 +153,15 @@ header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON�
 | `ble/status` | — | BLE 名称/地址/连接/绑定列表 | `{"ble":{...}}` |
 | `net/wol` | `mac` | 在设备所在 LAN 发 WOL 魔包 | `{"ok":true}` |
 | `net/ping` | `host,count` | 从设备 LAN ICMP ping | `{"ip","recv","avg_ms"}` |
+| `tunnel/status` | — | rathole 隧道状态（2 条） | `{"tunnels":[...]}` |
+| `tunnel/config` | `id,server,token,service,local,auto,retry` | 配置隧道 1\|2（NVS） | `{"tunnel":{...}}` |
+| `tunnel/connect` | `id` | 启动隧道控制通道 | `{"ok":true}` |
+| `tunnel/disconnect` | `id` | 停止隧道 | `{"ok":true}` |
+| `tunnel/clear` | `id` | 清空隧道配置 | `{"ok":true}` |
+| `tunnel/enable` | `enable` | rathole 总开关（NVS，关=全停且不上电自连） | `{"enabled":bool}` |
+| `config/set` | `key,val` | 统一配置层写（键空间见 `config/list`） | `{"ok":true}` |
+| `config/get` | `key` | 统一配置层读（密码/token 只写不可读） | `{"value":"..."}` |
+| `config/list` | — | 全部配置键清单 | `{"keys":[...]}` |
 | `sys/info` | — | 设备清单（同 info 字段） | `{"info":{...}}` |
 
 modifiers 位掩码：bit0 LCtrl, bit1 LShift, bit2 LAlt, bit3 LGui, bit4-7 右侧同序。
