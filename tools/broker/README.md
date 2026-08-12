@@ -154,7 +154,7 @@ header `Authorization: Bearer <api-key>`（localhost 免）。全部返回 JSON�
 | `net/wol` | `mac` | 在设备所在 LAN 发 WOL 魔包 | `{"ok":true}` |
 | `net/ping` | `host,count` | 从设备 LAN ICMP ping | `{"ip","recv","avg_ms"}` |
 | `tunnel/status` | — | rathole 隧道状态（2 条） | `{"tunnels":[...]}` |
-| `tunnel/config` | `id,server,token,service,local,auto,retry` | 配置隧道 1\|2（NVS） | `{"tunnel":{...}}` |
+| `tunnel/config` | `id,server,token,service,local,auto,retry,enable` | 配置隧道 1\|2（NVS;enable=每隧道独立开关） | `{"tunnel":{...}}` |
 | `tunnel/connect` | `id` | 启动隧道控制通道 | `{"ok":true}` |
 | `tunnel/disconnect` | `id` | 停止隧道 | `{"ok":true}` |
 | `tunnel/clear` | `id` | 清空隧道配置 | `{"ok":true}` |

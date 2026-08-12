@@ -489,7 +489,7 @@ thin aliases over the same registry. NVS keys are unchanged.
 | `mqtt.broker` / `mqtt.port` / `mqtt.user` / `mqtt.pass` / `mqtt.ca` / `mqtt.auto` | pass is write-only |
 | `http.enable` | `1`/`0`, takes effect immediately |
 | `rathole.enable` | rathole master switch, `1`/`0` |
-| `tunnel.<1\|2>.server` / `.token` / `.service` / `.local` / `.auto` / `.retry` | token is write-only; retry = reconnect backoff base 1-60 s |
+| `tunnel.<1\|2>.server` / `.token` / `.service` / `.local` / `.auto` / `.retry` / `.enable` | token is write-only; retry = reconnect backoff base 1-60 s; enable = per-tunnel persisted switch |
 
 ### POST /at-node/cmd/config
 
@@ -539,16 +539,21 @@ Both tunnels' state.
 ```json
 {"ok": true, "tunnels": [
   {"id": 1, "configured": true, "server": "192.168.1.7:2333", "service": "c3http",
-   "local": "127.0.0.1:80", "auto": false, "retry": 5, "enabled": true,
-   "running": true, "connected": true, "pool": 2, "data_channels": 2,
-   "free_heap": 24232, "last_error": ""}
+   "local": "127.0.0.1:80", "auto": false, "retry": 5, "master": true,
+   "enabled": true, "running": true, "connected": true, "pool": 2,
+   "data_channels": 2, "free_heap": 24232, "last_error": ""}
 ]}
 ```
+
+**Switch hierarchy**: `master` (global, `rathole.enable`) && per-tunnel `enabled`
+&& `auto` together decide boot autostart; `master` or `enabled` off makes
+`connect` fail immediately. `enabled` off stops a running tunnel right away.
 
 ### POST /at-node/cmd/tunnel/config
 
 **Params**: `id` (`1`|`2`), plus any of `server`, `token`, `service`, `local`,
-`auto` (`1`=connect at boot), `retry` (reconnect backoff base, seconds, 1-60).
+`auto` (`1`=connect at boot), `retry` (reconnect backoff base, seconds, 1-60),
+`enable` (`1|0` per-tunnel persisted switch).
 Empty fields keep their current value. A running tunnel restarts on change.
 
 ### POST /at-node/cmd/tunnel/enable

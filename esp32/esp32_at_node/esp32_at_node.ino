@@ -517,7 +517,8 @@ static bool config_known(const String& key)
     String field;
     if (config_tunnel_key(key, &idx, &field)) {
         return field == "server" || field == "token" || field == "service" ||
-               field == "local" || field == "auto" || field == "retry";
+               field == "local" || field == "auto" || field == "retry" ||
+               field == "enable";
     }
     for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
         if (key == CFG_TABLE[i].key) return true;
@@ -538,9 +539,9 @@ static String config_list_json(void)
         }
         j += "}";
     }
-    static const char* tfields[] = {"server", "token", "service", "local", "auto", "retry"};
+    static const char* tfields[] = {"server", "token", "service", "local", "auto", "retry", "enable"};
     for (int t = 0; t < RATHOLE_MAX_TUNNELS; t++) {
-        for (uint8_t f = 0; f < 6; f++) {
+        for (uint8_t f = 0; f < 7; f++) {
             j += ",{\"key\":\"tunnel." + String(t + 1) + "." + tfields[f] + "\"";
             if (String(tfields[f]) == "token") {
                 j += ",\"secret\":true";
@@ -773,7 +774,7 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>GET</td><td><code>/at-node/mqtt</code></td><td></td><td>MQTT config page (browser)</td></tr>
   <tr><td>GET</td><td><code>/at-node/tunnel</code></td><td></td><td>rathole tunnel config page (browser)</td></tr>
   <tr><td>GET</td><td><code>/at-node/cmd/tunnel/status</code></td><td></td><td>Tunnel states (JSON)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto,retry</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto,retry,enable</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/enable</code></td><td><code>enable=1|0</code></td><td>rathole master switch (NVS); off = all tunnels stopped, no boot autostart</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/connect</code></td><td><code>id</code></td><td>Start tunnel control channel</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/disconnect</code></td><td><code>id</code></td><td>Stop tunnel</td></tr>
@@ -1213,6 +1214,7 @@ static void handle_tunnel_config(void)
         if (v.length() > 0) rathole_set(idx, keys[i], v);
     }
     if (g_http.hasArg("auto")) rathole_set(idx, "auto", g_http.arg("auto"));
+    if (g_http.hasArg("enable")) rathole_set(idx, "enable", g_http.arg("enable"));
     send_json("{\"ok\":true,\"cmd\":\"tunnel/config\",\"tunnel\":" +
               rathole_status_json(idx) + "}");
 }
@@ -1309,7 +1311,7 @@ function msg(t){ document.getElementById('msg').textContent = t; }
 function esc(s){ return (s||'').replace(/"/g,'&quot;'); }
 function refresh(){
   fetch('/at-node/cmd/tunnel/status').then(r=>r.json()).then(d=>{
-    document.getElementById('en').innerHTML = d.tunnels[0].enabled
+    document.getElementById('en').innerHTML = d.tunnels[0].master
       ? '<span class="ok">enabled</span>' : '<span class="bad">disabled</span>';
     document.getElementById('tunnels').innerHTML = d.tunnels.map(t=>{
       const state = t.connected ? '<span class="ok">connected</span>'
@@ -1321,7 +1323,8 @@ function refresh(){
         '<tr><th>Token</th><td><input type=password id="token'+t.id+'" placeholder="(unchanged if empty)"></td></tr>' +
         '<tr><th>Local (host:port)</th><td><input type=text id="local'+t.id+'" value="'+esc(t.local)+'"></td></tr>' +
         '<tr><th>Retry interval (s)</th><td><input type=text id="retry'+t.id+'" value="'+t.retry+'"></td></tr>' +
-        '<tr><th>Auto-connect</th><td><input type=checkbox id="auto'+t.id+'"'+(t.auto?' checked':'')+'></td></tr>' +
+        '<tr><th>Enabled</th><td><input type=checkbox id="enable'+t.id+'"'+(t.enabled?' checked':'')+'> <small>persisted; off = stopped &amp; no boot start</small></td></tr>' +
+        '<tr><th>Auto-connect</th><td><input type=checkbox id="auto'+t.id+'"'+(t.auto?' checked':'')+'> <small>at boot (requires Enabled)</small></td></tr>' +
         '</table>' +
         '<button onclick="save('+t.id+')">Save</button>' +
         '<button class="ghost" onclick="act('+t.id+',\'connect\')">Connect</button>' +
@@ -1340,6 +1343,7 @@ function save(id){
     service: document.getElementById('service'+id).value,
     local: document.getElementById('local'+id).value,
     retry: document.getElementById('retry'+id).value,
+    enable: document.getElementById('enable'+id).checked ? '1' : '0',
     auto: document.getElementById('auto'+id).checked ? '1' : '0'});
   const tok = document.getElementById('token'+id).value;
   if (tok) p.set('token', tok);
@@ -2450,6 +2454,8 @@ static String mqtt_exec(const String& method, const String& query)
             }
             String a = query_get(query, "auto");
             if (a.length() > 0) rathole_set(idx, "auto", a);
+            String e = query_get(query, "enable");
+            if (e.length() > 0) rathole_set(idx, "enable", e);
             return String("\"ok\":true,\"tunnel\":") + rathole_status_json(idx);
         }
         return err("unknown tunnel method");
@@ -3147,7 +3153,8 @@ static void serial_exec(const String& line)
             if (id < 1 || id > RATHOLE_MAX_TUNNELS) {
                 Serial.println("ERROR");
             } else if (sub == "server" || sub == "token" || sub == "service" ||
-                       sub == "local" || sub == "auto" || sub == "retry") {
+                       sub == "local" || sub == "auto" || sub == "retry" ||
+                       sub == "enable") {
                 Serial.println((val.length() > 0 && rathole_set(id - 1, sub, val))
                                ? "OK" : "ERROR");
             } else if (sub == "connect") {

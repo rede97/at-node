@@ -39,6 +39,7 @@ struct TunnelCfg {
     String svc;       /* service name (identical on server side) */
     String local;     /* "host:port" to forward to */
     bool   auto_conn;
+    bool   enabled;   /* per-tunnel persisted switch (NVS tun<N>_en, default on) */
     uint8_t retry_s;  /* reconnect backoff base, seconds (1-60) */
 };
 
@@ -459,6 +460,7 @@ static void load_one(int idx)
     c.svc       = prefs.getString(nvs_key(idx, "svc", key, sizeof(key)), "");
     c.local     = prefs.getString(nvs_key(idx, "local", key, sizeof(key)), "");
     c.auto_conn = prefs.getString(nvs_key(idx, "auto", key, sizeof(key)), "0") == "1";
+    c.enabled   = prefs.getString(nvs_key(idx, "en", key, sizeof(key)), "1") == "1";
     c.retry_s   = (uint8_t)constrain(prefs.getString(nvs_key(idx, "retry", key, sizeof(key)), "1").toInt(), 1, 60);
     prefs.end();
 }
@@ -481,7 +483,8 @@ void rathole_init(void)
         g_tun[i].connected = false;
         for (int s = 0; s < RATHOLE_POOL_SIZE; s++) g_tun[i].pool[s] = NULL;
         load_one(i);
-        if (g_rathole_enabled && g_tun[i].cfg.auto_conn && configured(i)) {
+        if (g_rathole_enabled && g_tun[i].cfg.enabled &&
+            g_tun[i].cfg.auto_conn && configured(i)) {
             rathole_start(i);
         }
     }
@@ -496,7 +499,7 @@ void rathole_set_enabled(bool en)
         Serial.println("[rathole] globally disabled");
     } else {
         for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
-            if (g_tun[i].cfg.auto_conn) rathole_start(i);
+            if (g_tun[i].cfg.enabled && g_tun[i].cfg.auto_conn) rathole_start(i);
         }
         Serial.println("[rathole] globally enabled");
     }
@@ -517,6 +520,7 @@ bool rathole_set(int idx, const String& key, const String& val)
     else if (key == "service")  { c.svc = val;     field = "svc"; }
     else if (key == "local")    { c.local = val;   field = "local"; }
     else if (key == "auto")     { c.auto_conn = (val == "1" || val == "true"); field = "auto"; }
+    else if (key == "enable")   { c.enabled = (val == "1" || val == "true");   field = "en"; }
     else if (key == "retry")    {
         int r = constrain(val.toInt(), 1, 60);
         if (r <= 0) return false;
@@ -527,8 +531,15 @@ bool rathole_set(int idx, const String& key, const String& val)
 
     char nk[16];
     save_config(nvs_key(idx, field, nk, sizeof(nk)),
-                key == "auto" ? String(c.auto_conn ? "1" : "0")
+                key == "auto"  ? String(c.auto_conn ? "1" : "0")
+              : key == "enable" ? String(c.enabled ? "1" : "0")
               : key == "retry" ? String(c.retry_s) : val);
+
+    /* per-tunnel switch: off stops immediately; on does not force-start */
+    if (key == "enable" && !c.enabled) {
+        rathole_stop(idx);
+        return true;
+    }
 
     /* restart a running tunnel so the change takes effect */
     if (g_tun[idx].task && key != "auto") {
@@ -547,6 +558,7 @@ String rathole_get(int idx, const String& key)
     if (key == "service")  return c.svc;
     if (key == "local")    return c.local;
     if (key == "auto")     return c.auto_conn ? "1" : "0";
+    if (key == "enable")   return c.enabled ? "1" : "0";
     if (key == "retry")    return String(c.retry_s);
     return "";
 }
@@ -557,6 +569,10 @@ bool rathole_start(int idx)
     Tunnel& t = g_tun[idx];
     if (!g_rathole_enabled) {
         t.last_error = "globally disabled";
+        return false;
+    }
+    if (!t.cfg.enabled) {
+        t.last_error = "tunnel disabled";
         return false;
     }
     if (!configured(idx)) {
@@ -597,6 +613,7 @@ void rathole_clear(int idx)
     prefs.remove(nvs_key(idx, "svc", key, sizeof(key)));
     prefs.remove(nvs_key(idx, "local", key, sizeof(key)));
     prefs.remove(nvs_key(idx, "auto", key, sizeof(key)));
+    prefs.remove(nvs_key(idx, "en", key, sizeof(key)));
     prefs.remove(nvs_key(idx, "retry", key, sizeof(key)));
     prefs.end();
     g_tun[idx].cfg = TunnelCfg();
@@ -619,7 +636,8 @@ String rathole_status_json(int idx)
     j += ",\"local\":\"" + t.cfg.local + "\"";
     j += ",\"auto\":" + String(t.cfg.auto_conn ? "true" : "false");
     j += ",\"retry\":" + String(t.cfg.retry_s);
-    j += ",\"enabled\":" + String(g_rathole_enabled ? "true" : "false");
+    j += ",\"master\":" + String(g_rathole_enabled ? "true" : "false");
+    j += ",\"enabled\":" + String(t.cfg.enabled ? "true" : "false");
     j += ",\"running\":" + String(t.task ? "true" : "false");
     j += ",\"connected\":" + String(t.connected ? "true" : "false");
     j += ",\"pool\":" + String(pooled);

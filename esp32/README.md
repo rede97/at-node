@@ -67,7 +67,7 @@
 - AT：`AT+TUNNEL=enable,<0|1>`（全局总开关，NVS）；`AT+TUNNEL=<1|2>,server|token|service|local|auto|retry,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
 - REST：`GET /at-node/cmd/tunnel/status`，`POST /at-node/cmd/tunnel/{config,enable,connect,disconnect,clear}`
 - MQTT：`tunnel/{status,config,enable,connect,disconnect,clear}` 方法全通（见 sys/info API 目录）
-- 配置项：全局 `enable` 一键开关（关掉全停且不上电自连）；每隧道 `retry`（重连退避基数秒，1-60，指数×2 封顶 60s）、`auto`（上电自连）
+- 配置项：全局 `rathole.enable` 一键总开关（关掉全停且不上电自连）；每隧道 `enable` 独立开关（持久化，关=立即停且禁止 connect）、`auto`（上电自连，需 enable=1）、`retry`（重连退避基数秒，1-60，指数×2 封顶 60s）。三级关系：`master && enable && auto → 上电自连`
 - **RAM 共存**：MQTT TLS 握手需要 ~25KB+ 连续堆块。隧道 socket 会切碎堆，故启动时隧道等 MQTT 先连上（最多 30s）再建池；运行期若 MQTT 重连连续 5 次遇到 `SSL - Memory allocation failed`，设备自动重启整理堆（自愈）
 - **适用场景**：长连接协议（SSH 等，实测 62s 12 往返稳定）。避免高频短连接爆发（每访客 2 条 socket，TIME_WAIT 驻留 ~60s）；WiFi 已关省电（`WiFi.setSleep(false)`），LAN 延迟 ~30ms 降到 ~2-30ms
 - 测试陪练：`tools/test/rathole_server.test.toml`（本地 rathole server，两服务：c3http → 127.0.0.1:80，c3echo → TCP echo）
