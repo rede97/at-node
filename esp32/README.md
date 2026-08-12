@@ -54,8 +54,10 @@
 
 - 协议：rathole v1（bincode 定长消息），plain TCP transport；TLS/noise 未实现——**只穿透自带加密的协议**（SSH/HTTPS/MQTT-TLS），或把服务 bind 在 server 侧 `127.0.0.1`
 - 架构：每隧道 1 个 manager task（控制通道 + 连接池轮询）；服务器 TCP_POOL_SIZE=8，但每 standby socket 占 ~2.4KB heap，池缩为 **2 条/隧道**；访客到来才起转发 task（3072B 栈 + 1460B 缓冲）
-- AT：`AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
-- REST：`GET /at-node/cmd/tunnel/status`，`POST /at-node/cmd/tunnel/{config,connect,disconnect,clear}`（`id` + 字段）
+- AT：`AT+TUNNEL=enable,<0|1>`（全局总开关，NVS）；`AT+TUNNEL=<1|2>,server|token|service|local|auto|retry,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
+- REST：`GET /at-node/cmd/tunnel/status`，`POST /at-node/cmd/tunnel/{config,enable,connect,disconnect,clear}`
+- MQTT：`tunnel/{status,config,enable,connect,disconnect,clear}` 方法全通（见 sys/info API 目录）
+- 配置项：全局 `enable` 一键开关（关掉全停且不上电自连）；每隧道 `retry`（重连退避基数秒，1-60，指数×2 封顶 60s）、`auto`（上电自连）
 - **RAM 共存**：MQTT TLS 握手需要 ~25KB+ 连续堆块。隧道 socket 会切碎堆，故启动时隧道等 MQTT 先连上（最多 30s）再建池；运行期若 MQTT 重连连续 5 次遇到 `SSL - Memory allocation failed`，设备自动重启整理堆（自愈）
 - **适用场景**：长连接协议（SSH 等，实测 62s 12 往返稳定）。避免高频短连接爆发（每访客 2 条 socket，TIME_WAIT 驻留 ~60s）；WiFi 已关省电（`WiFi.setSleep(false)`），LAN 延迟 ~30ms 降到 ~2-30ms
 - 测试陪练：`tools/test/rathole_server.test.toml`（本地 rathole server，两服务：c3http → 127.0.0.1:80，c3echo → TCP echo）

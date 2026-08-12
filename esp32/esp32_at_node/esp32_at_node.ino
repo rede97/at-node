@@ -631,7 +631,8 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>GET</td><td><code>/at-node/mqtt</code></td><td></td><td>MQTT config page (browser)</td></tr>
   <tr><td>GET</td><td><code>/at-node/tunnel</code></td><td></td><td>rathole tunnel config page (browser)</td></tr>
   <tr><td>GET</td><td><code>/at-node/cmd/tunnel/status</code></td><td></td><td>Tunnel states (JSON)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto,retry</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/enable</code></td><td><code>enable=1|0</code></td><td>rathole master switch (NVS); off = all tunnels stopped, no boot autostart</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/connect</code></td><td><code>id</code></td><td>Start tunnel control channel</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/disconnect</code></td><td><code>id</code></td><td>Stop tunnel</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/tunnel/clear</code></td><td><code>id</code></td><td>Wipe tunnel config (NVS)</td></tr>
@@ -776,6 +777,21 @@ static const ApiParam P_PING[] = {
     {"host",  "hostname or IP to ping"},
     {"count", "echo count, default 4"},
 };
+static const ApiParam P_TUNCFG[] = {
+    {"id",      "tunnel 1|2"},
+    {"server",  "rathole server host:port"},
+    {"token",   "service token"},
+    {"service", "service name (must match server)"},
+    {"local",   "local host:port to forward to"},
+    {"auto",    "1=connect at boot"},
+    {"retry",   "reconnect backoff base, seconds 1-60"},
+};
+static const ApiParam P_TUNID[] = {
+    {"id", "tunnel 1|2"},
+};
+static const ApiParam P_TUNEN[] = {
+    {"enable", "1|0 rathole master switch (NVS)"},
+};
 
 static const ApiEntry API_CATALOG[] = {
     {"keyboard/tap",      P_TAP,  3, "press+release one key"},
@@ -792,9 +808,15 @@ static const ApiEntry API_CATALOG[] = {
     {"ble/pair",          P_PAIR, 1, "start/stop public pairing mode"},
     {"ble/bonds/delete",  P_BD,   1, "delete one bonded host by index"},
     {"ble/bonds/clear",   NULL,   0, "delete all bonded hosts"},
-    {"net/wol",           P_WOL,  1, "send Wake-on-LAN magic packet"},
-    {"net/ping",          P_PING, 2, "ICMP ping from device LAN"},
-    {"sys/info",          NULL,   0, "device manifest + this API catalog"},
+    {"net/wol",           P_WOL,   1, "send Wake-on-LAN magic packet"},
+    {"net/ping",          P_PING,  2, "ICMP ping from device LAN"},
+    {"tunnel/status",     NULL,    0, "rathole tunnel states"},
+    {"tunnel/config",     P_TUNCFG,7, "configure rathole tunnel (NVS)"},
+    {"tunnel/connect",    P_TUNID, 1, "start tunnel control channel"},
+    {"tunnel/disconnect", P_TUNID, 1, "stop tunnel"},
+    {"tunnel/clear",      P_TUNID, 1, "wipe tunnel config (NVS)"},
+    {"tunnel/enable",     P_TUNEN, 1, "rathole master switch (NVS)"},
+    {"sys/info",          NULL,    0, "device manifest + this API catalog"},
 };
 #define API_COUNT (sizeof(API_CATALOG) / sizeof(API_CATALOG[0]))
 
@@ -1033,14 +1055,29 @@ static void handle_tunnel_config(void)
         send_json("{\"ok\":false,\"error\":\"invalid id\"}", 400);
         return;
     }
-    static const char* keys[] = {"server", "token", "service", "local"};
-    for (uint8_t i = 0; i < 4; i++) {
+    static const char* keys[] = {"server", "token", "service", "local", "retry"};
+    for (uint8_t i = 0; i < 5; i++) {
         String v = g_http.arg(keys[i]);
         if (v.length() > 0) rathole_set(idx, keys[i], v);
     }
     if (g_http.hasArg("auto")) rathole_set(idx, "auto", g_http.arg("auto"));
     send_json("{\"ok\":true,\"cmd\":\"tunnel/config\",\"tunnel\":" +
               rathole_status_json(idx) + "}");
+}
+
+/* Global rathole master switch: POST /at-node/cmd/tunnel/enable?enable=1|0 */
+static void handle_tunnel_enable(void)
+{
+    String val = g_http.arg("enable");
+    if (val.length() == 0) val = g_http.arg("plain");
+    val.trim();
+    if (val == "1" || val == "true") {
+        rathole_set_enabled(true);
+    } else if (val == "0" || val == "false") {
+        rathole_set_enabled(false);
+    }
+    send_json("{\"ok\":true,\"cmd\":\"tunnel/enable\",\"enabled\":" +
+              String(rathole_is_enabled() ? "true" : "false") + "}");
 }
 
 static void handle_tunnel_connect(void)
@@ -1107,6 +1144,10 @@ static const char* TUNNEL_PAGE_HTML = R"HTML(
 <div class="note">Plain TCP transport. Only tunnel protocols that carry their own
 encryption (SSH, HTTPS, MQTT-TLS), or bind the service to <code>127.0.0.1</code>
 on the rathole server. Empty fields keep their current value on save.</div>
+<h2>Master Switch: <span id="en">-</span></h2>
+<button onclick="setEn(1)">Enable All</button>
+<button class="ghost" onclick="setEn(0)">Disable All</button>
+<p><small>Persisted to NVS. When disabled, all tunnels stop and none start at boot.</small></p>
 <div id="tunnels"></div>
 <p id="msg"></p>
 <p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/mqtt">MQTT Config</a> | <a href="/at-node/help">API Help</a></p>
@@ -1116,6 +1157,8 @@ function msg(t){ document.getElementById('msg').textContent = t; }
 function esc(s){ return (s||'').replace(/"/g,'&quot;'); }
 function refresh(){
   fetch('/at-node/cmd/tunnel/status').then(r=>r.json()).then(d=>{
+    document.getElementById('en').innerHTML = d.tunnels[0].enabled
+      ? '<span class="ok">enabled</span>' : '<span class="bad">disabled</span>';
     document.getElementById('tunnels').innerHTML = d.tunnels.map(t=>{
       const state = t.connected ? '<span class="ok">connected</span>'
         : (t.running ? '<span class="bad">connecting: '+esc(t.last_error)+'</span>'
@@ -1125,6 +1168,7 @@ function refresh(){
         '<tr><th>Service name</th><td><input type=text id="service'+t.id+'" value="'+esc(t.service)+'"></td></tr>' +
         '<tr><th>Token</th><td><input type=password id="token'+t.id+'" placeholder="(unchanged if empty)"></td></tr>' +
         '<tr><th>Local (host:port)</th><td><input type=text id="local'+t.id+'" value="'+esc(t.local)+'"></td></tr>' +
+        '<tr><th>Retry interval (s)</th><td><input type=text id="retry'+t.id+'" value="'+t.retry+'"></td></tr>' +
         '<tr><th>Auto-connect</th><td><input type=checkbox id="auto'+t.id+'"'+(t.auto?' checked':'')+'></td></tr>' +
         '</table>' +
         '<button onclick="save('+t.id+')">Save</button>' +
@@ -1134,11 +1178,16 @@ function refresh(){
     }).join('');
   }).catch(()=>{ msg('refresh failed'); });
 }
+function setEn(on){
+  fetch('/at-node/cmd/tunnel/enable?enable='+(on?1:0), {method:'POST'})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?'rathole '+(on?'enabled':'disabled'):'failed'); refresh(); });
+}
 function save(id){
   const p = new URLSearchParams({id: id,
     server: document.getElementById('server'+id).value,
     service: document.getElementById('service'+id).value,
     local: document.getElementById('local'+id).value,
+    retry: document.getElementById('retry'+id).value,
     auto: document.getElementById('auto'+id).checked ? '1' : '0'});
   const tok = document.getElementById('token'+id).value;
   if (tok) p.set('token', tok);
@@ -2180,6 +2229,48 @@ static String mqtt_exec(const String& method, const String& query)
     if (method == "sys/info") {
         return String("\"ok\":true,\"info\":") + build_sys_info_json();
     }
+    if (method == "tunnel/status") {
+        String t = "\"ok\":true,\"tunnels\":[";
+        for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
+            if (i) t += ",";
+            t += rathole_status_json(i);
+        }
+        return t + "]";
+    }
+    if (method == "tunnel/enable") {
+        String val = query_get(query, "enable");
+        if (val == "1" || val == "true")      rathole_set_enabled(true);
+        else if (val == "0" || val == "false") rathole_set_enabled(false);
+        else return err("missing enable");
+        return String("\"ok\":true,\"enabled\":") + (rathole_is_enabled() ? "true" : "false");
+    }
+    if (method.startsWith("tunnel/")) {
+        int id = query_get(query, "id").toInt();
+        if (id < 1 || id > RATHOLE_MAX_TUNNELS) return err("invalid id");
+        int idx = id - 1;
+        if (method == "tunnel/connect") {
+            return rathole_start(idx) ? "\"ok\":true" : err("start failed");
+        }
+        if (method == "tunnel/disconnect") {
+            rathole_stop(idx);
+            return "\"ok\":true";
+        }
+        if (method == "tunnel/clear") {
+            rathole_clear(idx);
+            return "\"ok\":true";
+        }
+        if (method == "tunnel/config") {
+            static const char* keys[] = {"server", "token", "service", "local", "retry"};
+            for (uint8_t i = 0; i < 5; i++) {
+                String v = query_get(query, keys[i]);
+                if (v.length() > 0) rathole_set(idx, keys[i], v);
+            }
+            String a = query_get(query, "auto");
+            if (a.length() > 0) rathole_set(idx, "auto", a);
+            return String("\"ok\":true,\"tunnel\":") + rathole_status_json(idx);
+        }
+        return err("unknown tunnel method");
+    }
     if (method == "net/wol") {
         String mac = query_get(query, "mac");
         if (mac.length() == 0) return err("missing mac");
@@ -2496,7 +2587,8 @@ static void serial_exec(const String& line)
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
-        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>");
+        Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
+        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto|retry,<val>");
         Serial.println("  AT+TUNNEL=<1|2>,connect|disconnect|clear|status");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
@@ -2859,9 +2951,16 @@ static void serial_exec(const String& line)
         String args = line.substring(10);
         int c1 = args.indexOf(',');
         if (args == "status") {
+            Serial.println("+TUNNEL_EN:" + String(rathole_is_enabled() ? 1 : 0));
             for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
                 Serial.println("+TUNNEL:" + rathole_status_json(i));
             }
+            Serial.println("OK");
+        } else if (args == "enable") {
+            Serial.println("+TUNNEL_EN:" + String(rathole_is_enabled() ? 1 : 0));
+            Serial.println("OK");
+        } else if (args.startsWith("enable,")) {
+            rathole_set_enabled(args.substring(7).toInt() != 0);
             Serial.println("OK");
         } else if (c1 > 0) {
             int id = args.substring(0, c1).toInt();
@@ -2872,7 +2971,7 @@ static void serial_exec(const String& line)
             if (id < 1 || id > RATHOLE_MAX_TUNNELS) {
                 Serial.println("ERROR");
             } else if (sub == "server" || sub == "token" || sub == "service" ||
-                       sub == "local" || sub == "auto") {
+                       sub == "local" || sub == "auto" || sub == "retry") {
                 Serial.println((val.length() > 0 && rathole_set(id - 1, sub, val))
                                ? "OK" : "ERROR");
             } else if (sub == "connect") {
@@ -3000,6 +3099,7 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
         g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
         g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
+        g_http.on("/at-node/cmd/tunnel/enable", HTTP_POST, handle_tunnel_enable);
         g_http.on("/at-node/cmd/tunnel/connect", HTTP_POST, handle_tunnel_connect);
         g_http.on("/at-node/cmd/tunnel/disconnect", HTTP_POST, handle_tunnel_disconnect);
         g_http.on("/at-node/cmd/tunnel/clear", HTTP_POST, handle_tunnel_clear);

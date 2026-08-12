@@ -26,14 +26,20 @@
  * Call once from setup() after load_config(). Tasks wait for WiFi.     */
 void rathole_init(void);
 
-/* Set one config field (server/token/service/local/auto), persist to NVS.
- * key: "server" | "token" | "service" | "local" | "auto".
+/* Set one config field (server/token/service/local/auto/retry), persist to NVS.
+ * key: "server" | "token" | "service" | "local" | "auto" | "retry".
  * If the tunnel is running, it is restarted to pick up the change.     */
 bool rathole_set(int idx, const String& key, const String& val);
 
 /* Read one config field for form prefill (token is returned; guard who
  * can reach the HTTP page). */
 String rathole_get(int idx, const String& key);
+
+/* Global master switch (NVS "rathole_en", default on). When off, all
+ * tunnels are stopped and none auto-start at boot; rathole_start()
+ * refuses. When switched back on, tunnels with auto=1 start again.   */
+void rathole_set_enabled(bool en);
+bool rathole_is_enabled(void);
 
 /* Start/stop the control channel task for tunnel idx (0-based). */
 bool rathole_start(int idx);
