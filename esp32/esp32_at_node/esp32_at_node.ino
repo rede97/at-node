@@ -758,7 +758,7 @@ host OS first (hosts cache the GATT table per MAC).</p>
   or MQTT <code>config/set|get|list</code> methods &mdash; all equivalent.
   Keys: <code>device.name</code>, <code>device.hostname</code>, <code>wifi.ssid</code>, <code>wifi.pass</code>,
   <code>mqtt.broker|port|user|pass|ca|auto</code>, <code>http.enable</code>, <code>rathole.enable</code>,
-  <code>tunnel.&lt;1|2&gt;.server|token|service|local|auto|retry</code>.
+  <code>tunnel.&lt;1|2&gt;.server|token|service|local|auto|retry|enable</code>.
   Secret keys (passwords, tokens) are write-only.
   Legacy commands (<code>AT+WIFI=</code>, <code>AT+MQTT=</code>, <code>AT+HTTP=</code>, <code>AT+CONF=</code>,
   domain endpoints below) are aliases over the same registry.
@@ -2762,7 +2762,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
         Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
-        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto|retry,<val>");
+        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto|retry|enable,<val>");
         Serial.println("  AT+TUNNEL=<1|2>,connect|disconnect|clear|status");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
@@ -3127,8 +3127,8 @@ static void serial_exec(const String& line)
             Serial.println("ERROR");
         }
     } else if (line.startsWith("AT+TUNNEL=")) {
-        /* AT+TUNNEL=status
-         * AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>
+        /* AT+TUNNEL=status | enable | enable,<0|1>
+         * AT+TUNNEL=<1|2>,server|token|service|local|auto|retry|enable,<val>
          * AT+TUNNEL=<1|2>,connect|disconnect|clear|status          */
         String args = line.substring(10);
         int c1 = args.indexOf(',');
