@@ -47,6 +47,18 @@
 - ✅ HTTP 开关：`AT+HTTP=status|enable,<0|1>|clear|0|1` 与 `/at-node/cmd/http/{status,config,clear}` 对齐 MQTT 风格，状态持久化到 NVS
 - ✅ BLE 配对安全：默认不广播，需通过 `AT+PAIR=1` / `POST /at-node/cmd/ble/pair?enable=1` / MQTT `ble/pair?enable=1` 显式进入 60s 公共配对模式；配对后断连转为定向广播，仅已绑定主机可连
 - ✅ NVS 擦除：`AT+NVS=clear` / `POST /at-node/cmd/nvs/clear` 恢复出厂设置并自动重启
+- ✅ rathole 内网穿透客户端：2 条并发隧道（plain TCP transport），`AT+TUNNEL=<1|2>,...` 串口配置 + `/at-node/tunnel` HTML 配置页 + REST 端点，NVS 持久化可开机自连；实测穿透 HTTP 控制面与 TCP echo 全通
+- ✅ MQTT HTML 配置页：`/at-node/mqtt`（broker/凭据/CA 指纹/auto），REST 增加 `/at-node/cmd/mqtt/clear` 与 `auto` 参数
+
+### rathole 隧道（`rathole_client.cpp`）
+
+- 协议：rathole v1（bincode 定长消息），plain TCP transport；TLS/noise 未实现——**只穿透自带加密的协议**（SSH/HTTPS/MQTT-TLS），或把服务 bind 在 server 侧 `127.0.0.1`
+- 架构：每隧道 1 个 manager task（控制通道 + 连接池轮询）；服务器 TCP_POOL_SIZE=8，但每 standby socket 占 ~2.4KB heap，池缩为 **2 条/隧道**；访客到来才起转发 task（3072B 栈 + 1460B 缓冲）
+- AT：`AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
+- REST：`GET /at-node/cmd/tunnel/status`，`POST /at-node/cmd/tunnel/{config,connect,disconnect,clear}`（`id` + 字段）
+- **RAM 共存**：MQTT TLS 握手需要 ~25KB+ 连续堆块。隧道 socket 会切碎堆，故启动时隧道等 MQTT 先连上（最多 30s）再建池；运行期若 MQTT 重连连续 5 次遇到 `SSL - Memory allocation failed`，设备自动重启整理堆（自愈）
+- **适用场景**：长连接协议（SSH 等，实测 62s 12 往返稳定）。避免高频短连接爆发（每访客 2 条 socket，TIME_WAIT 驻留 ~60s）；WiFi 已关省电（`WiFi.setSleep(false)`），LAN 延迟 ~30ms 降到 ~2-30ms
+- 测试陪练：`tools/test/rathole_server.test.toml`（本地 rathole server，两服务：c3http → 127.0.0.1:80，c3echo → TCP echo）
 - 下一步：更多外设、Agent 工作流集成
 
 ## 安全策略

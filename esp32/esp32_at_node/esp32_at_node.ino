@@ -32,7 +32,9 @@
 #include <NimBLEDevice.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/x509_crt.h>
+#include <esp_heap_caps.h>
 #include "ap_portal.h"
+#include "rathole_client.h"
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLECharacteristic.h>
@@ -324,6 +326,12 @@ void save_config(const String& key, const String& value)
     prefs.end();
 }
 
+/* Accessor for rathole_client.cpp (g_mqtt_connected is file-static). */
+bool mqtt_is_connected(void)
+{
+    return g_mqtt_connected;
+}
+
 /* Enable/disable the HTTP control plane (persisted to NVS as http_enable).
  * Security policy: HTTP is unauthenticated and intended for trusted local
  * NAT networks only; disable it (enable=false) on untrusted networks and
@@ -496,6 +504,8 @@ static void handle_status_html(void)
     html += "<tr><th>AP Mode</th><td>" + String(ap_portal_active() ? "active" : "off") + "</td></tr>";
     html += "</table>";
     html += "<p><a href=\"/at-node/pair\">BLE Pairing</a> | ";
+    html += "<a href=\"/at-node/mqtt\">MQTT Config</a> | ";
+    html += "<a href=\"/at-node/tunnel\">Tunnels</a> | ";
     html += "<a href=\"/at-node/help\">API Help</a> | ";
     html += "<a href=\"/at-node/cmd/status\">JSON</a></p>";
     html += "</body></html>";
@@ -617,6 +627,14 @@ host OS first (hosts cache the GATT table per MAC).</p>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td><td>Set MQTT broker (NVS)</td></tr>
   <tr><td colspan="4"><small>Clear all MQTT settings via raw AT: <code>AT+MQTT=clear</code></small></td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>fp</code></td><td>Set SHA256 fingerprint for TLS</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/clear</code></td><td></td><td>Wipe all MQTT settings</td></tr>
+  <tr><td>GET</td><td><code>/at-node/mqtt</code></td><td></td><td>MQTT config page (browser)</td></tr>
+  <tr><td>GET</td><td><code>/at-node/tunnel</code></td><td></td><td>rathole tunnel config page (browser)</td></tr>
+  <tr><td>GET</td><td><code>/at-node/cmd/tunnel/status</code></td><td></td><td>Tunnel states (JSON)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/connect</code></td><td><code>id</code></td><td>Start tunnel control channel</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/disconnect</code></td><td><code>id</code></td><td>Stop tunnel</td></tr>
+  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/clear</code></td><td><code>id</code></td><td>Wipe tunnel config (NVS)</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td><td>Trigger MQTT connect (async)</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td><td>Publish arbitrary message</td></tr>
   <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td><td>Subscribe to topic</td></tr>
@@ -986,6 +1004,270 @@ static void handle_cmd_status(void)
     json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
     json += "}";
     send_json(json);
+}
+
+/* --- rathole tunnel handlers -------------------------------------------- */
+/* Tunnel id from query/form arg "id" (1-based); -1 on invalid. */
+static int tunnel_id_arg(void)
+{
+    int id = g_http.arg("id").toInt();
+    if (id < 1 || id > RATHOLE_MAX_TUNNELS) return -1;
+    return id - 1;
+}
+
+static void handle_tunnel_status(void)
+{
+    String json = "{\"ok\":true,\"tunnels\":[";
+    for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
+        if (i) json += ",";
+        json += rathole_status_json(i);
+    }
+    json += "]}";
+    send_json(json);
+}
+
+static void handle_tunnel_config(void)
+{
+    int idx = tunnel_id_arg();
+    if (idx < 0) {
+        send_json("{\"ok\":false,\"error\":\"invalid id\"}", 400);
+        return;
+    }
+    static const char* keys[] = {"server", "token", "service", "local"};
+    for (uint8_t i = 0; i < 4; i++) {
+        String v = g_http.arg(keys[i]);
+        if (v.length() > 0) rathole_set(idx, keys[i], v);
+    }
+    if (g_http.hasArg("auto")) rathole_set(idx, "auto", g_http.arg("auto"));
+    send_json("{\"ok\":true,\"cmd\":\"tunnel/config\",\"tunnel\":" +
+              rathole_status_json(idx) + "}");
+}
+
+static void handle_tunnel_connect(void)
+{
+    int idx = tunnel_id_arg();
+    if (idx < 0) {
+        send_json("{\"ok\":false,\"error\":\"invalid id\"}", 400);
+        return;
+    }
+    bool ok = rathole_start(idx);
+    send_json(String("{\"ok\":") + (ok ? "true" : "false") +
+              ",\"cmd\":\"tunnel/connect\",\"tunnel\":" + rathole_status_json(idx) + "}",
+              ok ? 200 : 400);
+}
+
+static void handle_tunnel_disconnect(void)
+{
+    int idx = tunnel_id_arg();
+    if (idx < 0) {
+        send_json("{\"ok\":false,\"error\":\"invalid id\"}", 400);
+        return;
+    }
+    rathole_stop(idx);
+    send_json("{\"ok\":true,\"cmd\":\"tunnel/disconnect\"}");
+}
+
+static void handle_tunnel_clear(void)
+{
+    int idx = tunnel_id_arg();
+    if (idx < 0) {
+        send_json("{\"ok\":false,\"error\":\"invalid id\"}", 400);
+        return;
+    }
+    rathole_clear(idx);
+    send_json("{\"ok\":true,\"cmd\":\"tunnel/clear\"}");
+}
+
+static const char* TUNNEL_PAGE_HTML = R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AT-Node Tunnels</title>
+<style>
+  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
+  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
+  table{border-collapse:collapse;width:100%;margin:8px 0;}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
+  th{background:#f5f5f5;width:30%;}
+  input[type=text],input[type=password]{width:95%;font-family:monospace;padding:4px;}
+  button{padding:6px 12px;margin:4px 4px 4px 0;border:1px solid #007aff;
+         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:13px;}
+  button.ghost{background:#fff;color:#007aff;}
+  button.danger{border-color:#d33;background:#d33;}
+  .ok{color:#0a0;} .bad{color:#d33;}
+  a{color:#007aff;}
+  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;font-size:13px;}
+  #msg{margin-top:10px;color:#555;min-height:1.2em;}
+</style>
+</head>
+<body>
+<h1>AT-Node Tunnels (rathole)</h1>
+<div class="note">Plain TCP transport. Only tunnel protocols that carry their own
+encryption (SSH, HTTPS, MQTT-TLS), or bind the service to <code>127.0.0.1</code>
+on the rathole server. Empty fields keep their current value on save.</div>
+<div id="tunnels"></div>
+<p id="msg"></p>
+<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/mqtt">MQTT Config</a> | <a href="/at-node/help">API Help</a></p>
+
+<script>
+function msg(t){ document.getElementById('msg').textContent = t; }
+function esc(s){ return (s||'').replace(/"/g,'&quot;'); }
+function refresh(){
+  fetch('/at-node/cmd/tunnel/status').then(r=>r.json()).then(d=>{
+    document.getElementById('tunnels').innerHTML = d.tunnels.map(t=>{
+      const state = t.connected ? '<span class="ok">connected</span>'
+        : (t.running ? '<span class="bad">connecting: '+esc(t.last_error)+'</span>'
+                     : 'stopped');
+      return '<h2>Tunnel '+t.id+' '+state+'</h2><table>' +
+        '<tr><th>Server (host:port)</th><td><input type=text id="server'+t.id+'" value="'+esc(t.server)+'"></td></tr>' +
+        '<tr><th>Service name</th><td><input type=text id="service'+t.id+'" value="'+esc(t.service)+'"></td></tr>' +
+        '<tr><th>Token</th><td><input type=password id="token'+t.id+'" placeholder="(unchanged if empty)"></td></tr>' +
+        '<tr><th>Local (host:port)</th><td><input type=text id="local'+t.id+'" value="'+esc(t.local)+'"></td></tr>' +
+        '<tr><th>Auto-connect</th><td><input type=checkbox id="auto'+t.id+'"'+(t.auto?' checked':'')+'></td></tr>' +
+        '</table>' +
+        '<button onclick="save('+t.id+')">Save</button>' +
+        '<button class="ghost" onclick="act('+t.id+',\'connect\')">Connect</button>' +
+        '<button class="ghost" onclick="act('+t.id+',\'disconnect\')">Disconnect</button>' +
+        '<button class="danger" onclick="clearTun('+t.id+')">Clear</button>';
+    }).join('');
+  }).catch(()=>{ msg('refresh failed'); });
+}
+function save(id){
+  const p = new URLSearchParams({id: id,
+    server: document.getElementById('server'+id).value,
+    service: document.getElementById('service'+id).value,
+    local: document.getElementById('local'+id).value,
+    auto: document.getElementById('auto'+id).checked ? '1' : '0'});
+  const tok = document.getElementById('token'+id).value;
+  if (tok) p.set('token', tok);
+  fetch('/at-node/cmd/tunnel/config', {method:'POST', body:p})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?'saved':'save failed'); refresh(); });
+}
+function act(id, a){
+  fetch('/at-node/cmd/tunnel/'+a+'?id='+id, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?a+' ok':(a+' failed: '+(d.error||d.tunnel&&d.tunnel.last_error||''))); refresh(); });
+}
+function clearTun(id){
+  if(!confirm('Clear tunnel '+id+' config?')) return;
+  fetch('/at-node/cmd/tunnel/clear?id='+id, {method:'POST'})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?'cleared':'clear failed'); refresh(); });
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
+)HTML";
+
+static void handle_tunnel_html(void)
+{
+    send_html(TUNNEL_PAGE_HTML);
+}
+
+/* --- MQTT browser config page -------------------------------------------- */
+static const char* MQTT_PAGE_HTML = R"HTML(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AT-Node MQTT Config</title>
+<style>
+  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
+  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
+  table{border-collapse:collapse;width:100%;margin:8px 0;}
+  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
+  th{background:#f5f5f5;width:30%;}
+  input[type=text],input[type=password]{width:95%;font-family:monospace;padding:4px;}
+  button{padding:6px 12px;margin:4px 4px 4px 0;border:1px solid #007aff;
+         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:13px;}
+  button.ghost{background:#fff;color:#007aff;}
+  button.danger{border-color:#d33;background:#d33;}
+  .ok{color:#0a0;} .bad{color:#d33;}
+  a{color:#007aff;}
+  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;font-size:13px;}
+  #msg{margin-top:10px;color:#555;min-height:1.2em;}
+</style>
+</head>
+<body>
+<h1>AT-Node MQTT Config</h1>
+<div class="note">Port 8883 = TLS (certificate verified by SHA256 fingerprint,
+no CA file needed). Any other port = plain TCP. Empty fields keep their current
+value on save (except Auto-connect).</div>
+<h2>Status: <span id="state">-</span></h2>
+<table>
+  <tr><th>Broker</th><td><input type=text id="broker"></td></tr>
+  <tr><th>Port</th><td><input type=text id="port"></td></tr>
+  <tr><th>Username</th><td><input type=text id="user" placeholder="(optional)"></td></tr>
+  <tr><th>Password</th><td><input type=password id="pass" placeholder="(unchanged if empty)"></td></tr>
+  <tr><th>CA fingerprint</th><td><input type=text id="ca_fp" placeholder="SHA256 hex, optional"></td></tr>
+  <tr><th>Auto-connect</th><td><input type=checkbox id="auto"></td></tr>
+</table>
+<button onclick="save()">Save</button>
+<button class="ghost" onclick="connect()">Connect Now</button>
+<button class="danger" onclick="clearCfg()">Clear All MQTT Config</button>
+<p><small>Client ID: <span id="cid">-</span></small></p>
+<p id="msg"></p>
+<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/tunnel">Tunnels</a> | <a href="/at-node/help">API Help</a></p>
+
+<script>
+function msg(t){ document.getElementById('msg').textContent = t; }
+function refresh(){
+  fetch('/at-node/cmd/mqtt/status').then(r=>r.json()).then(s=>{
+    document.getElementById('state').innerHTML = s.connected
+      ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
+    document.getElementById('broker').placeholder = s.broker || '(not set)';
+    if (!document.getElementById('broker').value) document.getElementById('broker').value = s.broker;
+    if (!document.getElementById('port').value) document.getElementById('port').value = s.port;
+    if (!document.getElementById('ca_fp').value) document.getElementById('ca_fp').value = s.ca_fp;
+    document.getElementById('auto').checked = s.auto;
+    document.getElementById('cid').textContent = s.client_id || '-';
+  }).catch(()=>{ msg('refresh failed'); });
+}
+function save(){
+  const p = new URLSearchParams({
+    broker: document.getElementById('broker').value,
+    port: document.getElementById('port').value,
+    user: document.getElementById('user').value,
+    auto: document.getElementById('auto').checked ? '1' : '0'});
+  const pass = document.getElementById('pass').value;
+  if (pass) p.set('pass', pass);
+  const jobs = [fetch('/at-node/cmd/mqtt/config', {method:'POST', body:p}).then(r=>r.json())];
+  const fp = document.getElementById('ca_fp').value;
+  if (fp) jobs.push(fetch('/at-node/cmd/mqtt/ca', {method:'POST',
+        body:new URLSearchParams({fp:fp})}).then(r=>r.json()));
+  Promise.all(jobs).then(rs=>{
+    msg(rs.every(d=>d.ok) ? 'saved (reconnect to apply)' : 'save failed');
+    refresh();
+  });
+}
+function connect(){
+  fetch('/at-node/cmd/mqtt/connect', {method:'POST'})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?'connecting...':'connect failed'); setTimeout(refresh,2000); });
+}
+function clearCfg(){
+  if(!confirm('Clear ALL MQTT settings?')) return;
+  fetch('/at-node/cmd/mqtt/clear', {method:'POST'})
+    .then(r=>r.json()).then(d=>{ msg(d.ok?'cleared':'clear failed'); refresh(); });
+}
+refresh();
+setInterval(refresh, 3000);
+</script>
+</body>
+</html>
+)HTML";
+
+static void handle_mqtt_html(void)
+{
+    send_html(MQTT_PAGE_HTML);
+}
+
+static void handle_mqtt_clear(void)
+{
+    mqtt_clear_config();
+    send_json("{\"ok\":true,\"cmd\":\"mqtt/clear\"}");
 }
 
 /* forward declarations for IR functions defined later */
@@ -1762,13 +2044,35 @@ static bool mqtt_connect(void)
     }
 
     g_mqtt_connected = ok;
+    static int alloc_fail_count = 0;
     if (ok && !g_mqtt_auto) {
         /* First successful connect: enable auto-reconnect for future boots */
         g_mqtt_auto = true;
         save_config("mqtt_auto", "1");
     }
-    Serial.printf("MQTT connect %s\n", ok ? "OK" : "FAILED");
-    return ok;
+    if (ok) {
+        alloc_fail_count = 0;
+        Serial.println("MQTT connect OK");
+        return true;
+    }
+    {
+        char ssl_err[128] = {0};
+        if (g_mqtt_port == 8883) {
+            g_mqtt_wifi_secure.lastError(ssl_err, sizeof(ssl_err));
+        }
+        Serial.printf("MQTT connect FAILED (state=%d heap=%u maxblk=%u ssl=%s)\n",
+                      g_mqtt.state(), (unsigned)ESP.getFreeHeap(),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT),
+                      ssl_err);
+        /* mbedTLS handshake needs large contiguous blocks; once the heap is
+         * fragmented past that, every retry fails forever. A reboot restores
+         * a clean heap, so escalate after repeated alloc failures.        */
+        if (strstr(ssl_err, "Memory allocation") && ++alloc_fail_count >= 5) {
+            Serial.println("MQTT TLS alloc failures: restarting to defragment heap");
+            schedule_restart(1000);
+        }
+        return false;
+    }
 }
 
 static void mqtt_task_func(void* arg)
@@ -1937,6 +2241,10 @@ static void handle_mqtt_config(void)
     if (pass.length() > 0) {
         g_mqtt_pass = pass;
         save_config("mqtt_pass", pass);
+    }
+    if (g_http.hasArg("auto")) {
+        g_mqtt_auto = g_http.arg("auto") == "1";
+        save_config("mqtt_auto", g_mqtt_auto ? "1" : "0");
     }
     send_json("{\"ok\":true,\"cmd\":\"mqtt/config\"}");
 }
@@ -2188,6 +2496,8 @@ static void serial_exec(const String& line)
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
+        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>");
+        Serial.println("  AT+TUNNEL=<1|2>,connect|disconnect|clear|status");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
@@ -2542,6 +2852,46 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+    } else if (line.startsWith("AT+TUNNEL=")) {
+        /* AT+TUNNEL=status
+         * AT+TUNNEL=<1|2>,server|token|service|local|auto,<val>
+         * AT+TUNNEL=<1|2>,connect|disconnect|clear|status          */
+        String args = line.substring(10);
+        int c1 = args.indexOf(',');
+        if (args == "status") {
+            for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
+                Serial.println("+TUNNEL:" + rathole_status_json(i));
+            }
+            Serial.println("OK");
+        } else if (c1 > 0) {
+            int id = args.substring(0, c1).toInt();
+            String rest = args.substring(c1 + 1);
+            int c2 = rest.indexOf(',');
+            String sub = (c2 < 0) ? rest : rest.substring(0, c2);
+            String val = (c2 < 0) ? "" : rest.substring(c2 + 1);
+            if (id < 1 || id > RATHOLE_MAX_TUNNELS) {
+                Serial.println("ERROR");
+            } else if (sub == "server" || sub == "token" || sub == "service" ||
+                       sub == "local" || sub == "auto") {
+                Serial.println((val.length() > 0 && rathole_set(id - 1, sub, val))
+                               ? "OK" : "ERROR");
+            } else if (sub == "connect") {
+                Serial.println(rathole_start(id - 1) ? "OK" : "ERROR");
+            } else if (sub == "disconnect") {
+                rathole_stop(id - 1);
+                Serial.println("OK");
+            } else if (sub == "clear") {
+                rathole_clear(id - 1);
+                Serial.println("OK");
+            } else if (sub == "status") {
+                Serial.println("+TUNNEL:" + rathole_status_json(id - 1));
+                Serial.println("OK");
+            } else {
+                Serial.println("ERROR");
+            }
+        } else {
+            Serial.println("ERROR");
+        }
     } else if (line.startsWith("AT+AP=")) {
         int val = line.substring(6).toInt();
         if (val == 1) {
@@ -2593,6 +2943,10 @@ void setup(void)
     bool ap_triggered = ap_portal_check_button();
 
     WiFi.mode(WIFI_STA);
+    /* Modem sleep causes 100ms+ LAN latency spikes and multi-second TCP
+     * stalls (dropped beacons under multiple open sockets) — fatal to the
+     * tunnel heartbeat margin. This device is USB-powered; keep RF awake. */
+    WiFi.setSleep(false);
     WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
 
     int retry = 0;
@@ -2620,6 +2974,8 @@ void setup(void)
         g_http.on("/at-node/help", HTTP_GET, handle_help_html);
         g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
         g_http.on("/at-node/pair", HTTP_GET, handle_pair_html);
+        g_http.on("/at-node/tunnel", HTTP_GET, handle_tunnel_html);
+        g_http.on("/at-node/mqtt", HTTP_GET, handle_mqtt_html);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
@@ -2641,6 +2997,12 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/connect", HTTP_POST, handle_mqtt_connect);
         g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
+        g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
+        g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
+        g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
+        g_http.on("/at-node/cmd/tunnel/connect", HTTP_POST, handle_tunnel_connect);
+        g_http.on("/at-node/cmd/tunnel/disconnect", HTTP_POST, handle_tunnel_disconnect);
+        g_http.on("/at-node/cmd/tunnel/clear", HTTP_POST, handle_tunnel_clear);
         g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
         g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
         g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
@@ -2676,6 +3038,9 @@ void setup(void)
     /* MQTT background task — owns all PubSubClient operations */
     g_mqtt_sem = xSemaphoreCreateBinary();
     xTaskCreate(mqtt_task_func, "mqtt", 4096, NULL, 1, &g_mqtt_task);
+
+    /* rathole tunnels with auto=1 (tasks wait for WiFi themselves) */
+    rathole_init();
 }
 
 void loop(void)

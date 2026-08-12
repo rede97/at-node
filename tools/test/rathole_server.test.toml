@@ -1,0 +1,11 @@
+# rathole server for esp32_at_node tunnel e2e test
+[server]
+bind_addr = "0.0.0.0:2333"
+
+[server.services.c3http]
+token = "tok_http_secret"
+bind_addr = "127.0.0.1:5202"
+
+[server.services.c3echo]
+token = "tok_echo_secret"
+bind_addr = "127.0.0.1:5203"
