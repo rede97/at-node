@@ -124,6 +124,10 @@ curl http://127.0.0.1:5202/at-node/cmd/status
 
 ## 6. 已知边界
 
+- 功能宏变体:`build.ps1 -Variant rathole` 出 BLE/MQTT/I2C 全关的隧道专用固件
+  (free_heap ~180K,是调隧道协议/压力的首选环境);`base` 出无隧道键盘固件。
+  能力查询 `AT+ABILITY` / `/at-node/cmd/ability`。I2C 关 → GPIO8 呼吸灯(死活指示)。
+
 - BLE+WiFi 单射频共存:BLE 主机连着键盘时,射频分时给 WiFi 带来周期性抖动,
   属硬件约束,软件侧已 `WiFi.setSleep(false)` 到底。
 - 服务器心跳 30s/超时 40s,客户端 45s 判死;控制通道断开**不影响**已建立的

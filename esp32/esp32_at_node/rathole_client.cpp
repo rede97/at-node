@@ -13,7 +13,11 @@
 #include <WiFi.h>
 #include <Preferences.h>
 #include <mbedtls/sha256.h>
+#include "features.h"
 #include "rathole_client.h"
+
+#if FEATURE_RATHOLE
+/* Compiled only when FEATURE_RATHOLE=1; the sketch gates every reference. */
 
 #define RATHOLE_PROTO_VERSION   1
 #define RATHOLE_HELLO_LEN       37
@@ -695,3 +699,5 @@ String rathole_status_json(int idx)
     j += "}";
     return j;
 }
+
+#endif /* FEATURE_RATHOLE */

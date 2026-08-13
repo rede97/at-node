@@ -20,26 +20,36 @@
  * See esp32/PLAN.md for full routing design.
  */
 
+#include "features.h"   /* FEATURE_BLE / FEATURE_MQTT / FEATURE_RATHOLE / FEATURE_I2C */
+
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <WiFiUdp.h>
 #include <WebServer.h>
 #include <ping/ping_sock.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
-#include <Wire.h>
-#include <PubSubClient.h>
-#include <NimBLEDevice.h>
-#include <mbedtls/sha256.h>
-#include <mbedtls/x509_crt.h>
 #include <esp_heap_caps.h>
 #include "ap_portal.h"
-#include "rathole_client.h"
+#include "wifi_config.h"
+#include "web_page.h"   /* gzipped single-page web UI (esp32/web/build.py) */
+#if FEATURE_MQTT
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/x509_crt.h>
+#endif
+#if FEATURE_BLE
+#include <NimBLEDevice.h>
 #include <NimBLEServer.h>
 #include <NimBLEHIDDevice.h>
 #include <NimBLECharacteristic.h>
-#include "wifi_config.h"
-#include "web_page.h"   /* gzipped single-page web UI (esp32/web/build.py) */
+#endif
+#if FEATURE_RATHOLE
+#include "rathole_client.h"
+#endif
+#if FEATURE_I2C
+#include <Wire.h>
+#endif
 
 /* --- device configuration --------------------------------------------- */
 #define DEFAULT_DEVICE_NAME "AT-Node-ESP"
@@ -66,6 +76,7 @@ static String get_default_hostname(void)
 }
 
 /* --- BLE globals ------------------------------------------------------ */
+#if FEATURE_BLE
 static NimBLEServer*        g_server        = nullptr;
 static NimBLEHIDDevice*     g_hid           = nullptr;
 static NimBLECharacteristic* g_inputReport  = nullptr;
@@ -75,6 +86,7 @@ static struct {
     uint8_t mods;
     uint8_t keys[6];
 } g_key_state;
+#endif
 
 /* --- HTTP globals ----------------------------------------------------- */
 static WebServer g_http(80);
@@ -83,13 +95,16 @@ static bool      g_wifi_ready = false;
  * trusted local NAT networks only. On untrusted networks the operator should
  * disable it (AT+HTTP=0, persisted to NVS) and keep only the MQTT (TLS) plane. */
 static bool      g_http_enabled = true;
+#if FEATURE_BLE
 static bool      g_pairing_mode = false;   /* default off for security */
 static uint32_t  g_pair_timeout_at = 0;    /* auto-stop advertising deadline */
+#endif
 
 /* deferred restart (used by NVS clear / factory reset) */
 static uint32_t  g_restart_at = 0;
 
 /* --- MQTT client ------------------------------------------------------- */
+#if FEATURE_MQTT
 static WiFiClient       g_mqtt_wifi_plain;
 static WiFiClientSecure g_mqtt_wifi_secure;
 static PubSubClient     g_mqtt(g_mqtt_wifi_plain);
@@ -105,18 +120,22 @@ static String           g_mqtt_pass;
 static String           g_mqtt_client_id;
 static String           g_mqtt_topic_prefix;
 static String           g_mqtt_ca_fp;
+#endif
 static String           g_wifi_ssid;
 static String           g_wifi_pass;
 
 /* --- typing queue (non-blocking) -------------------------------------- */
+#if FEATURE_BLE
 static String   g_type_text;
 static size_t   g_type_idx  = 0;
 static int      g_type_ms   = 40;
 static int      g_type_gap  = 30;
 static uint32_t g_type_next = 0;
 static bool     g_type_busy = false;
+#endif
 
 /* --- keyboard report map (report protocol, Report IDs) ---------------- */
+#if FEATURE_BLE
 /* ID 1 = keyboard input (8 bytes: mods, reserved, 6 keys)                 */
 /* ID 2 = LED output (1 byte)                                             */
 static const uint8_t REPORT_MAP[] = {
@@ -192,6 +211,11 @@ public:
         }
     }
 };
+#else
+static char g_ble_addr_str[18] = "-";
+static bool is_connected(void) { return false; }
+static const bool g_type_busy = false;
+#endif
 
 static uint8_t parse_uint8(const String& s)
 {
@@ -200,6 +224,7 @@ static uint8_t parse_uint8(const String& s)
 }
 
 /* --- URL query helpers (for MQTT cmd channel) ---------------------------- */
+#if FEATURE_MQTT
 static String url_decode(const String& s)
 {
     String out;
@@ -233,7 +258,9 @@ static String query_get(const String& q, const char* key)
     int amp = q.indexOf('&', start);
     return url_decode((amp > 0) ? q.substring(start, amp) : q.substring(start));
 }
+#endif
 
+#if FEATURE_BLE
 static void send_report(void)
 {
     uint8_t report[8];
@@ -298,6 +325,7 @@ static bool is_connected(void)
 {
     return g_server && g_server->getConnectedCount() > 0;
 }
+#endif /* FEATURE_BLE */
 
 /* --- configuration ----------------------------------------------------- */
 static void load_config(void)
@@ -307,6 +335,7 @@ static void load_config(void)
     g_hostname    = prefs.getString("hostname", get_default_hostname());
     g_wifi_ssid   = prefs.getString("wifi_ssid", WIFI_SSID);
     g_wifi_pass   = prefs.getString("wifi_pass", WIFI_PASSWORD);
+#if FEATURE_MQTT
     g_mqtt_broker = prefs.getString("mqtt_broker", "");
     /* stored as string via save_config(); parse as int (getInt would
      * fail the NVS type check and silently return the default).      */
@@ -316,6 +345,7 @@ static void load_config(void)
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
     g_mqtt_auto    = prefs.getString("mqtt_auto", "0").toInt() != 0;
+#endif
     g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
     prefs.end();
 }
@@ -327,10 +357,16 @@ void save_config(const String& key, const String& value)
     prefs.end();
 }
 
-/* Accessor for rathole_client.cpp (g_mqtt_connected is file-static). */
+/* Accessor for rathole_client.cpp (g_mqtt_connected is file-static).
+ * Without MQTT there is no handshake to wait for: report "connected"
+ * so the rathole boot grace is skipped. */
 bool mqtt_is_connected(void)
 {
+#if FEATURE_MQTT
     return g_mqtt_connected;
+#else
+    return true;
+#endif
 }
 
 /* Enable/disable the HTTP control plane (persisted to NVS as http_enable).
@@ -356,6 +392,7 @@ static void set_http_enabled(bool enable, bool persist = true)
  * When enabled, public advertising runs for 60s and then stops automatically
  * if no host connects. After a connection/disconnection, the device falls
  * back to directed advertising to the bonded peer (or stops if unpaired). */
+#if FEATURE_BLE
 static void set_ble_adv_enabled(bool enable)
 {
     g_pairing_mode = enable;
@@ -387,6 +424,7 @@ static void ble_adv_poll(void)
         NimBLEDevice::getAdvertising()->stop();
     }
 }
+#endif /* FEATURE_BLE */
 
 /* Clear all keys in the atnode NVS namespace and reset runtime HTTP state. */
 static void nvs_clear_config(void)
@@ -403,6 +441,7 @@ static void schedule_restart(uint32_t delay_ms)
 }
 
 /* Clear all MQTT settings (NVS + runtime) and disconnect. */
+#if FEATURE_MQTT
 static void mqtt_clear_config(void)
 {
     prefs.begin("atnode", false);
@@ -424,6 +463,7 @@ static void mqtt_clear_config(void)
     g_mqtt_ca_fp   = "";
     g_mqtt_auto    = false;
 }
+#endif /* FEATURE_MQTT */
 
 /* --- unified configuration layer ----------------------------------------
  * THE single entry point for every persistent setting. AT (AT+SET/GET/KEYS),
@@ -436,6 +476,7 @@ static bool cfg_s_name(const String& v)  { g_device_name = v; save_config("name"
 static bool cfg_s_hostn(const String& v) { g_hostname = v;    save_config("hostname", v); return true; }
 static bool cfg_s_wssid(const String& v) { g_wifi_ssid = v;   save_config("wifi_ssid", v); return true; }
 static bool cfg_s_wpass(const String& v) { g_wifi_pass = v;   save_config("wifi_pass", v); return true; }
+#if FEATURE_MQTT
 static bool cfg_s_mbroker(const String& v) { g_mqtt_broker = v; save_config("mqtt_broker", v); return true; }
 static bool cfg_s_mport(const String& v) {
     int p = v.toInt();
@@ -448,8 +489,11 @@ static bool cfg_s_muser(const String& v) { g_mqtt_user = v; save_config("mqtt_us
 static bool cfg_s_mpass(const String& v) { g_mqtt_pass = v; save_config("mqtt_pass", v); return true; }
 static bool cfg_s_mca(const String& v)   { g_mqtt_ca_fp = v; save_config("mqtt_ca_fp", v); return true; }
 static bool cfg_s_mauto(const String& v) { g_mqtt_auto = cfg_truthy(v); save_config("mqtt_auto", g_mqtt_auto ? "1" : "0"); return true; }
+#endif
 static bool cfg_s_httpen(const String& v) { set_http_enabled(cfg_truthy(v)); return true; }
+#if FEATURE_RATHOLE
 static bool cfg_s_tunen(const String& v)  { rathole_set_enabled(cfg_truthy(v)); return true; }
+#endif
 
 struct CfgEntry {
     const char* key;
@@ -463,17 +507,22 @@ static const CfgEntry CFG_TABLE[] = {
     {"device.hostname", false, cfg_s_hostn,   [](void){ return g_hostname; }},
     {"wifi.ssid",       false, cfg_s_wssid,   [](void){ return g_wifi_ssid; }},
     {"wifi.pass",       true,  cfg_s_wpass,   [](void){ return String(); }},
+#if FEATURE_MQTT
     {"mqtt.broker",     false, cfg_s_mbroker, [](void){ return g_mqtt_broker; }},
     {"mqtt.port",       false, cfg_s_mport,   [](void){ return String(g_mqtt_port); }},
     {"mqtt.user",       false, cfg_s_muser,   [](void){ return g_mqtt_user; }},
     {"mqtt.pass",       true,  cfg_s_mpass,   [](void){ return String(); }},
     {"mqtt.ca",         false, cfg_s_mca,     [](void){ return g_mqtt_ca_fp; }},
     {"mqtt.auto",       false, cfg_s_mauto,   [](void){ return String(g_mqtt_auto ? 1 : 0); }},
+#endif
     {"http.enable",     false, cfg_s_httpen,  [](void){ return String(g_http_enabled ? 1 : 0); }},
+#if FEATURE_RATHOLE
     {"rathole.enable",  false, cfg_s_tunen,   [](void){ return String(rathole_is_enabled() ? 1 : 0); }},
+#endif
 };
 #define CFG_TABLE_COUNT (sizeof(CFG_TABLE) / sizeof(CFG_TABLE[0]))
 
+#if FEATURE_RATHOLE
 /* tunnel.1.<server|token|service|local|auto|retry> — delegated to the
  * rathole module, which owns its NVS keys and restart semantics.       */
 static bool config_tunnel_key(const String& key, int* idx, String* field)
@@ -487,12 +536,15 @@ static bool config_tunnel_key(const String& key, int* idx, String* field)
     *field = key.substring(dot + 1);
     return true;
 }
+#endif /* FEATURE_RATHOLE */
 
 static bool config_set(const String& key, const String& val)
 {
+#if FEATURE_RATHOLE
     int idx;
     String field;
     if (config_tunnel_key(key, &idx, &field)) return rathole_set(idx, field, val);
+#endif
     for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
         if (key == CFG_TABLE[i].key) return CFG_TABLE[i].set(val);
     }
@@ -501,11 +553,13 @@ static bool config_set(const String& key, const String& val)
 
 static String config_get(const String& key)
 {
+#if FEATURE_RATHOLE
     int idx;
     String field;
     if (config_tunnel_key(key, &idx, &field)) {
         return (field == "token") ? String() : rathole_get(idx, field);
     }
+#endif
     for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
         if (key == CFG_TABLE[i].key) return CFG_TABLE[i].get();
     }
@@ -514,6 +568,7 @@ static String config_get(const String& key)
 
 static bool config_known(const String& key)
 {
+#if FEATURE_RATHOLE
     int idx;
     String field;
     if (config_tunnel_key(key, &idx, &field)) {
@@ -521,6 +576,7 @@ static bool config_known(const String& key)
                field == "local" || field == "auto" || field == "retry" ||
                field == "enable";
     }
+#endif
     for (uint8_t i = 0; i < CFG_TABLE_COUNT; i++) {
         if (key == CFG_TABLE[i].key) return true;
     }
@@ -541,6 +597,7 @@ static String config_list_json(void)
         j += "}";
     }
     static const char* tfields[] = {"server", "token", "service", "local", "auto", "retry", "enable"};
+#if FEATURE_RATHOLE
     for (int t = 0; t < RATHOLE_MAX_TUNNELS; t++) {
         for (uint8_t f = 0; f < 7; f++) {
             j += ",{\"key\":\"tunnel." + String(t + 1) + "." + tfields[f] + "\"";
@@ -552,11 +609,13 @@ static String config_list_json(void)
             j += "}";
         }
     }
+#endif
     j += "]";
     return j;
 }
 
 /* --- typing queue ------------------------------------------------------ */
+#if FEATURE_BLE
 static void type_poll(void)
 {
     if (!g_type_busy) return;
@@ -589,6 +648,7 @@ static void type_poll(void)
     g_type_idx++;
     g_type_next = now + g_type_ms + g_type_gap;
 }
+#endif /* FEATURE_BLE */
 
 /* --- HTTP handlers ----------------------------------------------------- */
 static void send_json(const String& json, int code = 200)
@@ -623,6 +683,7 @@ static void handle_help_json(void)
 }
 
 /* --- BLE status / pairing ---------------------------------------------- */
+#if FEATURE_BLE
 static String build_ble_status_json(void)
 {
     String json = "{";
@@ -656,11 +717,14 @@ static String build_ble_status_json(void)
     json += "]}";
     return json;
 }
+#endif /* FEATURE_BLE */
 
+#if FEATURE_BLE
 static void handle_ble_status(void)
 {
     send_json(build_ble_status_json());
 }
+#endif /* FEATURE_BLE */
 
 /* --- API catalog (single source of truth for MQTT info / help.json) ---- */
 struct ApiParam { const char* name; const char* desc; };
@@ -742,28 +806,37 @@ static const ApiParam P_CFGGET[] = {
 };
 
 static const ApiEntry API_CATALOG[] = {
+#if FEATURE_BLE
     {"keyboard/tap",      P_TAP,  3, "press+release one key"},
     {"keyboard/text",     P_TEXT, 3, "type ASCII string via BLE"},
     {"keyboard/key",      P_KEY,  2, "raw 6KRO report (hold until released)"},
+#endif
     {"gpio/write",        P_GW,   2, "set GPIO output level"},
     {"gpio/read",         P_GR,   1, "read GPIO input (pullup)"},
     {"adc/read",          P_ADC,  1, "read ADC millivolts"},
+#if FEATURE_I2C
     {"i2c/scan",          NULL,   0, "scan I2C bus for devices"},
     {"i2c/read",          P_I2CR, 3, "read I2C register"},
     {"i2c/write",         P_I2CW, 3, "write I2C register"},
+#endif
     {"ir/send",           P_IR,   3, "send IR via RMT (NEC/SIRC/RAW)"},
+#if FEATURE_BLE
     {"ble/status",        NULL,   0, "BLE name, addr, connections, bonds"},
     {"ble/pair",          P_PAIR, 1, "start/stop public pairing mode"},
     {"ble/bonds/delete",  P_BD,   1, "delete one bonded host by index"},
     {"ble/bonds/clear",   NULL,   0, "delete all bonded hosts"},
+#endif
     {"net/wol",           P_WOL,   1, "send Wake-on-LAN magic packet"},
     {"net/ping",          P_PING,  2, "ICMP ping from device LAN"},
+#if FEATURE_RATHOLE
     {"tunnel/status",     NULL,    0, "rathole tunnel states"},
     {"tunnel/config",     P_TUNCFG,7, "configure rathole tunnel (NVS)"},
     {"tunnel/connect",    P_TUNID, 1, "start tunnel control channel"},
     {"tunnel/disconnect", P_TUNID, 1, "stop tunnel"},
     {"tunnel/clear",      P_TUNID, 1, "wipe tunnel config (NVS)"},
     {"tunnel/enable",     P_TUNEN, 1, "rathole master switch (NVS)"},
+#endif
+    {"ability",           NULL,    0, "compile-time feature flags"},
     {"config/set",        P_CFGSET,2, "unified config: set key=val (NVS)"},
     {"config/get",        P_CFGGET,1, "unified config: read key"},
     {"config/list",       NULL,    0, "unified config: list all keys"},
@@ -799,6 +872,7 @@ static String build_services_json(void)
 
 /* System info manifest - also published to MQTT atnode/<id>/info.
  * The "services" object is the full remote API catalog.              */
+#if FEATURE_MQTT
 static String build_sys_info_json(void)
 {
     String json = "{";
@@ -813,7 +887,9 @@ static String build_sys_info_json(void)
     json += "}";
     return json;
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_BLE
 static void handle_ble_pair(void)
 {
     String val = g_http.arg("enable");
@@ -829,7 +905,9 @@ static void handle_ble_pair(void)
     json += "}";
     send_json(json);
 }
+#endif /* FEATURE_BLE */
 
+#if FEATURE_BLE
 static void handle_ble_bonds_delete(void)
 {
     String idxStr = g_http.arg("idx");
@@ -854,14 +932,37 @@ static void handle_ble_bonds_delete(void)
     send_json("{\"ok\":true,\"cmd\":\"ble/bonds/delete\",\"addr\":\"" +
               String(addr.toString().c_str()) + "\"}");
 }
+#endif /* FEATURE_BLE */
 
+#if FEATURE_BLE
 static void handle_ble_bonds_clear(void)
 {
     bool ok = NimBLEDevice::deleteAllBonds();
     Serial.printf("BLE bonds cleared ok=%d\n", ok);
     send_json("{\"ok\":" + String(ok ? "true" : "false") + ",\"cmd\":\"ble/bonds/clear\"}");
 }
+#endif /* FEATURE_BLE */
 
+
+/* Compile-time feature flags (features.h). Reported via AT+ABILITY,
+ * GET /at-node/cmd/ability, MQTT method "ability", and embedded in
+ * /at-node/cmd/status so the web UI can hide unsupported tabs. */
+static String build_ability_json(void)
+{
+    String j = "{";
+    j += "\"ble\":"     + String(FEATURE_BLE ? "true" : "false");
+    j += ",\"mqtt\":"    + String(FEATURE_MQTT ? "true" : "false");
+    j += ",\"rathole\":" + String(FEATURE_RATHOLE ? "true" : "false");
+    j += ",\"i2c\":"     + String(FEATURE_I2C ? "true" : "false");
+    j += ",\"breath_led\":" + String(FEATURE_BREATH_LED ? "true" : "false");
+    j += "}";
+    return j;
+}
+
+static void handle_ability(void)
+{
+    send_json("{\"ok\":true,\"ability\":" + build_ability_json() + "}");
+}
 
 static void handle_cmd_status(void)
 {
@@ -872,22 +973,30 @@ static void handle_cmd_status(void)
     json += ",\"ip\":\"" + WiFi.localIP().toString() + "\"";
     json += ",\"ble_addr\":\"" + String(g_ble_addr_str) + "\"";
     json += ",\"typing\":" + String(g_type_busy ? "true" : "false");
+#if FEATURE_MQTT
     json += ",\"mqtt\":" + String(g_mqtt_connected ? "true" : "false");
+#else
+    json += ",\"mqtt\":false";
+#endif
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
     json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
+    json += ",\"ability\":" + build_ability_json();
     json += "}";
     send_json(json);
 }
 
 /* --- rathole tunnel handlers -------------------------------------------- */
 /* Tunnel id from query/form arg "id" (1-based); -1 on invalid. */
+#if FEATURE_RATHOLE
 static int tunnel_id_arg(void)
 {
     int id = g_http.arg("id").toInt();
     if (id < 1 || id > RATHOLE_MAX_TUNNELS) return -1;
     return id - 1;
 }
+#endif /* FEATURE_RATHOLE */
 
+#if FEATURE_RATHOLE
 static void handle_tunnel_status(void)
 {
     String json = "{\"ok\":true,\"tunnels\":[";
@@ -898,7 +1007,9 @@ static void handle_tunnel_status(void)
     json += "]}";
     send_json(json);
 }
+#endif /* FEATURE_RATHOLE */
 
+#if FEATURE_RATHOLE
 static void handle_tunnel_config(void)
 {
     int idx = tunnel_id_arg();
@@ -916,8 +1027,10 @@ static void handle_tunnel_config(void)
     send_json("{\"ok\":true,\"cmd\":\"tunnel/config\",\"tunnel\":" +
               rathole_status_json(idx) + "}");
 }
+#endif /* FEATURE_RATHOLE */
 
 /* Global rathole master switch: POST /at-node/cmd/tunnel/enable?enable=1|0 */
+#if FEATURE_RATHOLE
 static void handle_tunnel_enable(void)
 {
     String val = g_http.arg("enable");
@@ -931,7 +1044,9 @@ static void handle_tunnel_enable(void)
     send_json("{\"ok\":true,\"cmd\":\"tunnel/enable\",\"enabled\":" +
               String(rathole_is_enabled() ? "true" : "false") + "}");
 }
+#endif /* FEATURE_RATHOLE */
 
+#if FEATURE_RATHOLE
 static void handle_tunnel_connect(void)
 {
     int idx = tunnel_id_arg();
@@ -944,7 +1059,9 @@ static void handle_tunnel_connect(void)
               ",\"cmd\":\"tunnel/connect\",\"tunnel\":" + rathole_status_json(idx) + "}",
               ok ? 200 : 400);
 }
+#endif /* FEATURE_RATHOLE */
 
+#if FEATURE_RATHOLE
 static void handle_tunnel_disconnect(void)
 {
     int idx = tunnel_id_arg();
@@ -955,7 +1072,9 @@ static void handle_tunnel_disconnect(void)
     rathole_stop(idx);
     send_json("{\"ok\":true,\"cmd\":\"tunnel/disconnect\"}");
 }
+#endif /* FEATURE_RATHOLE */
 
+#if FEATURE_RATHOLE
 static void handle_tunnel_clear(void)
 {
     int idx = tunnel_id_arg();
@@ -966,15 +1085,18 @@ static void handle_tunnel_clear(void)
     rathole_clear(idx);
     send_json("{\"ok\":true,\"cmd\":\"tunnel/clear\"}");
 }
+#endif /* FEATURE_RATHOLE */
 
 
 /* --- MQTT browser config page -------------------------------------------- */
 
+#if FEATURE_MQTT
 static void handle_mqtt_clear(void)
 {
     mqtt_clear_config();
     send_json("{\"ok\":true,\"cmd\":\"mqtt/clear\"}");
 }
+#endif /* FEATURE_MQTT */
 
 /* --- unified config endpoints (thin HTTP wrapper over config_set/get) --- */
 static void handle_config_get(void)
@@ -1013,6 +1135,7 @@ static bool ir_send_nec(uint32_t data);
 static bool ir_send_sirc(uint32_t data, int bits);
 
 /* Write hex-encoded bytes to I2C (e.g. "FF01" -> 0xFF, 0x01). */
+#if FEATURE_I2C
 static void i2c_write_hex(const String& hexData)
 {
     for (int i = 0; i < hexData.length(); i += 2) {
@@ -1020,6 +1143,7 @@ static void i2c_write_hex(const String& hexData)
         Wire.write(b);
     }
 }
+#endif /* FEATURE_I2C */
 
 static void handle_at(void)
 {
@@ -1034,6 +1158,9 @@ static void handle_at(void)
     String resp;
     if (cmd == "AT") {
         resp = "OK";
+    } else if (cmd == "AT+ABILITY") {
+        resp = "+ABILITY:" + build_ability_json();
+#if FEATURE_BLE
     } else if (cmd.startsWith("AT+TAP=")) {
         String args = cmd.substring(7);
         int c1 = args.indexOf(',');
@@ -1047,6 +1174,8 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
+#if FEATURE_BLE
     } else if (cmd.startsWith("AT+KEY=")) {
         String args = cmd.substring(7);
         g_key_state.mods = parse_uint8(args);
@@ -1058,12 +1187,15 @@ static void handle_at(void)
         }
         send_report();
         resp = "OK";
+#endif
+#if FEATURE_BLE
     } else if (cmd.startsWith("AT+TEXT=")) {
         String text = cmd.substring(8);
         g_type_text = text;
         g_type_idx  = 0;
         g_type_busy = true;
         resp = "OK";
+#endif
     } else if (cmd.startsWith("AT+CONF=")) {
         String kv = cmd.substring(8);
         int eq = kv.indexOf('=');
@@ -1106,6 +1238,7 @@ static void handle_at(void)
         int ch = cmd.substring(7).toInt();
         int mv = analogReadMilliVolts(ch);
         resp = "+ADC:" + String(mv);
+#if FEATURE_I2C
     } else if (cmd == "AT+I2C_SCAN") {
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
@@ -1114,6 +1247,8 @@ static void handle_at(void)
             }
         }
         if (resp.length() == 0) resp = "+I2C_SCAN:none";
+#endif
+#if FEATURE_I2C
     } else if (cmd.startsWith("AT+I2C_R=")) {
         String args = cmd.substring(9);
         int c1 = args.indexOf(',');
@@ -1137,6 +1272,8 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
+#if FEATURE_I2C
     } else if (cmd.startsWith("AT+I2C_W=")) {
         String args = cmd.substring(9);
         int c1 = args.indexOf(',');
@@ -1157,6 +1294,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
     } else if (cmd.startsWith("AT+IR=")) {
         String args = cmd.substring(6);
         int c1 = args.indexOf(',');
@@ -1192,6 +1330,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#if FEATURE_MQTT
     } else if (cmd.startsWith("AT+MQTT=")) {
         String args = cmd.substring(8);
         int c1 = args.indexOf(',');
@@ -1239,6 +1378,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
     } else if (cmd.startsWith("AT+WIFI=")) {
         String args = cmd.substring(8);
         int c1 = args.indexOf(',');
@@ -1281,6 +1421,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#if FEATURE_BLE
     } else if (cmd.startsWith("AT+PAIR=") || cmd == "AT+PAIR") {
         String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
         if (args == "status") {
@@ -1291,6 +1432,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
     } else if (cmd.startsWith("AT+NVS=")) {
         String sub = cmd.substring(7);
         if (sub == "clear") {
@@ -1321,6 +1463,7 @@ static void handle_at(void)
     send_json(json);
 }
 
+#if FEATURE_BLE
 static void handle_keyboard_tap(void)
 {
     if (!is_connected()) {
@@ -1336,7 +1479,9 @@ static void handle_keyboard_tap(void)
     key_tap(mods, key, ms);
     send_json("{\"ok\":true,\"cmd\":\"keyboard/tap\",\"ms\":" + String(ms) + "}");
 }
+#endif /* FEATURE_BLE */
 
+#if FEATURE_BLE
 static void handle_keyboard_text(void)
 {
     if (!is_connected()) {
@@ -1362,7 +1507,9 @@ static void handle_keyboard_text(void)
     g_type_busy = true;
     send_json("{\"ok\":true,\"cmd\":\"keyboard/text\",\"queued\":true}");
 }
+#endif /* FEATURE_BLE */
 
+#if FEATURE_BLE
 static void handle_keyboard_key(void)
 {
     if (!is_connected()) {
@@ -1378,6 +1525,7 @@ static void handle_keyboard_key(void)
     send_report();
     send_json("{\"ok\":true,\"cmd\":\"keyboard/key\"}");
 }
+#endif /* FEATURE_BLE */
 
 /* --- GPIO / ADC --------------------------------------------------------- */
 static void handle_gpio_write(void)
@@ -1423,6 +1571,7 @@ static void handle_adc_read(void)
 }
 
 /* --- I2C --------------------------------------------------------------- */
+#if FEATURE_I2C
 static void handle_i2c_scan(void)
 {
     String found = "[";
@@ -1438,7 +1587,9 @@ static void handle_i2c_scan(void)
     found += "]";
     send_json("{\"ok\":true,\"cmd\":\"i2c/scan\",\"devices\":" + found + "}");
 }
+#endif /* FEATURE_I2C */
 
+#if FEATURE_I2C
 static void handle_i2c_read(void)
 {
     int addr = strtoul(g_http.arg("addr").c_str(), NULL, 0);
@@ -1467,7 +1618,9 @@ static void handle_i2c_read(void)
     send_json("{\"ok\":true,\"cmd\":\"i2c/read\",\"addr\":\"0x" + String(addr, HEX) +
               "\",\"reg\":\"0x" + String(reg, HEX) + "\",\"data\":\"" + data + "\"}");
 }
+#endif /* FEATURE_I2C */
 
+#if FEATURE_I2C
 static void handle_i2c_write(void)
 {
     int addr = strtoul(g_http.arg("addr").c_str(), NULL, 0);
@@ -1488,6 +1641,7 @@ static void handle_i2c_write(void)
     send_json("{\"ok\":true,\"cmd\":\"i2c/write\",\"addr\":\"0x" + String(addr, HEX) +
               "\",\"reg\":\"0x" + String(reg, HEX) + "\"}");
 }
+#endif /* FEATURE_I2C */
 
 /* --- IR sender (RMT) --------------------------------------------------- */
 #define IR_TX_PIN      4
@@ -1603,7 +1757,9 @@ static void handle_ir_send(void)
  * No embedded CA cert needed — fingerprint stored in NVS (mqtt_ca_fp). */
 
 /* forward declaration - defined after the network helpers below */
+#if FEATURE_MQTT
 static String mqtt_exec(const String& method, const String& query);
+#endif
 
 /* --- Wake-on-LAN --------------------------------------------------------- */
 static bool wol_send(const String& macStr)
@@ -1689,6 +1845,7 @@ static float ping_host(IPAddress ip, int count, int* out_recv)
     return (float)ctx.total_ms / ctx.recv;
 }
 
+#if FEATURE_MQTT
 static void mqtt_callback(char* topic, byte* payload, unsigned int length)
 {
     String t(topic);
@@ -1711,7 +1868,9 @@ static void mqtt_callback(char* topic, byte* payload, unsigned int length)
     }
     Serial.printf("MQTT [%s] %s\n", topic, body.c_str());
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static bool verify_fingerprint(const mbedtls_x509_crt* cert, const String& fp_hex)
 {
     if (!cert) return false;
@@ -1731,7 +1890,9 @@ static bool verify_fingerprint(const mbedtls_x509_crt* cert, const String& fp_he
     fp.toLowerCase();
     return fp.equals(hex);
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static bool mqtt_connect(void)
 {
     if (g_mqtt_broker.length() == 0) return false;
@@ -1811,7 +1972,9 @@ static bool mqtt_connect(void)
         return false;
     }
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void mqtt_task_func(void* arg)
 {
     /* All PubSubClient operations run here (single owner, thread-safe).
@@ -1843,11 +2006,14 @@ static void mqtt_task_func(void* arg)
         }
     }
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static String mqtt_exec(const String& method, const String& query)
 {
     auto err = [](const char* e) { return String("\"ok\":false,\"error\":\"") + e + "\""; };
 
+#if FEATURE_BLE
     if (method == "keyboard/tap") {
         if (!is_connected()) return err("BLE not connected");
         uint8_t mods = parse_uint8(query_get(query, "mods"));
@@ -1856,6 +2022,8 @@ static String mqtt_exec(const String& method, const String& query)
         key_tap(mods, key, ms > 0 ? ms : 100);
         return "\"ok\":true";
     }
+#endif
+#if FEATURE_BLE
     if (method == "keyboard/text") {
         if (!is_connected()) return err("BLE not connected");
         if (g_type_busy)     return err("typing in progress");
@@ -1871,6 +2039,8 @@ static String mqtt_exec(const String& method, const String& query)
         g_type_busy = true;
         return "\"ok\":true,\"queued\":true";
     }
+#endif
+#if FEATURE_BLE
     if (method == "keyboard/key") {
         if (!is_connected()) return err("BLE not connected");
         g_key_state.mods = parse_uint8(query_get(query, "mods"));
@@ -1880,6 +2050,7 @@ static String mqtt_exec(const String& method, const String& query)
         send_report();
         return "\"ok\":true";
     }
+#endif
     if (method == "gpio/write") {
         int pin   = query_get(query, "pin").toInt();
         int level = query_get(query, "level").toInt();
@@ -1897,9 +2068,12 @@ static String mqtt_exec(const String& method, const String& query)
         int mv = analogReadMilliVolts(ch);
         return String("\"ok\":true,\"mv\":") + mv;
     }
+#if FEATURE_BLE
     if (method == "ble/status") {
         return String("\"ok\":true,\"ble\":") + build_ble_status_json();
     }
+#endif
+#if FEATURE_BLE
     if (method == "ble/pair") {
         String val = query_get(query, "enable");
         if (val.length() == 0) val = query_get(query, "start");
@@ -1914,9 +2088,14 @@ static String mqtt_exec(const String& method, const String& query)
         }
         return err("missing enable");
     }
+#endif
     if (method == "sys/info") {
         return String("\"ok\":true,\"info\":") + build_sys_info_json();
     }
+    if (method == "ability") {
+        return String("\"ok\":true,\"ability\":") + build_ability_json();
+    }
+#if FEATURE_RATHOLE
     if (method == "tunnel/status") {
         String t = "\"ok\":true,\"tunnels\":[";
         for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
@@ -1925,6 +2104,8 @@ static String mqtt_exec(const String& method, const String& query)
         }
         return t + "]";
     }
+#endif
+#if FEATURE_RATHOLE
     if (method == "tunnel/enable") {
         String val = query_get(query, "enable");
         if (val == "1" || val == "true")      rathole_set_enabled(true);
@@ -1932,6 +2113,8 @@ static String mqtt_exec(const String& method, const String& query)
         else return err("missing enable");
         return String("\"ok\":true,\"enabled\":") + (rathole_is_enabled() ? "true" : "false");
     }
+#endif
+#if FEATURE_RATHOLE
     if (method.startsWith("tunnel/")) {
         int id = query_get(query, "id").toInt();
         if (id < 1 || id > RATHOLE_MAX_TUNNELS) return err("invalid id");
@@ -1961,6 +2144,7 @@ static String mqtt_exec(const String& method, const String& query)
         }
         return err("unknown tunnel method");
     }
+#endif
     if (method == "config/set") {
         String key = query_get(query, "key");
         String val = query_get(query, "val");
@@ -1997,7 +2181,9 @@ static String mqtt_exec(const String& method, const String& query)
     }
     return err("unknown method");
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_status(void)
 {
     String json = "{";
@@ -2014,7 +2200,9 @@ static void handle_mqtt_status(void)
     json += "}";
     send_json(json);
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_config(void)
 {
     /* legacy alias over the unified config layer */
@@ -2025,13 +2213,16 @@ static void handle_mqtt_config(void)
     if (g_http.hasArg("auto"))   config_set("mqtt.auto",   g_http.arg("auto"));
     send_json("{\"ok\":true,\"cmd\":\"mqtt/config\"}");
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_ca(void)
 {
     String fp = g_http.arg("fp");
     if (fp.length() > 0) config_set("mqtt.ca", fp);
     send_json("{\"ok\":true,\"cmd\":\"mqtt/ca\"}");
 }
+#endif /* FEATURE_MQTT */
 
 static void handle_wifi_config(void)
 {
@@ -2041,6 +2232,7 @@ static void handle_wifi_config(void)
     send_json("{\"ok\":true,\"cmd\":\"wifi/config\",\"ssid\":\"" + g_wifi_ssid + "\"}");
 }
 
+#if FEATURE_MQTT
 static void mqtt_poll(void)
 {
     /* Wake MQTT task on manual connect request (non-blocking). */
@@ -2048,14 +2240,18 @@ static void mqtt_poll(void)
         xSemaphoreGive(g_mqtt_sem);
     }
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_connect(void)
 {
     g_mqtt_connect_pending = true;
     if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);
     send_json("{\"ok\":true,\"cmd\":\"mqtt/connect\",\"queued\":true}");
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_publish(void)
 {
     if (!g_mqtt_connected) {
@@ -2072,7 +2268,9 @@ static void handle_mqtt_publish(void)
     send_json("{\"ok\":" + String(ok ? "true" : "false") +
               ",\"cmd\":\"mqtt/publish\"}");
 }
+#endif /* FEATURE_MQTT */
 
+#if FEATURE_MQTT
 static void handle_mqtt_subscribe(void)
 {
     if (!g_mqtt_connected) {
@@ -2088,6 +2286,7 @@ static void handle_mqtt_subscribe(void)
     send_json("{\"ok\":" + String(ok ? "true" : "false") +
               ",\"cmd\":\"mqtt/subscribe\"}");
 }
+#endif /* FEATURE_MQTT */
 
 static void handle_ap(void)
 {
@@ -2185,6 +2384,7 @@ static void handle_not_found(void)
 }
 
 /* --- BLE init ---------------------------------------------------------- */
+#if FEATURE_BLE
 static bool ble_init(void)
 {
     NimBLEDevice::init(g_device_name.c_str());
@@ -2240,6 +2440,7 @@ static bool ble_init(void)
     Serial.println("BLE keyboard started: " + g_device_name);
     return true;
 }
+#endif /* FEATURE_BLE */
 
 /* --- serial AT parser --------------------------------------------------- */
 static void serial_exec(const String& line)
@@ -2248,29 +2449,46 @@ static void serial_exec(const String& line)
         Serial.println("OK");
     } else if (line == "AT+HELP") {
         Serial.println("AT-Node ESP32 commands:");
-        Serial.println("  AT / AT+STATUS / AT+VER / AT+HELP");
+        Serial.println("  AT / AT+STATUS / AT+VER / AT+HELP / AT+ABILITY");
+#if FEATURE_BLE
         Serial.println("  AT+TAP=<ms>,<mods>,<key>     press+release");
         Serial.println("  AT+KEY=<mods>,<k1>..<k6>     raw HID report");
         Serial.println("  AT+MOD=<mask>                modifiers only");
         Serial.println("  AT+KEY_SEQ=<ms>,<mods>,<k1..6>,... batch reports");
         Serial.println("  AT+TEXT=<text>               type ASCII text");
+#endif
         Serial.println("  AT+SET=<key>=<val> / AT+GET=<key> / AT+KEYS  unified config");
         Serial.println("  AT+CONF=<key>=<val>          name/hostname (NVS, legacy alias)");
+#if FEATURE_BLE
         Serial.println("  AT+BT_LIST / AT+BT_DISC / AT+BT_PAIR");
+#endif
         Serial.println("  AT+GPIO_W=<pin>,<level> / AT+GPIO_R=<pin>");
+#if FEATURE_I2C
         Serial.println("  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R / AT+I2C_W");
+#else
+        Serial.println("  AT+ADC=<ch>");
+#endif
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
+#if FEATURE_MQTT
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
+#endif
+#if FEATURE_RATHOLE
         Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
         Serial.println("  AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>");
         Serial.println("  AT+TUNNEL=<1>,connect|disconnect|clear|status");
+#endif
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
+#if FEATURE_BLE
         Serial.println("  AT+PAIR=<1|0|status>       BLE public pairing advertising (60s timeout)");
+#endif
         Serial.println("  AT+NVS=clear                 erase all NVS settings and restart");
         Serial.println("  Full API catalog: GET /at-node/help.json or MQTT sys/info");
+    } else if (line == "AT+ABILITY") {
+        Serial.println("+ABILITY:" + build_ability_json());
+        Serial.println("OK");
     } else if (line == "AT+VER") {
         Serial.println("AT-Node v1.0 [esp32]");
         Serial.println("OK");
@@ -2279,6 +2497,7 @@ static void serial_exec(const String& line)
         Serial.print(is_connected() ? "1" : "0");
         Serial.print(" ip=");
         Serial.println(WiFi.localIP().toString());
+#if FEATURE_BLE
     } else if (line.startsWith("AT+TAP=")) {
         String args = line.substring(7);
         int c1 = args.indexOf(',');
@@ -2292,6 +2511,8 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
+#if FEATURE_BLE
     } else if (line.startsWith("AT+KEY=")) {
         String args = line.substring(7);
         g_key_state.mods = parse_uint8(args);
@@ -2303,10 +2524,14 @@ static void serial_exec(const String& line)
         }
         send_report();
         Serial.println("OK");
+#endif
+#if FEATURE_BLE
     } else if (line.startsWith("AT+MOD=")) {
         g_key_state.mods = parse_uint8(line.substring(7));
         send_report();
         Serial.println("OK");
+#endif
+#if FEATURE_BLE
     } else if (line.startsWith("AT+KEY_SEQ=")) {
         /* AT+KEY_SEQ=<delay_ms>,<mods>,<k1>..<k6>,... (groups of 7) */
         String args = line.substring(11);
@@ -2337,6 +2562,8 @@ static void serial_exec(const String& line)
             Serial.printf("%d reports sent\n", reports);
             Serial.println("OK");
         }
+#endif
+#if FEATURE_BLE
     } else if (line == "AT+BT_LIST") {
         int nb = NimBLEDevice::getNumBonds();
         if (nb == 0) {
@@ -2347,6 +2574,8 @@ static void serial_exec(const String& line)
                           NimBLEDevice::getBondedAddress(i).toString().c_str());
         }
         Serial.println("OK");
+#endif
+#if FEATURE_BLE
     } else if (line == "AT+BT_DISC") {
         if (is_connected()) {
             std::vector<uint16_t> peers = g_server->getPeerDevices();
@@ -2355,6 +2584,8 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR: not connected");
         }
+#endif
+#if FEATURE_BLE
     } else if (line == "AT+BT_PAIR") {
         if (is_connected()) {
             std::vector<uint16_t> peers = g_server->getPeerDevices();
@@ -2363,12 +2594,15 @@ static void serial_exec(const String& line)
         bool ok = NimBLEDevice::deleteAllBonds();
         Serial.printf("bonds erased: %d\n", ok);
         Serial.println(ok ? "OK" : "ERROR");
+#endif
+#if FEATURE_BLE
     } else if (line.startsWith("AT+TEXT=")) {
         String text = line.substring(8);
         g_type_text = text;
         g_type_idx  = 0;
         g_type_busy = true;
         Serial.println("OK");
+#endif
     } else if (line.startsWith("AT+SET=")) {
         /* AT+SET=<config-key>=<value> — unified config layer */
         String kv = line.substring(7);
@@ -2436,6 +2670,7 @@ static void serial_exec(const String& line)
         Serial.print("+ADC:");
         Serial.println(mv);
         Serial.println("OK");
+#if FEATURE_I2C
     } else if (line == "AT+I2C_SCAN") {
         for (uint8_t addr = 1; addr < 127; addr++) {
             Wire.beginTransmission(addr);
@@ -2445,6 +2680,8 @@ static void serial_exec(const String& line)
             }
         }
         Serial.println("OK");
+#endif
+#if FEATURE_I2C
     } else if (line.startsWith("AT+I2C_R=")) {
         String args = line.substring(9);
         int c1 = args.indexOf(',');
@@ -2469,6 +2706,8 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
+#if FEATURE_I2C
     } else if (line.startsWith("AT+I2C_W=")) {
         String args = line.substring(9);
         int c1 = args.indexOf(',');
@@ -2489,6 +2728,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
     } else if (line.startsWith("AT+IR=")) {
         String args = line.substring(6);
         int c1 = args.indexOf(',');
@@ -2525,6 +2765,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#if FEATURE_MQTT
     } else if (line.startsWith("AT+MQTT=")) {
         String args = line.substring(8);
         int c1 = args.indexOf(',');
@@ -2567,6 +2808,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
     } else if (line.startsWith("AT+WIFI=")) {
         String args = line.substring(8);
         int c1 = args.indexOf(',');
@@ -2607,6 +2849,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#if FEATURE_BLE
     } else if (line.startsWith("AT+PAIR=") || line == "AT+PAIR") {
         String args = (line.length() > 8) ? line.substring(8) : String("status");
         if (args == "status") {
@@ -2618,6 +2861,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
     } else if (line.startsWith("AT+NVS=")) {
         String sub = line.substring(7);
         if (sub == "clear") {
@@ -2627,6 +2871,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#if FEATURE_RATHOLE
     } else if (line.startsWith("AT+TUNNEL=")) {
         /* AT+TUNNEL=status | enable | enable,<0|1>
          * AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>
@@ -2675,6 +2920,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
     } else if (line.startsWith("AT+AP=")) {
         int val = line.substring(6).toInt();
         if (val == 1) {
@@ -2758,8 +3004,10 @@ void setup(void)
         g_http.on("/at-node/tunnel", HTTP_GET, handle_legacy_page);
         g_http.on("/at-node/mqtt", HTTP_GET, handle_legacy_page);
         g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
+        g_http.on("/at-node/cmd/ability", HTTP_GET, handle_ability);
         g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
+#if FEATURE_BLE
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
         g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
@@ -2767,13 +3015,17 @@ void setup(void)
         g_http.on("/at-node/cmd/ble/pair", HTTP_POST, handle_ble_pair);
         g_http.on("/at-node/cmd/ble/bonds/delete", HTTP_POST, handle_ble_bonds_delete);
         g_http.on("/at-node/cmd/ble/bonds/clear", HTTP_POST, handle_ble_bonds_clear);
+#endif
         g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
         g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
         g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
+#if FEATURE_I2C
         g_http.on("/at-node/cmd/i2c/scan", HTTP_POST, handle_i2c_scan);
         g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
         g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
+#endif
         g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
+#if FEATURE_MQTT
         g_http.on("/at-node/cmd/mqtt/status", HTTP_GET, handle_mqtt_status);
         g_http.on("/at-node/cmd/mqtt/config", HTTP_POST, handle_mqtt_config);
         g_http.on("/at-node/cmd/mqtt/ca", HTTP_POST, handle_mqtt_ca);
@@ -2781,15 +3033,18 @@ void setup(void)
         g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
         g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
         g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
+#endif
         g_http.on("/at-node/cmd/config", HTTP_GET, handle_config_get);
         g_http.on("/at-node/cmd/config", HTTP_POST, handle_config_set);
         g_http.on("/at-node/cmd/config/list", HTTP_GET, handle_config_list);
+#if FEATURE_RATHOLE
         g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
         g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
         g_http.on("/at-node/cmd/tunnel/enable", HTTP_POST, handle_tunnel_enable);
         g_http.on("/at-node/cmd/tunnel/connect", HTTP_POST, handle_tunnel_connect);
         g_http.on("/at-node/cmd/tunnel/disconnect", HTTP_POST, handle_tunnel_disconnect);
         g_http.on("/at-node/cmd/tunnel/clear", HTTP_POST, handle_tunnel_clear);
+#endif
         g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
         g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
         g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
@@ -2810,8 +3065,16 @@ void setup(void)
     }
 
     /* I2C: SDA=GPIO8, SCL=GPIO9 (ESP32-C3 default) */
+#if FEATURE_I2C
     Wire.begin(8, 9);
     Serial.println("I2C initialized (SDA=8, SCL=9)");
+#endif
+#if FEATURE_BREATH_LED
+    /* I2C off -> GPIO8 free -> breathing LED: a live loop() keeps it
+     * breathing; a wedged/dead board freezes or darkens it. */
+    ledcAttach(BREATH_LED_PIN, 5000, 8);
+    Serial.println("Breath LED on GPIO" + String(BREATH_LED_PIN));
+#endif
 
     /* IR: RMT on GPIO4 */
     if (ir_init()) {
@@ -2820,23 +3083,34 @@ void setup(void)
         Serial.println("IR init failed");
     }
 
+#if FEATURE_BLE
     ble_init();
+#endif
 
+#if FEATURE_MQTT
     /* MQTT background task — owns all PubSubClient operations */
     g_mqtt_sem = xSemaphoreCreateBinary();
     xTaskCreate(mqtt_task_func, "mqtt", 4096, NULL, 1, &g_mqtt_task);
+#endif
 
+#if FEATURE_RATHOLE
     /* rathole tunnels with auto=1 (tasks wait for WiFi themselves) */
     rathole_init();
+#endif
 }
 
 void loop(void)
 {
     if (g_wifi_ready && g_http_enabled) g_http.handleClient();
     handle_serial();
+#if FEATURE_BLE
     type_poll();
+#endif
+#if FEATURE_MQTT
     mqtt_poll();
+#endif
     ap_portal_poll();
+#if FEATURE_BLE
     ble_adv_poll();
     if (g_adv_restart_at && (int32_t)(millis() - g_adv_restart_at) >= 0) {
         g_adv_restart_at = 0;
@@ -2853,6 +3127,26 @@ void loop(void)
             }
         }
     }
+#endif
+#if FEATURE_BREATH_LED
+    /* ~2s triangle-wave breathing, gamma-corrected. Runs in loop(): a
+     * frozen pattern means loop() is wedged; dark means dead/hung hard. */
+    {
+        static uint32_t next = 0;
+        static uint16_t phase = 0;
+        uint32_t now = millis();
+        if ((int32_t)(now - next) >= 0) {
+            next = now + 15;
+            phase = (phase + 5) % 512;
+            uint32_t tri = phase < 256 ? phase : 511 - phase;
+            uint32_t duty = (tri * tri) >> 8;
+#if BREATH_LED_ACTIVE_LOW
+            duty = 255 - duty;
+#endif
+            ledcWrite(BREATH_LED_PIN, duty);
+        }
+    }
+#endif
     if (g_restart_at && (int32_t)(millis() - g_restart_at) >= 0) {
         g_restart_at = 0;
         Serial.println("restarting...");

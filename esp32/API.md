@@ -48,9 +48,23 @@ the JSON `/at-node/cmd/*` endpoints below — the HTML itself is never
 re-requested. Legacy page URLs (`/at-node/status`, `/at-node/pair`,
 `/at-node/mqtt`, `/at-node/tunnel`, `/at-node/help`) respond `302` → `/`.
 
+### GET /at-node/cmd/ability
+
+Compile-time feature flags (see `features.h` / `build.ps1 -Variant`). Features
+that are compiled out have no routes (404), no AT branches, and no config keys.
+
+```json
+{"ok": true, "ability": {"ble": true, "mqtt": true, "rathole": false,
+ "i2c": true, "breath_led": false}}
+```
+
+The same object is embedded in `GET /at-node/cmd/status` as `ability`, is
+available via MQTT method `ability`, and via serial `AT+ABILITY`.
+
 ### GET /at-node/help.json
 
-Machine-readable API catalog (same data as MQTT `sys/info` services).
+Machine-readable API catalog (same data as MQTT `sys/info` services). The
+catalog only lists methods whose feature is compiled in.
 
 **Response**:
 ```json

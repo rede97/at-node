@@ -22,6 +22,25 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
 }));
 
 /* --- status (heartbeat) ------------------------------------------------- */
+let ability = null;
+function applyAbility(a) {
+  ability = a;
+  const badge = (on, label) => '<span class="' + (on ? 'ok' : 'bad') + '">' +
+    (on ? '&#10003;' : '&#10007;') + label + '</span>';
+  $('s-feat').innerHTML = [
+    badge(a.ble, 'BLE'), badge(a.mqtt, 'MQTT'), badge(a.rathole, 'rathole'),
+    badge(a.i2c, 'I2C'), badge(a.breath_led, 'breathLED'),
+  ].join(' ');
+  // hide tabs whose feature is not compiled in
+  const tabFeat = { ble: a.ble, mqtt: a.mqtt, tunnel: a.rathole };
+  document.querySelectorAll('nav button').forEach(b => {
+    const f = tabFeat[b.dataset.tab];
+    if (f === false) b.hidden = true;
+  });
+  if (activeTab in tabFeat && tabFeat[activeTab] === false) {
+    document.querySelector('nav button[data-tab="status"]').click();
+  }
+}
 function statusRefresh() {
   get('/at-node/cmd/status').then(s => {
     $('hb').className = 'ok';
@@ -34,6 +53,7 @@ function statusRefresh() {
     $('s-mqtt').innerHTML = s.mqtt ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
     $('s-ap').textContent = s.ap ? 'active' : 'off';
     $('s-http').textContent = s.http_enabled ? 'on' : 'off';
+    if (!ability && s.ability) applyAbility(s.ability);
   }).catch(() => { $('hb').className = 'bad'; });
 }
 

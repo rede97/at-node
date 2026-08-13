@@ -60,6 +60,31 @@
 - 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|auto`、`http.enable`、`rathole.enable`、`tunnel.1.server|token|service|local|auto|retry|enable`；密码/token 类为只写
 - 存量命令(`AT+WIFI=`、`AT+MQTT=`、`AT+HTTP=`、`AT+CONF=`、`/at-node/cmd/{wifi,mqtt,http}/config` 等）保留为注册表别名，老脚本不受影响
 
+### 功能宏与固件变体（`features.h` + `build.ps1 -Variant`）
+
+编译期开关：`FEATURE_BLE` / `FEATURE_MQTT` / `FEATURE_RATHOLE` / `FEATURE_I2C`
+（默认全 1）。关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，
+`AT+GET` 对应键返回未知键。变体：
+
+| Variant | 宏 | 用途 |
+|---|---|---|
+| `full`（默认） | 全开 | 完整键盘节点 |
+| `base` | `RATHOLE=0` | 纯键盘节点（BLE+MQTT+I2C），无隧道 |
+| `rathole` | `BLE=0 MQTT=0 I2C=0` | 隧道专用测试板（free_heap ~180K vs 全开 ~20K） |
+
+```bash
+powershell -File esp32/esp32_at_node/build.ps1 -Port COMx -Variant rathole
+```
+
+**Ability 接口**：`AT+ABILITY` / `GET /at-node/cmd/ability` / MQTT `ability` 方法
+返回 `{"ble":..,"mqtt":..,"rathole":..,"i2c":..,"breath_led":..}`（同时内嵌在
+`/at-node/cmd/status` 里）；Web UI 据此隐藏无对应功能的标签页并在 Status 页显示
+功能徽章。未编译的功能路由直接 404。
+
+**呼吸灯（`FEATURE_BREATH_LED`，I2C 关闭时默认开）**：GPIO8 板载 LED 以 ~2s 周期
+gamma 校正呼吸——呼吸=loop() 活着；定格/熄灭=死机。默认按 SuperMini C3 低电平点亮
+（`BREATH_LED_ACTIVE_LOW 1`，高电平点亮的板子改 0）。
+
 ### rathole 隧道（`rathole_client.cpp`，架构/内存账目/坑录详见 [RATHOLE.md](RATHOLE.md)）
 
 - 协议：rathole v1（bincode 定长消息），plain TCP transport；TLS/noise 未实现——**只穿透自带加密的协议**（SSH/HTTPS/MQTT-TLS），或把服务 bind 在 server 侧 `127.0.0.1`
