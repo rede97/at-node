@@ -47,8 +47,8 @@
 - ✅ HTTP 开关：`AT+HTTP=status|enable,<0|1>|clear|0|1` 与 `/at-node/cmd/http/{status,config,clear}` 对齐 MQTT 风格，状态持久化到 NVS
 - ✅ BLE 配对安全：默认不广播，需通过 `AT+PAIR=1` / `POST /at-node/cmd/ble/pair?enable=1` / MQTT `ble/pair?enable=1` 显式进入 60s 公共配对模式；配对后断连转为定向广播，仅已绑定主机可连
 - ✅ NVS 擦除：`AT+NVS=clear` / `POST /at-node/cmd/nvs/clear` 恢复出厂设置并自动重启
-- ✅ rathole 内网穿透客户端：2 条并发隧道（plain TCP transport），`AT+TUNNEL=<1|2>,...` 串口配置 + `/at-node/tunnel` HTML 配置页 + REST 端点，NVS 持久化可开机自连；实测穿透 HTTP 控制面与 TCP echo 全通
-- ✅ MQTT HTML 配置页：`/at-node/mqtt`（broker/凭据/CA 指纹/auto），REST 增加 `/at-node/cmd/mqtt/clear` 与 `auto` 参数
+- ✅ rathole 内网穿透客户端：**单隧道**（plain TCP transport，一条 SSH 即可跳板，降低公网暴露），`AT+TUNNEL=<1>,...` 串口配置 + Web 配置页 + REST 端点，NVS 持久化可开机自连；实测穿透 HTTP 控制面与 TCP echo 全通
+- ✅ Web 控制面：`esp32/web/` 独立前端项目，`uv run python esp32/web/build.py` 打包内联 + gzip 成**单页应用**（`web_page.h`，~4.5KB），固件从 flash 一次性发送（`Content-Encoding: gzip`），页面内所有状态/配置均由 JSON `/at-node/cmd/*` 驱动；旧分页 URL（`/at-node/status|mqtt|tunnel|pair|help`）302 到 `/`
 
 ### 统一配置层
 
@@ -57,14 +57,16 @@
 - AT:`AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS`
 - HTTP:`POST /at-node/cmd/config?key=..&val=..`,`GET` 同路径读取，`GET /at-node/cmd/config/list` 全量
 - MQTT:`config/set` `config/get` `config/list` 方法
-- 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|auto`、`http.enable`、`rathole.enable`、`tunnel.<1|2>.server|token|service|local|auto|retry`；密码/token 类为只写
+- 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|auto`、`http.enable`、`rathole.enable`、`tunnel.1.server|token|service|local|auto|retry|enable`；密码/token 类为只写
 - 存量命令(`AT+WIFI=`、`AT+MQTT=`、`AT+HTTP=`、`AT+CONF=`、`/at-node/cmd/{wifi,mqtt,http}/config` 等）保留为注册表别名，老脚本不受影响
 
-### rathole 隧道（`rathole_client.cpp`）
+### rathole 隧道（`rathole_client.cpp`，架构/内存账目/坑录详见 [RATHOLE.md](RATHOLE.md)）
 
 - 协议：rathole v1（bincode 定长消息），plain TCP transport；TLS/noise 未实现——**只穿透自带加密的协议**（SSH/HTTPS/MQTT-TLS），或把服务 bind 在 server 侧 `127.0.0.1`
-- 架构：每隧道 1 个 manager task（控制通道 + 连接池轮询）；服务器 TCP_POOL_SIZE=8，但每 standby socket 占 ~2.4KB heap，池缩为 **2 条/隧道**；访客到来才起转发 task（3072B 栈 + 1460B 缓冲）
-- AT：`AT+TUNNEL=enable,<0|1>`（全局总开关，NVS）；`AT+TUNNEL=<1|2>,server|token|service|local|auto|retry,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
+- 架构：每隧道 1 个 manager task（控制通道 + 连接池轮询，3072B 栈）；服务器 TCP_POOL_SIZE=8，但每 standby socket 占 ~2.4KB heap，池缩为 **1 条/隧道**（服务器会按需重试 CreateDataChannel；实测池=2 时双隧道把 free_heap 压到 ~11KB，lwIP/HTTP 全饿死不响应）；访客到来才起转发 task（3072B 栈 + 1460B 缓冲）
+- 并发纪律：t.cli/t.pool **仅 manager task 可触碰**；其他任务的 stop/改配置只置 `want_run`/`reconfig` 标志，manager 自己在 ~100ms 内收编重连（跨任务 `cli.stop()` 曾在握手中释放 RX buffer 导致 NULL 解引用 panic）；`last_error` 用定长 buffer，cfg 每次重连前快照
+- 堆守护：`ESP.getFreeHeap() < 12KB` 时拒绝新建控制通道/池 socket/转发会话（`last_error="low heap, draining"`），等 TIME_WAIT(ESP-IDF 2×MSL≈120s）排空——实测重连风暴 25 轮可把 22K 打到 3.8K，全 IP 栈瘫痪 2-3 分钟；加守护后同场景 HTTP 全程可用、堆底 16K
+- AT：`AT+TUNNEL=enable,<0|1>`（全局总开关，NVS）；`AT+TUNNEL=1,server|token|service|local|auto|retry|enable,<val>` / `connect|disconnect|clear|status`；`AT+TUNNEL=status` 汇总（含 free_heap）
 - REST：`GET /at-node/cmd/tunnel/status`，`POST /at-node/cmd/tunnel/{config,enable,connect,disconnect,clear}`
 - MQTT：`tunnel/{status,config,enable,connect,disconnect,clear}` 方法全通（见 sys/info API 目录）
 - 配置项：全局 `rathole.enable` 一键总开关（关掉全停且不上电自连）；每隧道 `enable` 独立开关（持久化，关=立即停且禁止 connect）、`auto`（上电自连，需 enable=1）、`retry`（重连退避基数秒，1-60，指数×2 封顶 60s）。三级关系：`master && enable && auto → 上电自连`

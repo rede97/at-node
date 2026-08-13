@@ -39,6 +39,7 @@
 #include <NimBLEHIDDevice.h>
 #include <NimBLECharacteristic.h>
 #include "wifi_config.h"
+#include "web_page.h"   /* gzipped single-page web UI (esp32/web/build.py) */
 
 /* --- device configuration --------------------------------------------- */
 #define DEFAULT_DEVICE_NAME "AT-Node-ESP"
@@ -473,7 +474,7 @@ static const CfgEntry CFG_TABLE[] = {
 };
 #define CFG_TABLE_COUNT (sizeof(CFG_TABLE) / sizeof(CFG_TABLE[0]))
 
-/* tunnel.<1|2>.<server|token|service|local|auto|retry> — delegated to the
+/* tunnel.1.<server|token|service|local|auto|retry> — delegated to the
  * rathole module, which owns its NVS keys and restart semantics.       */
 static bool config_tunnel_key(const String& key, int* idx, String* field)
 {
@@ -596,228 +597,25 @@ static void send_json(const String& json, int code = 200)
     g_http.send(code, "application/json", json);
 }
 
-static void send_html(const String& html, int code = 200)
+/* The whole web UI is one gzipped single-page app (esp32/web/, built into
+ * web_page.h). Served from flash in ONE response with Content-Encoding:
+ * gzip — no heap copy, no repeated HTML requests; the page then drives
+ * everything through the JSON /at-node/cmd/* endpoints. */
+static void handle_web_app(void)
 {
     g_http.sendHeader("Access-Control-Allow-Origin", "*");
-    g_http.send(code, "text/html", html);
+    g_http.sendHeader("Content-Encoding", "gzip");
+    g_http.sendHeader("Cache-Control", "no-cache");
+    g_http.send_P(200, "text/html", (PGM_P)WEB_PAGE_GZ, WEB_PAGE_GZ_LEN);
 }
 
-static void handle_root(void)
+/* Pre-SPA page URLs: the single-page app replaces them all. */
+static void handle_legacy_page(void)
 {
-    g_http.sendHeader("Location", "/at-node/status");
+    g_http.sendHeader("Location", "/");
     g_http.send(302, "text/plain", "");
 }
 
-static void handle_status_html(void)
-{
-    String ble_state = is_connected()
-        ? "<span class='ok'>connected</span>"
-        : "<span class='bad'>not connected</span>";
-
-    String html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>AT-Node Status</title>";
-    html += "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">";
-    html += "<style>body{font-family:monospace;padding:16px;max-width:560px;margin:auto;}"
-            "table{border-collapse:collapse;width:100%;margin:8px 0;}"
-            "th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;}"
-            "th{background:#f5f5f5;width:38%;}"
-            ".ok{color:#0a0;}.bad{color:#d33;}"
-            "a{color:#007aff;}</style></head><body>";
-    html += "<h1>AT-Node Status</h1>";
-    html += "<table>";
-    html += "<tr><th>Device</th><td>" + g_device_name + "</td></tr>";
-    html += "<tr><th>Hostname</th><td>" + g_hostname + ".local</td></tr>";
-    html += "<tr><th>IP</th><td>" + WiFi.localIP().toString() + "</td></tr>";
-    html += "<tr><th>BLE Address</th><td>" + String(g_ble_addr_str) + "</td></tr>";
-    html += "<tr><th>BLE Host</th><td>" + ble_state + "</td></tr>";
-    html += "<tr><th>Bonded Hosts</th><td>" + String(NimBLEDevice::getNumBonds()) + "</td></tr>";
-    html += "<tr><th>Typing</th><td>" + String(g_type_busy ? "yes" : "no") + "</td></tr>";
-    html += "<tr><th>MQTT</th><td>" + String(g_mqtt_connected ? "connected" : "disconnected") + "</td></tr>";
-    html += "<tr><th>AP Mode</th><td>" + String(ap_portal_active() ? "active" : "off") + "</td></tr>";
-    html += "</table>";
-    html += "<p><a href=\"/at-node/pair\">BLE Pairing</a> | ";
-    html += "<a href=\"/at-node/mqtt\">MQTT Config</a> | ";
-    html += "<a href=\"/at-node/tunnel\">Tunnels</a> | ";
-    html += "<a href=\"/at-node/help\">API Help</a> | ";
-    html += "<a href=\"/at-node/cmd/status\">JSON</a></p>";
-    html += "</body></html>";
-    send_html(html);
-}
-
-static const char* HELP_PAGE_HTML = R"HTML(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AT-Node Help</title>
-<style>
-  body{font-family:monospace;padding:16px;max-width:800px;margin:auto;}
-  h1,h2{margin-top:1em;}
-  code{background:#f5f5f5;padding:2px 4px;border-radius:4px;}
-  table{border-collapse:collapse;width:100%;margin:8px 0;}
-  th,td{border:1px solid #ddd;padding:6px;text-align:left;}
-  th{background:#f5f5f5;}
-  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;}
-</style>
-</head>
-<body>
-<h1>AT-Node HTTP API</h1>
-<p>This interface is designed for agents. All endpoints return JSON unless noted.</p>
-
-<div class="note">
-  <strong>Security</strong>: This HTTP control plane has <strong>no authentication</strong> and is
-  intended for <strong>trusted local NAT networks only</strong>. On untrusted networks, disable it
-  with <code>AT+HTTP=0</code> (persisted; re-enable via serial / AP portal / MQTT) and use the
-  MQTT (TLS) control plane instead.
-</div>
-
-<h2>Device Discovery</h2>
-<div class="note">
-  <strong>mDNS</strong>: This device advertises itself via mDNS as <code>&lt;hostname&gt;.local</code>.
-  Agents can discover the device IP by resolving the mDNS hostname or by scanning the local network.
-  The hostname is configurable via <code>AT+CONF=hostname=...</code> (raw AT, persisted to NVS).
-  Default: <code>atnodeesp-&lt;chipid&gt;.local</code> (e.g., <code>atnodeesp-c842.local</code>).
-</div>
-
-<h2>Status</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Format</th><th>Description</th></tr>
-  <tr><td>GET</td><td><code>/at-node/status</code></td><td>HTML</td><td>Device status page</td></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/status</code></td><td>JSON</td><td>Device status (pure JSON)</td></tr>
-  <tr><td>GET</td><td><code>/at-node/help</code></td><td>HTML</td><td>This help page</td></tr>
-  <tr><td>GET</td><td><code>/at-node/pair</code></td><td>HTML</td><td>BLE pairing page (browser)</td></tr>
-</table>
-
-<h2>Raw AT Command</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Body</th><th>Description</th></tr>
-  <tr><td>POST</td><td><code>/at-node/at</code></td><td><code>AT+...</code></td><td>Execute raw AT command (text/plain)</td></tr>
-</table>
-<p>Config keys via <code>AT+CONF=name=...</code> / <code>AT+CONF=hostname=...</code> / <code>AT+CONF=http_enable=...</code> (persisted to NVS).<br>
-HTTP can be toggled with <code>AT+HTTP=1|0</code>, <code>AT+HTTP=enable,&lt;1|0&gt;</code>, or <code>POST /at-node/cmd/http/config?enable=1|0</code>.<br>
-Use <code>AT+HTTP=status</code> / <code>GET /at-node/cmd/http/status</code> to read the state, and <code>AT+HTTP=clear</code> / <code>POST /at-node/cmd/http/clear</code> to reset the HTTP setting to default (enabled).<br>
-<code>AT+NVS=clear</code> / <code>POST /at-node/cmd/nvs/clear</code> erases all persisted settings and restarts the device.<br>
-MQTT subcommands: <code>AT+MQTT=broker|port|ca,&lt;val&gt;</code> and <code>AT+MQTT=connect|status|clear</code> (no value) —
-<code>clear</code> wipes all MQTT settings (NVS + runtime) and disconnects.</p>
-
-<h2>BLE Keyboard / Pairing</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/ble/status</code></td><td></td><td>BLE name, address, connected peers, bonded host list</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ble/pair</code></td><td><code>enable=1|0</code></td><td>Enter / exit BLE pairing mode (public advertising, 60s timeout)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/delete</code></td><td><code>idx</code></td><td>Remove one bonded host (idx from ble/status)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ble/bonds/clear</code></td><td></td><td>Remove ALL bonded hosts</td></tr>
-</table>
-<p><strong>Public advertising is OFF by default</strong> for security. To pair a new host,
-manually enter pairing mode via <code>AT+PAIR=1</code>,
-<code>POST /at-node/cmd/ble/pair?enable=1</code>, or MQTT <code>ble/pair?enable=1</code>.
-Public advertising runs for <strong>60&nbsp;seconds</strong>; if no host connects within that window,
-it automatically stops and the device becomes undiscoverable again.</p>
-<p>Once a host is bonded, the device will advertise <strong>privately/directed</strong> to that
-bonded host after disconnect (or on boot), so only that host can reconnect. It does <em>not</em>
-broadcast publicly in that state.</p>
-<p>Browser UI: <a href="/at-node/pair">/at-node/pair</a> &mdash; shows connection state,
-controls advertising, lists and removes bonded hosts.
-Pairing flow: make sure the device is in pairing mode, then select
-<code>AT-Node-ESP-XXXX</code> in the host OS Bluetooth settings (Just Works, no PIN).
-After a firmware update that changes GATT services, remove the device in the
-host OS first (hosts cache the GATT table per MAC).</p>
-
-<h2>Keyboard</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/tap</code></td><td><code>mods,k,ms</code></td><td>Press+release one key</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/text</code></td><td><code>s,ms,gap</code></td><td>Type ASCII string via BLE</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/keyboard/key</code></td><td><code>mods,k0..k5</code></td><td>Raw 6KRO report (hold until released)</td></tr>
-</table>
-
-<h2>Peripherals</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/gpio/write</code></td><td><code>pin,level</code></td><td>Set GPIO output level</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/gpio/read</code></td><td><code>pin</code></td><td>Read GPIO input (pullup)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/adc/read</code></td><td><code>ch</code></td><td>Read ADC millivolts</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/scan</code></td><td><code></code></td><td>Scan I2C bus for devices</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/read</code></td><td><code>addr,reg,len</code></td><td>Read I2C register</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/i2c/write</code></td><td><code>addr,reg,data</code></td><td>Write I2C register</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ir/send</code></td><td><code>protocol,data,bits</code></td><td>Send IR via RMT (NEC/SIRC/RAW)</td></tr>
-</table>
-
-<h2>Network</h2>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/net/wol</code></td><td><code>mac</code></td><td>Send Wake-on-LAN magic packet on the device LAN</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/net/ping</code></td><td><code>host,count</code></td><td>ICMP ping from the device LAN, returns avg RTT</td></tr>
-</table>
-
-<h2>Configuration</h2>
-<div class="note">
-  <strong>Unified config layer</strong>: every persistent setting lives behind one registry.
-  Use <code>AT+SET=&lt;key&gt;=&lt;val&gt;</code> / <code>AT+GET=&lt;key&gt;</code> / <code>AT+KEYS</code> on serial,
-  <code>POST /at-node/cmd/config?key=..&amp;val=..</code> (+ <code>GET</code> same path, <code>GET /at-node/cmd/config/list</code>) over HTTP,
-  or MQTT <code>config/set|get|list</code> methods &mdash; all equivalent.
-  Keys: <code>device.name</code>, <code>device.hostname</code>, <code>wifi.ssid</code>, <code>wifi.pass</code>,
-  <code>mqtt.broker|port|user|pass|ca|auto</code>, <code>http.enable</code>, <code>rathole.enable</code>,
-  <code>tunnel.&lt;1|2&gt;.server|token|service|local|auto|retry|enable</code>.
-  Secret keys (passwords, tokens) are write-only.
-  Legacy commands (<code>AT+WIFI=</code>, <code>AT+MQTT=</code>, <code>AT+HTTP=</code>, <code>AT+CONF=</code>,
-  domain endpoints below) are aliases over the same registry.
-</div>
-<table>
-  <tr><th>Method</th><th>Path</th><th>Params</th><th>Description</th></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/mqtt/status</code></td><td><code></code></td><td>MQTT connection state</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/wifi/config</code></td><td><code>ssid,pass</code></td><td>Set WiFi credentials (NVS)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/config</code></td><td><code>broker,port,user,pass</code></td><td>Set MQTT broker (NVS)</td></tr>
-  <tr><td colspan="4"><small>Clear all MQTT settings via raw AT: <code>AT+MQTT=clear</code></small></td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/ca</code></td><td><code>fp</code></td><td>Set SHA256 fingerprint for TLS</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/clear</code></td><td></td><td>Wipe all MQTT settings</td></tr>
-  <tr><td>GET</td><td><code>/at-node/mqtt</code></td><td></td><td>MQTT config page (browser)</td></tr>
-  <tr><td>GET</td><td><code>/at-node/tunnel</code></td><td></td><td>rathole tunnel config page (browser)</td></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/tunnel/status</code></td><td></td><td>Tunnel states (JSON)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/config</code></td><td><code>id,server,token,service,local,auto,retry,enable</code></td><td>Configure rathole tunnel 1|2 (NVS)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/enable</code></td><td><code>enable=1|0</code></td><td>rathole master switch (NVS); off = all tunnels stopped, no boot autostart</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/connect</code></td><td><code>id</code></td><td>Start tunnel control channel</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/disconnect</code></td><td><code>id</code></td><td>Stop tunnel</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/tunnel/clear</code></td><td><code>id</code></td><td>Wipe tunnel config (NVS)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/connect</code></td><td><code></code></td><td>Trigger MQTT connect (async)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/publish</code></td><td><code>topic,msg</code></td><td>Publish arbitrary message</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/mqtt/subscribe</code></td><td><code>topic</code></td><td>Subscribe to topic</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/ap</code></td><td><code>1=start,0=stop</code></td><td>Provisioning AP portal</td></tr>
-  <tr><td>GET</td><td><code>/at-node/cmd/http/status</code></td><td></td><td>HTTP server state</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/http/config</code></td><td><code>enable=1|0</code></td><td>Enable/disable HTTP (NVS)</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/http/clear</code></td><td></td><td>Reset HTTP config</td></tr>
-  <tr><td>POST</td><td><code>/at-node/cmd/nvs/clear</code></td><td></td><td>Erase all settings &amp; restart</td></tr>
-</table>
-
-<h2>Examples</h2>
-<pre>
-# Tap key 'a' (0x04)
-curl -X POST "http://atnodeesp-c842.local/at-node/cmd/keyboard/tap?mods=0&k=4&ms=100"
-
-# Type text
-curl -X POST "http://atnodeesp-c842.local/at-node/cmd/keyboard/text?s=Hello&ms=60&gap=100"
-
-# Raw AT command
-curl -X POST -d "AT+TAP=100,0,4" http://atnodeesp-c842.local/at-node/at
-
-# Get JSON status
-curl http://atnodeesp-c842.local/at-node/cmd/status
-
-# BLE: check status, enter pairing mode, clear bonds
-curl http://atnodeesp-c842.local/at-node/cmd/ble/status
-curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/pair?enable=1"
-curl -X POST "http://atnodeesp-c842.local/at-node/cmd/ble/bonds/clear"
-</pre>
-
-<p><a href="/at-node/status">Back to Status</a></p>
-</body>
-</html>
-)HTML";
-
-static void handle_help_html(void)
-{
-    send_html(HELP_PAGE_HTML);
-}
 
 static void handle_help_json(void)
 {
@@ -921,7 +719,7 @@ static const ApiParam P_PING[] = {
     {"count", "echo count, default 4"},
 };
 static const ApiParam P_TUNCFG[] = {
-    {"id",      "tunnel 1|2"},
+    {"id",      "tunnel id (always 1)"},
     {"server",  "rathole server host:port"},
     {"token",   "service token"},
     {"service", "service name (must match server)"},
@@ -930,7 +728,7 @@ static const ApiParam P_TUNCFG[] = {
     {"retry",   "reconnect backoff base, seconds 1-60"},
 };
 static const ApiParam P_TUNID[] = {
-    {"id", "tunnel 1|2"},
+    {"id", "tunnel id (always 1)"},
 };
 static const ApiParam P_TUNEN[] = {
     {"enable", "1|0 rathole master switch (NVS)"},
@@ -1064,106 +862,6 @@ static void handle_ble_bonds_clear(void)
     send_json("{\"ok\":" + String(ok ? "true" : "false") + ",\"cmd\":\"ble/bonds/clear\"}");
 }
 
-static const char* PAIR_PAGE_HTML = R"HTML(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AT-Node BLE Pairing</title>
-<style>
-  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
-  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
-  table{border-collapse:collapse;width:100%;margin:8px 0;}
-  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
-  th{background:#f5f5f5;width:38%;}
-  button{padding:8px 14px;margin:4px 4px 4px 0;border:1px solid #007aff;
-         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:14px;}
-  button.ghost{background:#fff;color:#007aff;}
-  button.danger{border-color:#d33;background:#d33;}
-  button:active{opacity:.8;}
-  .ok{color:#0a0;} .bad{color:#d33;}
-  a{color:#007aff;}
-  #msg{margin-top:10px;color:#555;min-height:1.2em;}
-</style>
-</head>
-<body>
-<h1>AT-Node BLE Pairing</h1>
-
-<h2>Device</h2>
-<table>
-  <tr><th>BLE Name</th><td id="name">-</td></tr>
-  <tr><th>BLE Address</th><td id="addr">-</td></tr>
-  <tr><th>Advertising</th><td id="adv">-</td></tr>
-</table>
-<button onclick="setAdv(1)">Start Advertising</button>
-<button class="ghost" onclick="setAdv(0)">Stop Advertising</button>
-
-<h2>Connected Host</h2>
-<div id="peers">none</div>
-
-<h2>Bonded Hosts</h2>
-<div id="bonds">none</div>
-<button class="danger" onclick="clearBonds()">Clear All Bonds</button>
-<p><small>Removing a bond here does not remove it on the host &mdash; also remove
-&quot;AT-Node-ESP&quot; in your OS Bluetooth settings, otherwise the host will
-re-pair automatically on reconnect.</small></p>
-
-<p id="msg"></p>
-<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/help">API Help</a></p>
-
-<script>
-function msg(t){ document.getElementById('msg').textContent = t; }
-function refresh(){
-  fetch('/at-node/cmd/ble/status').then(r=>r.json()).then(s=>{
-    document.getElementById('name').textContent = s.name;
-    document.getElementById('addr').textContent = s.addr;
-    document.getElementById('adv').innerHTML = s.advertising
-      ? '<span class="ok">yes</span>' : '<span class="bad">no</span>';
-    document.getElementById('peers').innerHTML = s.peers.length
-      ? s.peers.map(p => p.addr + (p.bonded ? ' (bonded)' : ' (not bonded)') +
-                       (p.encrypted ? ' [encrypted]' : '')).join('<br>')
-      : 'none &mdash; pair from your host now';
-    document.getElementById('bonds').innerHTML = s.bonds.length
-      ? '<table><tr><th>Address</th><th></th></tr>' + s.bonds.map(b =>
-          '<tr><td>'+b.addr+'</td><td><button class="danger" onclick="delBond('+b.idx+')">Remove</button></td></tr>'
-        ).join('') + '</table>'
-      : 'none';
-  }).catch(()=>{ msg('refresh failed'); });
-}
-function setAdv(on){
-  fetch('/at-node/cmd/ble/pair?enable='+(on?1:0), {method:'POST'})
-    .then(r=>r.json()).then(()=>{ msg('advertising '+(on?'started':'stopped')); refresh(); });
-}
-function delBond(i){
-  if(!confirm('Remove this bond?')) return;
-  fetch('/at-node/cmd/ble/bonds/delete?idx='+i, {method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      msg(d.ok ? 'bond removed &mdash; also remove the device in the host OS Bluetooth settings'
-               : 'remove failed: '+(d.error||'unknown'));
-      refresh();
-    });
-}
-function clearBonds(){
-  if(!confirm('Remove ALL bonded hosts?')) return;
-  fetch('/at-node/cmd/ble/bonds/clear', {method:'POST'})
-    .then(r=>r.json()).then(d=>{
-      msg(d.ok ? 'all bonds cleared'
-               : 'clear failed: '+(d.error||'unknown'));
-      refresh();
-    });
-}
-refresh();
-setInterval(refresh, 2000);
-</script>
-</body>
-</html>
-)HTML";
-
-static void handle_pair_html(void)
-{
-    send_html(PAIR_PAGE_HTML);
-}
 
 static void handle_cmd_status(void)
 {
@@ -1269,205 +967,8 @@ static void handle_tunnel_clear(void)
     send_json("{\"ok\":true,\"cmd\":\"tunnel/clear\"}");
 }
 
-static const char* TUNNEL_PAGE_HTML = R"HTML(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AT-Node Tunnels</title>
-<style>
-  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
-  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
-  table{border-collapse:collapse;width:100%;margin:8px 0;}
-  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
-  th{background:#f5f5f5;width:30%;}
-  input[type=text],input[type=password]{width:95%;font-family:monospace;padding:4px;}
-  button{padding:6px 12px;margin:4px 4px 4px 0;border:1px solid #007aff;
-         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:13px;}
-  button.ghost{background:#fff;color:#007aff;}
-  button.danger{border-color:#d33;background:#d33;}
-  .ok{color:#0a0;} .bad{color:#d33;}
-  a{color:#007aff;}
-  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;font-size:13px;}
-  #msg{margin-top:10px;color:#555;min-height:1.2em;}
-</style>
-</head>
-<body>
-<h1>AT-Node Tunnels (rathole)</h1>
-<div class="note">Plain TCP transport. Only tunnel protocols that carry their own
-encryption (SSH, HTTPS, MQTT-TLS), or bind the service to <code>127.0.0.1</code>
-on the rathole server. Empty fields keep their current value on save.</div>
-<h2>Master Switch: <span id="en">-</span></h2>
-<button onclick="setEn(1)">Enable All</button>
-<button class="ghost" onclick="setEn(0)">Disable All</button>
-<p><small>Persisted to NVS. When disabled, all tunnels stop and none start at boot.</small></p>
-<div id="tunnels"></div>
-<p id="msg"></p>
-<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/mqtt">MQTT Config</a> | <a href="/at-node/help">API Help</a></p>
-
-<script>
-function msg(t){ document.getElementById('msg').textContent = t; }
-function esc(s){ return (s||'').replace(/"/g,'&quot;'); }
-function refresh(){
-  fetch('/at-node/cmd/tunnel/status').then(r=>r.json()).then(d=>{
-    document.getElementById('en').innerHTML = d.tunnels[0].master
-      ? '<span class="ok">enabled</span>' : '<span class="bad">disabled</span>';
-    document.getElementById('tunnels').innerHTML = d.tunnels.map(t=>{
-      const state = t.connected ? '<span class="ok">connected</span>'
-        : (t.running ? '<span class="bad">connecting: '+esc(t.last_error)+'</span>'
-                     : 'stopped');
-      return '<h2>Tunnel '+t.id+' '+state+'</h2><table>' +
-        '<tr><th>Server (host:port)</th><td><input type=text id="server'+t.id+'" value="'+esc(t.server)+'"></td></tr>' +
-        '<tr><th>Service name</th><td><input type=text id="service'+t.id+'" value="'+esc(t.service)+'"></td></tr>' +
-        '<tr><th>Token</th><td><input type=password id="token'+t.id+'" placeholder="(unchanged if empty)"></td></tr>' +
-        '<tr><th>Local (host:port)</th><td><input type=text id="local'+t.id+'" value="'+esc(t.local)+'"></td></tr>' +
-        '<tr><th>Retry interval (s)</th><td><input type=text id="retry'+t.id+'" value="'+t.retry+'"></td></tr>' +
-        '<tr><th>Enabled</th><td><input type=checkbox id="enable'+t.id+'"'+(t.enabled?' checked':'')+'> <small>persisted; off = stopped &amp; no boot start</small></td></tr>' +
-        '<tr><th>Auto-connect</th><td><input type=checkbox id="auto'+t.id+'"'+(t.auto?' checked':'')+'> <small>at boot (requires Enabled)</small></td></tr>' +
-        '</table>' +
-        '<button onclick="save('+t.id+')">Save</button>' +
-        '<button class="ghost" onclick="act('+t.id+',\'connect\')">Connect</button>' +
-        '<button class="ghost" onclick="act('+t.id+',\'disconnect\')">Disconnect</button>' +
-        '<button class="danger" onclick="clearTun('+t.id+')">Clear</button>';
-    }).join('');
-  }).catch(()=>{ msg('refresh failed'); });
-}
-function setEn(on){
-  fetch('/at-node/cmd/tunnel/enable?enable='+(on?1:0), {method:'POST'})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?'rathole '+(on?'enabled':'disabled'):'failed'); refresh(); });
-}
-function save(id){
-  const p = new URLSearchParams({id: id,
-    server: document.getElementById('server'+id).value,
-    service: document.getElementById('service'+id).value,
-    local: document.getElementById('local'+id).value,
-    retry: document.getElementById('retry'+id).value,
-    enable: document.getElementById('enable'+id).checked ? '1' : '0',
-    auto: document.getElementById('auto'+id).checked ? '1' : '0'});
-  const tok = document.getElementById('token'+id).value;
-  if (tok) p.set('token', tok);
-  fetch('/at-node/cmd/tunnel/config', {method:'POST', body:p})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?'saved':'save failed'); refresh(); });
-}
-function act(id, a){
-  fetch('/at-node/cmd/tunnel/'+a+'?id='+id, {method:'POST'})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?a+' ok':(a+' failed: '+(d.error||d.tunnel&&d.tunnel.last_error||''))); refresh(); });
-}
-function clearTun(id){
-  if(!confirm('Clear tunnel '+id+' config?')) return;
-  fetch('/at-node/cmd/tunnel/clear?id='+id, {method:'POST'})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?'cleared':'clear failed'); refresh(); });
-}
-refresh();
-setInterval(refresh, 3000);
-</script>
-</body>
-</html>
-)HTML";
-
-static void handle_tunnel_html(void)
-{
-    send_html(TUNNEL_PAGE_HTML);
-}
 
 /* --- MQTT browser config page -------------------------------------------- */
-static const char* MQTT_PAGE_HTML = R"HTML(
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AT-Node MQTT Config</title>
-<style>
-  body{font-family:monospace;padding:16px;max-width:640px;margin:auto;}
-  h1{font-size:22px;} h2{font-size:16px;margin-top:1.4em;}
-  table{border-collapse:collapse;width:100%;margin:8px 0;}
-  th,td{border:1px solid #ddd;padding:6px 8px;text-align:left;font-size:14px;}
-  th{background:#f5f5f5;width:30%;}
-  input[type=text],input[type=password]{width:95%;font-family:monospace;padding:4px;}
-  button{padding:6px 12px;margin:4px 4px 4px 0;border:1px solid #007aff;
-         border-radius:6px;background:#007aff;color:#fff;cursor:pointer;font-size:13px;}
-  button.ghost{background:#fff;color:#007aff;}
-  button.danger{border-color:#d33;background:#d33;}
-  .ok{color:#0a0;} .bad{color:#d33;}
-  a{color:#007aff;}
-  .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;font-size:13px;}
-  #msg{margin-top:10px;color:#555;min-height:1.2em;}
-</style>
-</head>
-<body>
-<h1>AT-Node MQTT Config</h1>
-<div class="note">Port 8883 = TLS (certificate verified by SHA256 fingerprint,
-no CA file needed). Any other port = plain TCP. Empty fields keep their current
-value on save (except Auto-connect).</div>
-<h2>Status: <span id="state">-</span></h2>
-<table>
-  <tr><th>Broker</th><td><input type=text id="broker"></td></tr>
-  <tr><th>Port</th><td><input type=text id="port"></td></tr>
-  <tr><th>Username</th><td><input type=text id="user" placeholder="(optional)"></td></tr>
-  <tr><th>Password</th><td><input type=password id="pass" placeholder="(unchanged if empty)"></td></tr>
-  <tr><th>CA fingerprint</th><td><input type=text id="ca_fp" placeholder="SHA256 hex, optional"></td></tr>
-  <tr><th>Auto-connect</th><td><input type=checkbox id="auto"></td></tr>
-</table>
-<button onclick="save()">Save</button>
-<button class="ghost" onclick="connect()">Connect Now</button>
-<button class="danger" onclick="clearCfg()">Clear All MQTT Config</button>
-<p><small>Client ID: <span id="cid">-</span></small></p>
-<p id="msg"></p>
-<p><a href="/at-node/status">Back to Status</a> | <a href="/at-node/tunnel">Tunnels</a> | <a href="/at-node/help">API Help</a></p>
-
-<script>
-function msg(t){ document.getElementById('msg').textContent = t; }
-function refresh(){
-  fetch('/at-node/cmd/mqtt/status').then(r=>r.json()).then(s=>{
-    document.getElementById('state').innerHTML = s.connected
-      ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
-    document.getElementById('broker').placeholder = s.broker || '(not set)';
-    if (!document.getElementById('broker').value) document.getElementById('broker').value = s.broker;
-    if (!document.getElementById('port').value) document.getElementById('port').value = s.port;
-    if (!document.getElementById('ca_fp').value) document.getElementById('ca_fp').value = s.ca_fp;
-    document.getElementById('auto').checked = s.auto;
-    document.getElementById('cid').textContent = s.client_id || '-';
-  }).catch(()=>{ msg('refresh failed'); });
-}
-function save(){
-  const p = new URLSearchParams({
-    broker: document.getElementById('broker').value,
-    port: document.getElementById('port').value,
-    user: document.getElementById('user').value,
-    auto: document.getElementById('auto').checked ? '1' : '0'});
-  const pass = document.getElementById('pass').value;
-  if (pass) p.set('pass', pass);
-  const jobs = [fetch('/at-node/cmd/mqtt/config', {method:'POST', body:p}).then(r=>r.json())];
-  const fp = document.getElementById('ca_fp').value;
-  if (fp) jobs.push(fetch('/at-node/cmd/mqtt/ca', {method:'POST',
-        body:new URLSearchParams({fp:fp})}).then(r=>r.json()));
-  Promise.all(jobs).then(rs=>{
-    msg(rs.every(d=>d.ok) ? 'saved (reconnect to apply)' : 'save failed');
-    refresh();
-  });
-}
-function connect(){
-  fetch('/at-node/cmd/mqtt/connect', {method:'POST'})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?'connecting...':'connect failed'); setTimeout(refresh,2000); });
-}
-function clearCfg(){
-  if(!confirm('Clear ALL MQTT settings?')) return;
-  fetch('/at-node/cmd/mqtt/clear', {method:'POST'})
-    .then(r=>r.json()).then(d=>{ msg(d.ok?'cleared':'clear failed'); refresh(); });
-}
-refresh();
-setInterval(refresh, 3000);
-</script>
-</body>
-</html>
-)HTML";
-
-static void handle_mqtt_html(void)
-{
-    send_html(MQTT_PAGE_HTML);
-}
 
 static void handle_mqtt_clear(void)
 {
@@ -2762,8 +2263,8 @@ static void serial_exec(const String& line)
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
         Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
         Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
-        Serial.println("  AT+TUNNEL=<1|2>,server|token|service|local|auto|retry|enable,<val>");
-        Serial.println("  AT+TUNNEL=<1|2>,connect|disconnect|clear|status");
+        Serial.println("  AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>");
+        Serial.println("  AT+TUNNEL=<1>,connect|disconnect|clear|status");
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
@@ -3128,8 +2629,8 @@ static void serial_exec(const String& line)
         }
     } else if (line.startsWith("AT+TUNNEL=")) {
         /* AT+TUNNEL=status | enable | enable,<0|1>
-         * AT+TUNNEL=<1|2>,server|token|service|local|auto|retry|enable,<val>
-         * AT+TUNNEL=<1|2>,connect|disconnect|clear|status          */
+         * AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>
+         * AT+TUNNEL=<1>,connect|disconnect|clear|status          */
         String args = line.substring(10);
         int c1 = args.indexOf(',');
         if (args == "status") {
@@ -3250,14 +2751,14 @@ void setup(void)
             Serial.println("mDNS init failed");
         }
 
-        g_http.on("/", HTTP_GET, handle_root);
-        g_http.on("/at-node/status", HTTP_GET, handle_status_html);
+        g_http.on("/", HTTP_GET, handle_web_app);
+        g_http.on("/at-node/status", HTTP_GET, handle_legacy_page);
+        g_http.on("/at-node/help", HTTP_GET, handle_legacy_page);
+        g_http.on("/at-node/pair", HTTP_GET, handle_legacy_page);
+        g_http.on("/at-node/tunnel", HTTP_GET, handle_legacy_page);
+        g_http.on("/at-node/mqtt", HTTP_GET, handle_legacy_page);
         g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
-        g_http.on("/at-node/help", HTTP_GET, handle_help_html);
         g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
-        g_http.on("/at-node/pair", HTTP_GET, handle_pair_html);
-        g_http.on("/at-node/tunnel", HTTP_GET, handle_tunnel_html);
-        g_http.on("/at-node/mqtt", HTTP_GET, handle_mqtt_html);
         g_http.on("/at-node/at", HTTP_POST, handle_at);
         g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
         g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);

@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AT-Node</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>AT-Node <span id="hb" class="bad">&#9679;</span></h1>
+  <nav>
+    <button data-tab="status" class="active">Status</button>
+    <button data-tab="ble">BLE</button>
+    <button data-tab="mqtt">MQTT</button>
+    <button data-tab="tunnel">Tunnel</button>
+    <button data-tab="wifi">WiFi</button>
+    <button data-tab="help">API</button>
+  </nav>
+</header>
+
+<section id="tab-status">
+  <h2>Device Status</h2>
+  <table>
+    <tr><th>Device</th><td id="s-device">-</td></tr>
+    <tr><th>Hostname</th><td id="s-hostname">-</td></tr>
+    <tr><th>IP</th><td id="s-ip">-</td></tr>
+    <tr><th>BLE Address</th><td id="s-bleaddr">-</td></tr>
+    <tr><th>BLE Host</th><td id="s-ble">-</td></tr>
+    <tr><th>Typing</th><td id="s-typing">-</td></tr>
+    <tr><th>MQTT</th><td id="s-mqtt">-</td></tr>
+    <tr><th>AP Mode</th><td id="s-ap">-</td></tr>
+    <tr><th>HTTP Server</th><td id="s-http">-</td></tr>
+  </table>
+</section>
+
+<section id="tab-ble" hidden>
+  <h2>BLE Pairing</h2>
+  <table>
+    <tr><th>BLE Name</th><td id="b-name">-</td></tr>
+    <tr><th>BLE Address</th><td id="b-addr">-</td></tr>
+    <tr><th>Advertising</th><td id="b-adv">-</td></tr>
+  </table>
+  <button onclick="bleAdv(1)">Start Advertising</button>
+  <button class="ghost" onclick="bleAdv(0)">Stop Advertising</button>
+  <h2>Connected Host</h2>
+  <div id="b-peers">none</div>
+  <h2>Bonded Hosts</h2>
+  <div id="b-bonds">none</div>
+  <button class="danger" onclick="bleClearBonds()">Clear All Bonds</button>
+  <p><small>Removing a bond here does not remove it on the host &mdash; also remove
+  the device in your OS Bluetooth settings, otherwise the host re-pairs automatically.</small></p>
+</section>
+
+<section id="tab-mqtt" hidden>
+  <h2>MQTT: <span id="m-state">-</span></h2>
+  <table>
+    <tr><th>Broker</th><td><input type=text id="m-broker"></td></tr>
+    <tr><th>Port</th><td><input type=text id="m-port"></td></tr>
+    <tr><th>Username</th><td><input type=text id="m-user" placeholder="(optional)"></td></tr>
+    <tr><th>Password</th><td><input type=password id="m-pass" placeholder="(unchanged if empty)"></td></tr>
+    <tr><th>CA fingerprint</th><td><input type=text id="m-ca" placeholder="SHA256 hex, optional"></td></tr>
+    <tr><th>Auto-connect</th><td><input type=checkbox id="m-auto"></td></tr>
+  </table>
+  <button onclick="mqttSave()">Save</button>
+  <button class="ghost" onclick="mqttConnect()">Connect Now</button>
+  <button class="danger" onclick="mqttClear()">Clear All MQTT Config</button>
+  <p><small>Client ID: <span id="m-cid">-</span>. Port 8883 = TLS (CA fingerprint),
+  any other port = plain TCP. Empty fields keep their current value on save.</small></p>
+</section>
+
+<section id="tab-tunnel" hidden>
+  <h2>rathole Tunnel: <span id="t-state">-</span></h2>
+  <div class="note">Plain TCP transport. Only tunnel protocols that carry their own
+  encryption (SSH, HTTPS), or bind the service to <code>127.0.0.1</code> on the
+  rathole server. Empty fields keep their current value on save.</div>
+  <p>Master switch: <span id="t-master">-</span>
+    <button onclick="tunMaster(1)">Enable</button>
+    <button class="ghost" onclick="tunMaster(0)">Disable</button></p>
+  <table>
+    <tr><th>Server (host:port)</th><td><input type=text id="t-server"></td></tr>
+    <tr><th>Service name</th><td><input type=text id="t-service"></td></tr>
+    <tr><th>Token</th><td><input type=password id="t-token" placeholder="(unchanged if empty)"></td></tr>
+    <tr><th>Local (host:port)</th><td><input type=text id="t-local"></td></tr>
+    <tr><th>Retry interval (s)</th><td><input type=text id="t-retry"></td></tr>
+    <tr><th>Enabled</th><td><input type=checkbox id="t-enable"> <small>persisted; off = stopped &amp; no boot start</small></td></tr>
+    <tr><th>Auto-connect</th><td><input type=checkbox id="t-auto"> <small>at boot (requires Enabled)</small></td></tr>
+  </table>
+  <button onclick="tunSave()">Save</button>
+  <button class="ghost" onclick="tunAct('connect')">Connect</button>
+  <button class="ghost" onclick="tunAct('disconnect')">Disconnect</button>
+  <button class="danger" onclick="tunClear()">Clear</button>
+  <p><small>free heap: <span id="t-heap">-</span> | pool: <span id="t-pool">-</span> | <span id="t-err"></span></small></p>
+</section>
+
+<section id="tab-wifi" hidden>
+  <h2>WiFi Config</h2>
+  <table>
+    <tr><th>SSID</th><td><input type=text id="w-ssid"></td></tr>
+    <tr><th>Password</th><td><input type=password id="w-pass" placeholder="(unchanged if empty)"></td></tr>
+  </table>
+  <button onclick="wifiSave()">Save &amp; Reconnect</button>
+  <p><small>Saved to NVS; the device re-associates immediately. If it drops off the
+  network, use the serial console (<code>AT+WIFI=</code>) or AP provisioning mode.</small></p>
+</section>
+
+<section id="tab-help" hidden>
+  <h2>HTTP API</h2>
+  <p><small>Base: <code>/at-node/cmd/</code>. GET endpoints take query params,
+  POST take form params. All return JSON.</small></p>
+  <div id="api-table">loading...</div>
+</section>
+
+<p id="msg"></p>
+<script src="app.js"></script>
+</body>
+</html>

@@ -144,7 +144,7 @@ ESP32-C3 与 CH582 外设能力差异较大，**分阶段实现**：
 | E6 | 串口全功能 | 串口实现与 HTTP 等价的完整 AT 命令集 | ✅ 已完成（AT/TAP/TEXT/CONF/GPIO/ADC/I2C/IR/MQTT 全通） |
 | E7 | 测试脚本 | `tools/test/test_esp32_at_node.py` | ✅ 已完成（HTTP 端点全 PASS） |
 | E8 | MQTT TLS | `mqtt_client` 实现 + broker 对接 | ✅ 已完成（本地 TLS broker 连接/发布成功，自签名 CA） |
-| E9 | rathole 隧道 | 2 隧道客户端（plain TCP），AT/HTTP/MQTT 三通道配置 | ✅ 已完成（本地 server 端到端验证，长连接稳定） |
+| E9 | rathole 隧道 | 单隧道客户端（plain TCP），AT/HTTP/MQTT 三通道配置 | ✅ 已完成（本地 server 端到端验证，长连接稳定） |
 | E10 | 统一配置层 | `config_set/get/list` 注册表，AT+SET/GET/KEYS + `/at-node/cmd/config` + MQTT `config/*` | ✅ 已完成（存量命令为别名，三通道实测） |
 
 ## 10. 与 CH582 版的命令语义对齐

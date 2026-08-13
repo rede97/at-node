@@ -22,12 +22,19 @@
 #define RATHOLE_ACK_LEN         4
 #define RATHOLE_HEARTBEAT_MS    45000   /* server interval 30s, timeout 40s; margin */
 #define RATHOLE_PUMP_BUF        1460
+/* Heap guard: every reconnect cycle costs lwIP sockets that linger in
+ * TIME_WAIT (2*MSL = 120s on ESP-IDF). Under reconnect churn the pile
+ * starves the whole IP stack for minutes (measured: 22K -> 3.8K free,
+ * all TCP/HTTP/ICMP dead until the pcbs expired). Refuse to add sockets
+ * when tight and let TIME_WAITs drain instead. */
+#define RATHOLE_MIN_FREE_HEAP   12000
 /* The rathole server wants TCP_POOL_SIZE=8 standbys per service, but each
  * lwIP TCP socket costs ~2.4KB heap and the MQTT TLS session needs a large
- * transient allocation for its handshake. 2 standbys per tunnel keeps a
- * warm first-hit path within the RAM budget; the server retries dropped
- * CreateDataChannel requests when more visitors actually arrive. */
-#define RATHOLE_POOL_SIZE       2
+ * transient allocation for its handshake. 1 standby per tunnel: the server
+ * retries dropped CreateDataChannel requests when more visitors arrive, so
+ * a warm first-hit is kept at half the RAM cost. Measured: each tunnel with
+ * pool=2 costs ~10KB; two tunnels left <11KB free and lwIP/HTTP starved. */
+#define RATHOLE_POOL_SIZE       1
 
 extern Preferences prefs;   /* shared "atnode" namespace, owned by the sketch */
 void save_config(const String& key, const String& value);
@@ -48,11 +55,12 @@ static bool           g_rathole_enabled = true;   /* global master switch (NVS) 
 struct Tunnel {
     TunnelCfg       cfg;
     TaskHandle_t    task;
-    WiFiClient      cli;                        /* control channel */
-    WiFiClient*     pool[RATHOLE_POOL_SIZE];    /* standby data channels */
-    volatile bool   want_run;
+    WiFiClient      cli;                        /* control channel — manager task only */
+    WiFiClient*     pool[RATHOLE_POOL_SIZE];    /* standby data channels — manager task only */
+    volatile bool   want_run;                   /* desired state; set/cleared by any task */
+    volatile bool   reconfig;                   /* config changed: tear down + reconnect */
     volatile bool   connected;
-    String          last_error;
+    char            last_error[64];  /* fixed buffer: written by manager, read by HTTP/AT tasks; a String would race (heap free under concurrent read) */
     uint8_t         session_key[32];
     char            host[64];
     uint16_t        port;
@@ -60,6 +68,12 @@ struct Tunnel {
 
 static Tunnel        g_tun[RATHOLE_MAX_TUNNELS];
 static volatile int  g_data_ch_count = 0;   /* pooled + forwarding, global */
+
+static void set_err(Tunnel& t, const char* e)
+{
+    strncpy(t.last_error, e, sizeof(t.last_error) - 1);
+    t.last_error[sizeof(t.last_error) - 1] = '\0';
+}
 
 /* --- helpers ------------------------------------------------------------ */
 
@@ -155,6 +169,9 @@ static void forward_task(void* pv)
             Serial.println("[rathole] fwd: local connect failed");
             break;
         }
+        /* SSH echo is many small writes; Nagle would add ~40ms+ jitter per
+         * unacked segment. The remote side is already setNoDelay. */
+        local.setNoDelay(true);
         Serial.println("[rathole] fwd: forwarding");
 
         uint8_t* buf = (uint8_t*)malloc(RATHOLE_PUMP_BUF);
@@ -208,6 +225,9 @@ static void start_forward(int slot_idx, WiFiClient* ch, const TunnelCfg& cfg)
 {
     FwdArgs* args = new(std::nothrow) FwdArgs();
     if (!args) goto fail;
+    /* A forward session costs ~7KB (socket + task stack + pump buffer);
+     * refuse when tight — the server retries the visitor. */
+    if (ESP.getFreeHeap() < RATHOLE_MIN_FREE_HEAP) goto fail;
     args->remote = ch;
     if (!split_host_port(cfg.local, args->lhost, sizeof(args->lhost), &args->lport)) goto fail;
     if (xTaskCreate(forward_task, "ratfwd", 3072, args, 1, NULL) != pdPASS) {
@@ -229,6 +249,7 @@ fail:
 /* Connect one standby data channel and add it to the pool. */
 static void pool_fill_one(Tunnel& t, int slot)
 {
+    if (ESP.getFreeHeap() < RATHOLE_MIN_FREE_HEAP) return;   /* let TIME_WAITs drain */
     WiFiClient* c = new(std::nothrow) WiFiClient();
     if (!c) return;
     if (!c->connect(t.host, t.port)) {
@@ -260,61 +281,67 @@ static void pool_drain(Tunnel& t)
 }
 
 /* One connection attempt: TCP connect + rathole control handshake. */
-static bool control_handshake(Tunnel& t)
+static bool control_handshake(Tunnel& t, const TunnelCfg& cfg)
 {
-    if (!split_host_port(t.cfg.server, t.host, sizeof(t.host), &t.port)) {
-        t.last_error = "bad server addr";
+    if (!split_host_port(cfg.server, t.host, sizeof(t.host), &t.port)) {
+        set_err(t, "bad server addr");
         return false;
     }
     if (!t.cli.connect(t.host, t.port)) {
-        t.last_error = "tcp connect failed";
+        set_err(t, "tcp connect failed");
         return false;
     }
     t.cli.setNoDelay(true);
 
     /* Hello: ControlChannelHello(version, sha256(service name)) */
     uint8_t digest[32];
-    sha256_oneshot((const uint8_t*)t.cfg.svc.c_str(), t.cfg.svc.length(), digest);
+    sha256_oneshot((const uint8_t*)cfg.svc.c_str(), cfg.svc.length(), digest);
     uint8_t hello[RATHOLE_HELLO_LEN];
     build_hello(hello, 0, digest);
     if (!write_all(t.cli, hello, sizeof(hello))) {
-        t.last_error = "write hello failed";
+        set_err(t, "write hello failed");
         return false;
     }
 
     /* Server hello carries a random nonce */
     uint8_t sh[RATHOLE_HELLO_LEN];
     if (!read_exact(t.cli, sh, sizeof(sh), 10000)) {
-        t.last_error = "read hello failed";
+        set_err(t, "read hello failed");
         return false;
     }
     if (le_u32(sh) != 0 || sh[4] != RATHOLE_PROTO_VERSION) {
-        t.last_error = "bad server hello";
+        set_err(t, "bad server hello");
         return false;
     }
 
     /* Auth: sha256(token || nonce) — also the data-channel session key */
-    String concat = t.cfg.token;
+    String concat = cfg.token;
     for (int i = 5; i < RATHOLE_HELLO_LEN; i++) concat += (char)sh[i];
     sha256_oneshot((const uint8_t*)concat.c_str(), concat.length(), t.session_key);
     if (!write_all(t.cli, t.session_key, RATHOLE_AUTH_LEN)) {
-        t.last_error = "write auth failed";
+        set_err(t, "write auth failed");
         return false;
     }
 
     uint8_t ack[RATHOLE_ACK_LEN];
     if (!read_exact(t.cli, ack, sizeof(ack), 10000)) {
-        t.last_error = "read ack failed";
+        set_err(t, "read ack failed");
         return false;
     }
     uint32_t a = le_u32(ack);
     if (a != 0) {
-        t.last_error = (a == 1) ? "service not exist" : "auth failed";
+        set_err(t, (a == 1) ? "service not exist" : "auth failed");
         return false;
     }
     return true;
 }
 
+/* The manager task owns t.cli / t.pool for the tunnel's entire lifetime —
+ * ONLY this task ever touches them. Stop/reconfig from other tasks is
+ * signalled via flags (want_run / reconfig), never by calling t.cli.stop()
+ * from another task: doing so freed the WiFiClient RX buffer under
+ * read_exact() and panicked (NetworkClient::available() on NULL _rxBuffer,
+ * Guru Meditation load access fault at 0x14). */
 static void manager_task(void* pv)
 {
     int idx = (int)(intptr_t)pv;
@@ -322,36 +349,55 @@ static void manager_task(void* pv)
     char tag[8];
     snprintf(tag, sizeof(tag), "tun%d", idx + 1);
 
-    /* Boot grace: the MQTT TLS handshake needs large contiguous heap blocks
-     * that tunnel sockets fragment, so hold off until MQTT is connected
-     * (or 30s max) before creating pool sockets. */
-    while (millis() < 30000 && !mqtt_is_connected() && t.want_run) {
-        delay(250);
-    }
+    uint32_t backoff_ms = 0;
+    for (;;) {
+        if (!t.want_run) {              /* parked: stopped via flags */
+            backoff_ms = 0;
+            delay(100);
+            continue;
+        }
+        const uint32_t backoff_base = (uint32_t)t.cfg.retry_s * 1000;
+        if (backoff_ms < backoff_base) backoff_ms = backoff_base;
 
-    uint32_t backoff_ms = (uint32_t)t.cfg.retry_s * 1000;
-    const uint32_t backoff_base = backoff_ms;
-    while (t.want_run) {
+        /* Boot grace: the MQTT TLS handshake needs large contiguous heap
+         * blocks that tunnel sockets fragment, so hold off until MQTT is
+         * connected (or 30s max) before creating pool sockets. */
+        if (millis() < 30000 && !mqtt_is_connected()) {
+            delay(250);
+            continue;
+        }
         if (WiFi.status() != WL_CONNECTED) {
             delay(1000);
             continue;
         }
-        if (!control_handshake(t)) {
+        if (ESP.getFreeHeap() < RATHOLE_MIN_FREE_HEAP) {
+            set_err(t, "low heap, draining");
+            delay(2000);
+            continue;
+        }
+
+        t.reconfig = false;
+        /* Snapshot the config: rathole_set() rewrites t.cfg Strings from
+         * the HTTP/AT task while we run; using a copy for the whole
+         * connect cycle avoids a heap free under our feet. retry_s is a
+         * plain uint8 and safe to re-read above. */
+        TunnelCfg cfg = t.cfg;
+        if (!control_handshake(t, cfg)) {
             t.cli.stop();
             Serial.printf("[rathole] %s handshake failed: %s\n",
-                          tag, t.last_error.c_str());
+                          tag, t.last_error);
         } else {
             t.connected = true;
-            t.last_error = "";
+            set_err(t, "");
             Serial.printf("[rathole] %s control channel up (%s -> %s)\n",
-                          tag, t.cfg.svc.c_str(), t.cfg.local.c_str());
+                          tag, cfg.svc.c_str(), cfg.local.c_str());
 
             uint8_t  cmd[RATHOLE_CMD_LEN];
             size_t   cmd_len = 0;
             uint32_t last_rx = millis();
             uint32_t up_since = millis();
 
-            while (t.want_run) {
+            while (t.want_run && !t.reconfig) {
                 /* control channel: accumulate one command */
                 while (t.cli.available() > 0 && cmd_len < RATHOLE_CMD_LEN) {
                     int r = t.cli.read(cmd + cmd_len, RATHOLE_CMD_LEN - cmd_len);
@@ -373,11 +419,11 @@ static void manager_task(void* pv)
                     /* le_u32(cmd) == 1: HeartBeat — last_rx already bumped */
                 }
                 if (!t.cli.connected() && t.cli.available() == 0) {
-                    t.last_error = "control channel closed";
+                    set_err(t, "control channel closed");
                     break;
                 }
                 if ((uint32_t)(millis() - last_rx) > RATHOLE_HEARTBEAT_MS) {
-                    t.last_error = "heartbeat timeout";
+                    set_err(t, "heartbeat timeout");
                     break;
                 }
 
@@ -408,7 +454,7 @@ static void manager_task(void* pv)
                     if (got == RATHOLE_CMD_LEN && le_u32(dcmd) == 0) {
                         /* StartForwardTcp: ownership moves to forward task */
                         t.pool[i] = NULL;
-                        start_forward(i, c, t.cfg);
+                        start_forward(i, c, cfg);
                     } else if (got == 0 && c->connected()) {
                         continue;   /* phantom report; retry next poll */
                     } else {
@@ -427,19 +473,18 @@ static void manager_task(void* pv)
             t.connected = false;
             t.cli.stop();
             pool_drain(t);
+            if (!t.want_run || t.reconfig) set_err(t, "");
             Serial.printf("[rathole] %s control channel down: %s\n",
-                          tag, t.last_error.c_str());
+                          tag, t.last_error);
             if (millis() - up_since > 3000) backoff_ms = backoff_base;
         }
-        if (!t.want_run) break;
-        delay(backoff_ms);
+        /* Sliced backoff: stop/reconfig takes effect within ~100ms instead
+         * of waiting out a backoff that can reach 60s. */
+        for (uint32_t w = 0; w < backoff_ms && t.want_run && !t.reconfig; w += 100) {
+            delay(100);
+        }
         backoff_ms = min(backoff_ms * 2, (uint32_t)60000);
     }
-    pool_drain(t);
-    t.connected = false;
-    t.cli.stop();
-    t.task = NULL;
-    vTaskDelete(NULL);
 }
 
 /* --- NVS / API ----------------------------------------------------------- */
@@ -480,6 +525,7 @@ void rathole_init(void)
     for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
         g_tun[i].task = NULL;
         g_tun[i].want_run = false;
+        g_tun[i].reconfig = false;
         g_tun[i].connected = false;
         for (int s = 0; s < RATHOLE_POOL_SIZE; s++) g_tun[i].pool[s] = NULL;
         load_one(i);
@@ -535,16 +581,16 @@ bool rathole_set(int idx, const String& key, const String& val)
               : key == "enable" ? String(c.enabled ? "1" : "0")
               : key == "retry" ? String(c.retry_s) : val);
 
-    /* per-tunnel switch: off stops immediately; on does not force-start */
+    /* per-tunnel switch: off stops immediately (flag; manager unwinds itself) */
     if (key == "enable" && !c.enabled) {
         rathole_stop(idx);
         return true;
     }
 
-    /* restart a running tunnel so the change takes effect */
-    if (g_tun[idx].task && key != "auto") {
-        rathole_stop(idx);
-        rathole_start(idx);
+    /* running tunnel: ask the manager to reconnect with the new config.
+     * Coalesces when several fields are set in one request. */
+    if (key != "auto" && g_tun[idx].want_run) {
+        g_tun[idx].reconfig = true;
     }
     return true;
 }
@@ -568,25 +614,26 @@ bool rathole_start(int idx)
     if (idx < 0 || idx >= RATHOLE_MAX_TUNNELS) return false;
     Tunnel& t = g_tun[idx];
     if (!g_rathole_enabled) {
-        t.last_error = "globally disabled";
+        set_err(t, "globally disabled");
         return false;
     }
     if (!t.cfg.enabled) {
-        t.last_error = "tunnel disabled";
+        set_err(t, "tunnel disabled");
         return false;
     }
     if (!configured(idx)) {
-        t.last_error = "not configured";
+        set_err(t, "not configured");
         return false;
     }
-    if (t.task) return true;   /* already running */
+    t.reconfig = true;   /* wake a parked/backing-off manager immediately */
     t.want_run = true;
+    if (t.task) return true;   /* persistent manager already up */
     char name[8];
     snprintf(name, sizeof(name), "ratm%d", idx);
-    if (xTaskCreate(manager_task, name, 4096, (void*)(intptr_t)idx, 1, &t.task) != pdPASS) {
+    if (xTaskCreate(manager_task, name, 3072, (void*)(intptr_t)idx, 1, &t.task) != pdPASS) {
         t.want_run = false;
         t.task = NULL;
-        t.last_error = "task create failed";
+        set_err(t, "task create failed");
         return false;
     }
     return true;
@@ -596,10 +643,11 @@ void rathole_stop(int idx)
 {
     if (idx < 0 || idx >= RATHOLE_MAX_TUNNELS) return;
     Tunnel& t = g_tun[idx];
+    /* Flags only — the manager task tears down its own sockets within
+     * ~100ms. NEVER t.cli.stop() from here: that frees the WiFiClient RX
+     * buffer under the manager's read_exact() and panics. */
     t.want_run = false;
-    t.cli.stop();              /* unblock a pending read/connect */
-    uint32_t start = millis();
-    while (t.task && millis() - start < 3000) delay(10);
+    t.reconfig = true;
 }
 
 void rathole_clear(int idx)
@@ -617,7 +665,7 @@ void rathole_clear(int idx)
     prefs.remove(nvs_key(idx, "retry", key, sizeof(key)));
     prefs.end();
     g_tun[idx].cfg = TunnelCfg();
-    g_tun[idx].last_error = "";
+    set_err(g_tun[idx], "");
 }
 
 String rathole_status_json(int idx)
@@ -638,12 +686,12 @@ String rathole_status_json(int idx)
     j += ",\"retry\":" + String(t.cfg.retry_s);
     j += ",\"master\":" + String(g_rathole_enabled ? "true" : "false");
     j += ",\"enabled\":" + String(t.cfg.enabled ? "true" : "false");
-    j += ",\"running\":" + String(t.task ? "true" : "false");
+    j += ",\"running\":" + String(t.want_run ? "true" : "false");
     j += ",\"connected\":" + String(t.connected ? "true" : "false");
     j += ",\"pool\":" + String(pooled);
     j += ",\"data_channels\":" + String(g_data_ch_count);
     j += ",\"free_heap\":" + String(ESP.getFreeHeap());
-    j += ",\"last_error\":\"" + t.last_error + "\"";
+    j += ",\"last_error\":\"" + String(t.last_error) + "\"";
     j += "}";
     return j;
 }

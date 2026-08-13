@@ -19,7 +19,7 @@
 #pragma once
 #include <Arduino.h>
 
-#define RATHOLE_MAX_TUNNELS    2
+#define RATHOLE_MAX_TUNNELS    1   /* single SSH tunnel suffices (jump host); less RAM, less exposure */
 #define RATHOLE_MAX_DATA_CH   20   /* pooled+forwarding cap; server pools 8 per service */
 
 /* Load configs from NVS and start control tasks for tunnels with auto=1.
