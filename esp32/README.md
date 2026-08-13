@@ -86,6 +86,10 @@ powershell -File esp32/esp32_at_node/build.ps1 -Port COMx -Variant rathole
 （-50dBm→100%，-100dBm→0%）。Status 页显示 dBm + 10 格彩条 + 百分比，
 `AT+STATUS` 同样输出。
 
+**WiFi 看门狗**：启动连接只有 30s 窗口且驱动不保证自重连——过去错过窗口
+即永久离线（只能断电）。loop() 每 15s 检测断线并 `WiFi.begin` 重试，
+链路恢复时补齐 mDNS/HTTP 路由等服务初始化（`wifi_services_up()`）。
+
 **呼吸灯（`FEATURE_BREATH_LED`，I2C 关闭时默认开）**：GPIO8 板载 LED 以 ~2s 周期
 gamma 校正呼吸——呼吸=loop() 活着；定格/熄灭=死机。默认按 SuperMini C3 低电平点亮
 （`BREATH_LED_ACTIVE_LOW 1`，高电平点亮的板子改 0）。

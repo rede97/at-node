@@ -105,6 +105,9 @@ static uint32_t  g_pair_timeout_at = 0;    /* auto-stop advertising deadline */
 /* deferred restart (used by NVS clear / factory reset) */
 static uint32_t  g_restart_at = 0;
 
+/* WiFi watchdog state (loop()): millis() of when the link was first seen down */
+static uint32_t  g_wifi_lost_at = 0;
+
 /* --- MQTT client ------------------------------------------------------- */
 #if FEATURE_MQTT
 static WiFiClient       g_mqtt_wifi_plain;
@@ -3003,6 +3006,91 @@ static void handle_serial(void)
     }
 }
 
+/* One-time bring-up of network services. Called from setup() when the
+ * boot connect succeeds, and from loop() whenever WiFi comes up later
+ * (late association or recovery after a loss). */
+static void wifi_services_up(void)
+{
+    g_wifi_ready = true;
+    Serial.println();
+    Serial.print("WiFi connected, IP=");
+    Serial.println(WiFi.localIP());
+
+    if (MDNS.begin(g_hostname.c_str())) {
+        Serial.println("mDNS: " + g_hostname + ".local");
+    } else {
+        Serial.println("mDNS init failed");
+    }
+
+#if FEATURE_HTTP
+    g_http.on("/", HTTP_GET, handle_web_app);
+    g_http.on("/at-node/status", HTTP_GET, handle_legacy_page);
+    g_http.on("/at-node/help", HTTP_GET, handle_legacy_page);
+    g_http.on("/at-node/pair", HTTP_GET, handle_legacy_page);
+    g_http.on("/at-node/tunnel", HTTP_GET, handle_legacy_page);
+    g_http.on("/at-node/mqtt", HTTP_GET, handle_legacy_page);
+    g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
+    g_http.on("/at-node/cmd/ability", HTTP_GET, handle_ability);
+    g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
+    g_http.on("/at-node/at", HTTP_POST, handle_at);
+#if FEATURE_BLE
+    g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
+    g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
+    g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
+    g_http.on("/at-node/cmd/ble/status", HTTP_GET, handle_ble_status);
+    g_http.on("/at-node/cmd/ble/pair", HTTP_POST, handle_ble_pair);
+    g_http.on("/at-node/cmd/ble/bonds/delete", HTTP_POST, handle_ble_bonds_delete);
+    g_http.on("/at-node/cmd/ble/bonds/clear", HTTP_POST, handle_ble_bonds_clear);
+#endif
+    g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
+    g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
+    g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
+#if FEATURE_I2C
+    g_http.on("/at-node/cmd/i2c/scan", HTTP_POST, handle_i2c_scan);
+    g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
+    g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
+#endif
+    g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
+#if FEATURE_MQTT
+    g_http.on("/at-node/cmd/mqtt/status", HTTP_GET, handle_mqtt_status);
+    g_http.on("/at-node/cmd/mqtt/config", HTTP_POST, handle_mqtt_config);
+    g_http.on("/at-node/cmd/mqtt/ca", HTTP_POST, handle_mqtt_ca);
+    g_http.on("/at-node/cmd/mqtt/connect", HTTP_POST, handle_mqtt_connect);
+    g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
+    g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
+    g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
+#endif
+    g_http.on("/at-node/cmd/config", HTTP_GET, handle_config_get);
+    g_http.on("/at-node/cmd/config", HTTP_POST, handle_config_set);
+    g_http.on("/at-node/cmd/config/list", HTTP_GET, handle_config_list);
+#if FEATURE_RATHOLE
+    g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
+    g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
+    g_http.on("/at-node/cmd/tunnel/enable", HTTP_POST, handle_tunnel_enable);
+    g_http.on("/at-node/cmd/tunnel/connect", HTTP_POST, handle_tunnel_connect);
+    g_http.on("/at-node/cmd/tunnel/disconnect", HTTP_POST, handle_tunnel_disconnect);
+    g_http.on("/at-node/cmd/tunnel/clear", HTTP_POST, handle_tunnel_clear);
+#endif
+    g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
+    g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
+    g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
+    g_http.on("/at-node/cmd/net/ping", HTTP_POST, handle_net_ping);
+    g_http.on("/at-node/cmd/http/config", HTTP_POST, handle_http_config);
+    g_http.on("/at-node/cmd/http/status", HTTP_GET, handle_http_status);
+    g_http.on("/at-node/cmd/http/clear", HTTP_POST, handle_http_clear);
+    g_http.on("/at-node/cmd/nvs/clear", HTTP_POST, handle_nvs_clear);
+    g_http.onNotFound(handle_not_found);
+    if (g_http_enabled) {
+        g_http.begin();
+        Serial.println("HTTP server on port 80 (trusted local NAT only; AT+HTTP=0 to disable)");
+    } else {
+        Serial.println("HTTP server disabled");
+    }
+#else
+    Serial.println("HTTP control plane not compiled (serial-only config)");
+#endif
+}
+
 /* --- setup / loop ------------------------------------------------------ */
 void setup(void)
 {
@@ -3030,84 +3118,7 @@ void setup(void)
     }
 
     if (WiFi.status() == WL_CONNECTED) {
-        g_wifi_ready = true;
-        Serial.println();
-        Serial.print("WiFi connected, IP=");
-        Serial.println(WiFi.localIP());
-
-        if (MDNS.begin(g_hostname.c_str())) {
-            Serial.println("mDNS: " + g_hostname + ".local");
-        } else {
-            Serial.println("mDNS init failed");
-        }
-
-#if FEATURE_HTTP
-        g_http.on("/", HTTP_GET, handle_web_app);
-        g_http.on("/at-node/status", HTTP_GET, handle_legacy_page);
-        g_http.on("/at-node/help", HTTP_GET, handle_legacy_page);
-        g_http.on("/at-node/pair", HTTP_GET, handle_legacy_page);
-        g_http.on("/at-node/tunnel", HTTP_GET, handle_legacy_page);
-        g_http.on("/at-node/mqtt", HTTP_GET, handle_legacy_page);
-        g_http.on("/at-node/cmd/status", HTTP_GET, handle_cmd_status);
-        g_http.on("/at-node/cmd/ability", HTTP_GET, handle_ability);
-        g_http.on("/at-node/help.json", HTTP_GET, handle_help_json);
-        g_http.on("/at-node/at", HTTP_POST, handle_at);
-#if FEATURE_BLE
-        g_http.on("/at-node/cmd/keyboard/tap", HTTP_POST, handle_keyboard_tap);
-        g_http.on("/at-node/cmd/keyboard/text", HTTP_POST, handle_keyboard_text);
-        g_http.on("/at-node/cmd/keyboard/key", HTTP_POST, handle_keyboard_key);
-        g_http.on("/at-node/cmd/ble/status", HTTP_GET, handle_ble_status);
-        g_http.on("/at-node/cmd/ble/pair", HTTP_POST, handle_ble_pair);
-        g_http.on("/at-node/cmd/ble/bonds/delete", HTTP_POST, handle_ble_bonds_delete);
-        g_http.on("/at-node/cmd/ble/bonds/clear", HTTP_POST, handle_ble_bonds_clear);
-#endif
-        g_http.on("/at-node/cmd/gpio/write", HTTP_POST, handle_gpio_write);
-        g_http.on("/at-node/cmd/gpio/read", HTTP_POST, handle_gpio_read);
-        g_http.on("/at-node/cmd/adc/read", HTTP_POST, handle_adc_read);
-#if FEATURE_I2C
-        g_http.on("/at-node/cmd/i2c/scan", HTTP_POST, handle_i2c_scan);
-        g_http.on("/at-node/cmd/i2c/read", HTTP_POST, handle_i2c_read);
-        g_http.on("/at-node/cmd/i2c/write", HTTP_POST, handle_i2c_write);
-#endif
-        g_http.on("/at-node/cmd/ir/send", HTTP_POST, handle_ir_send);
-#if FEATURE_MQTT
-        g_http.on("/at-node/cmd/mqtt/status", HTTP_GET, handle_mqtt_status);
-        g_http.on("/at-node/cmd/mqtt/config", HTTP_POST, handle_mqtt_config);
-        g_http.on("/at-node/cmd/mqtt/ca", HTTP_POST, handle_mqtt_ca);
-        g_http.on("/at-node/cmd/mqtt/connect", HTTP_POST, handle_mqtt_connect);
-        g_http.on("/at-node/cmd/mqtt/publish", HTTP_POST, handle_mqtt_publish);
-        g_http.on("/at-node/cmd/mqtt/subscribe", HTTP_POST, handle_mqtt_subscribe);
-        g_http.on("/at-node/cmd/mqtt/clear", HTTP_POST, handle_mqtt_clear);
-#endif
-        g_http.on("/at-node/cmd/config", HTTP_GET, handle_config_get);
-        g_http.on("/at-node/cmd/config", HTTP_POST, handle_config_set);
-        g_http.on("/at-node/cmd/config/list", HTTP_GET, handle_config_list);
-#if FEATURE_RATHOLE
-        g_http.on("/at-node/cmd/tunnel/status", HTTP_GET, handle_tunnel_status);
-        g_http.on("/at-node/cmd/tunnel/config", HTTP_POST, handle_tunnel_config);
-        g_http.on("/at-node/cmd/tunnel/enable", HTTP_POST, handle_tunnel_enable);
-        g_http.on("/at-node/cmd/tunnel/connect", HTTP_POST, handle_tunnel_connect);
-        g_http.on("/at-node/cmd/tunnel/disconnect", HTTP_POST, handle_tunnel_disconnect);
-        g_http.on("/at-node/cmd/tunnel/clear", HTTP_POST, handle_tunnel_clear);
-#endif
-        g_http.on("/at-node/cmd/wifi/config", HTTP_POST, handle_wifi_config);
-        g_http.on("/at-node/cmd/ap", HTTP_POST, handle_ap);
-        g_http.on("/at-node/cmd/net/wol", HTTP_POST, handle_net_wol);
-        g_http.on("/at-node/cmd/net/ping", HTTP_POST, handle_net_ping);
-        g_http.on("/at-node/cmd/http/config", HTTP_POST, handle_http_config);
-        g_http.on("/at-node/cmd/http/status", HTTP_GET, handle_http_status);
-        g_http.on("/at-node/cmd/http/clear", HTTP_POST, handle_http_clear);
-        g_http.on("/at-node/cmd/nvs/clear", HTTP_POST, handle_nvs_clear);
-        g_http.onNotFound(handle_not_found);
-        if (g_http_enabled) {
-            g_http.begin();
-            Serial.println("HTTP server on port 80 (trusted local NAT only; AT+HTTP=0 to disable)");
-        } else {
-            Serial.println("HTTP server disabled");
-        }
-#else
-        Serial.println("HTTP control plane not compiled (serial-only config)");
-#endif
+        wifi_services_up();
     } else {
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
@@ -3149,6 +3160,26 @@ void setup(void)
 
 void loop(void)
 {
+    /* WiFi watchdog: the boot connect loop gives up after 30s and the
+     * driver does not reliably re-associate on its own — without this a
+     * single missed window meant permanently offline until power cycle.
+     * Services (HTTP routes, mDNS) come up whenever the link does. */
+    if (WiFi.status() == WL_CONNECTED) {
+        if (!g_wifi_ready) wifi_services_up();
+        g_wifi_lost_at = 0;
+    } else {
+        if (g_wifi_ready) {
+            g_wifi_ready = false;
+            Serial.println("WiFi lost");
+        }
+        if (!g_wifi_lost_at) g_wifi_lost_at = millis();
+        if ((uint32_t)(millis() - g_wifi_lost_at) > 15000) {
+            g_wifi_lost_at = millis();
+            Serial.println("WiFi reconnecting...");
+            WiFi.disconnect(false);
+            WiFi.begin(g_wifi_ssid.c_str(), g_wifi_pass.c_str());
+        }
+    }
 #if FEATURE_HTTP
     if (g_wifi_ready && g_http_enabled) g_http.handleClient();
 #endif
