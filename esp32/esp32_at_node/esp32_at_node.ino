@@ -29,6 +29,7 @@
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <esp_heap_caps.h>
+#include <esp_task_wdt.h>
 #include "ap_portal.h"
 #include "wifi_config.h"
 #if FEATURE_HTTP
@@ -3098,6 +3099,22 @@ void setup(void)
     delay(500);
     Serial.println("\r\nesp32_at_node start");
 
+    /* Task watchdog on loopTask: a field wedge left the board with LED
+     * frozen, AT/HTTP dead and no reboot — unrecoverable without a power
+     * cycle. 15s of loop() starvation now panics + reboots, and the panic
+     * PC in the serial log identifies the stuck callsite. */
+    {
+        esp_task_wdt_config_t twdt = {
+            .timeout_ms = 15000,
+            .idle_core_mask = 0,   /* IDF default watches idle0 already */
+            .trigger_panic = true,
+        };
+        if (esp_task_wdt_reconfigure(&twdt) != ESP_OK) {
+            esp_task_wdt_init(&twdt);
+        }
+        esp_task_wdt_add(NULL);    /* setup()/loop() run on loopTask */
+    }
+
     load_config();
 
     /* Check AP trigger button (GPIO10) */
@@ -3113,6 +3130,10 @@ void setup(void)
     int retry = 0;
     while (WiFi.status() != WL_CONNECTED && retry < 60) {
         delay(500);
+        /* setup() runs on loopTask, which was added to the 15s task WDT
+         * above. The boot-connect window is 30s, so feed the WDT here or a
+         * board with no/slow WiFi panics and reboots before reaching loop(). */
+        esp_task_wdt_reset();
         Serial.print(".");
         retry++;
     }
@@ -3233,5 +3254,6 @@ void loop(void)
         Serial.println("restarting...");
         ESP.restart();
     }
+    esp_task_wdt_reset();
     delay(2);
 }
