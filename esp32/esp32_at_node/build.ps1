@@ -11,7 +11,8 @@
 #
 # Variants (feature macros in features.h):
 #   full    - everything on (default)
-#   base    - FEATURE_RATHOLE=0 (BLE keyboard + MQTT + I2C, no tunnel)
+#   base    - FEATURE_RATHOLE=0 FEATURE_HTTP=0 (production keyboard: BLE+MQTT+I2C,
+#             no tunnel, no LAN HTTP control plane -> serial-only config)
 #   rathole - FEATURE_BLE=0 FEATURE_MQTT=0 FEATURE_I2C=0 (tunnel test unit;
 #             I2C off also enables the GPIO8 breathing liveness LED)
 
@@ -26,7 +27,7 @@ $fqbn = "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app"
 
 $defs = switch ($Variant) {
     "full"    { "" }
-    "base"    { "-DFEATURE_RATHOLE=0" }
+    "base"    { "-DFEATURE_RATHOLE=0 -DFEATURE_HTTP=0" }
     "rathole" { "-DFEATURE_BLE=0 -DFEATURE_MQTT=0 -DFEATURE_I2C=0" }
 }
 

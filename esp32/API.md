@@ -30,9 +30,20 @@ Device status (pure JSON).
   "typing": false,
   "mqtt": false,
   "ap": false,
-  "http_enabled": true
+  "http_enabled": true,
+  "heap": 28304,
+  "wifi_rssi": -64,
+  "wifi_pct": 72,
+  "ble_rssi": -55,
+  "ble_pct": 90,
+  "ability": {"ble": true, "mqtt": true, "rathole": false, "i2c": true,
+              "http": false, "breath_led": false}
 }
 ```
+
+`wifi_pct`/`ble_pct` = `2×(rssi+100)` clamped to 0-100 (-50dBm→100%, -100dBm→0%).
+`ble_*` only exist in BLE builds; `ble_rssi` is 0 when no host is connected.
+`mqtt` is `false` when MQTT is not compiled in.
 
 ### GET /at-node/help
 
@@ -55,7 +66,7 @@ that are compiled out have no routes (404), no AT branches, and no config keys.
 
 ```json
 {"ok": true, "ability": {"ble": true, "mqtt": true, "rathole": false,
- "i2c": true, "breath_led": false}}
+ "i2c": true, "http": false, "breath_led": false}}
 ```
 
 The same object is embedded in `GET /at-node/cmd/status` as `ability`, is

@@ -31,7 +31,9 @@
 #include <esp_heap_caps.h>
 #include "ap_portal.h"
 #include "wifi_config.h"
+#if FEATURE_HTTP
 #include "web_page.h"   /* gzipped single-page web UI (esp32/web/build.py) */
+#endif
 #if FEATURE_MQTT
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
@@ -377,6 +379,7 @@ static void set_http_enabled(bool enable, bool persist = true)
 {
     g_http_enabled = enable;
     if (persist) save_config("http_enable", enable ? "1" : "0");
+#if FEATURE_HTTP
     if (!g_wifi_ready) return;
     if (enable) {
         g_http.begin();
@@ -385,6 +388,7 @@ static void set_http_enabled(bool enable, bool persist = true)
         g_http.stop();
         Serial.println("HTTP server stopped");
     }
+#endif
 }
 
 /* Start/stop public pairing-mode advertising.
@@ -476,6 +480,9 @@ static bool cfg_s_name(const String& v)  { g_device_name = v; save_config("name"
 static bool cfg_s_hostn(const String& v) { g_hostname = v;    save_config("hostname", v); return true; }
 static bool cfg_s_wssid(const String& v) { g_wifi_ssid = v;   save_config("wifi_ssid", v); return true; }
 static bool cfg_s_wpass(const String& v) { g_wifi_pass = v;   save_config("wifi_pass", v); return true; }
+#if FEATURE_HTTP
+static bool cfg_s_httpen(const String& v) { set_http_enabled(cfg_truthy(v)); return true; }
+#endif
 #if FEATURE_MQTT
 static bool cfg_s_mbroker(const String& v) { g_mqtt_broker = v; save_config("mqtt_broker", v); return true; }
 static bool cfg_s_mport(const String& v) {
@@ -490,7 +497,6 @@ static bool cfg_s_mpass(const String& v) { g_mqtt_pass = v; save_config("mqtt_pa
 static bool cfg_s_mca(const String& v)   { g_mqtt_ca_fp = v; save_config("mqtt_ca_fp", v); return true; }
 static bool cfg_s_mauto(const String& v) { g_mqtt_auto = cfg_truthy(v); save_config("mqtt_auto", g_mqtt_auto ? "1" : "0"); return true; }
 #endif
-static bool cfg_s_httpen(const String& v) { set_http_enabled(cfg_truthy(v)); return true; }
 #if FEATURE_RATHOLE
 static bool cfg_s_tunen(const String& v)  { rathole_set_enabled(cfg_truthy(v)); return true; }
 #endif
@@ -515,7 +521,9 @@ static const CfgEntry CFG_TABLE[] = {
     {"mqtt.ca",         false, cfg_s_mca,     [](void){ return g_mqtt_ca_fp; }},
     {"mqtt.auto",       false, cfg_s_mauto,   [](void){ return String(g_mqtt_auto ? 1 : 0); }},
 #endif
+#if FEATURE_HTTP
     {"http.enable",     false, cfg_s_httpen,  [](void){ return String(g_http_enabled ? 1 : 0); }},
+#endif
 #if FEATURE_RATHOLE
     {"rathole.enable",  false, cfg_s_tunen,   [](void){ return String(rathole_is_enabled() ? 1 : 0); }},
 #endif
@@ -661,6 +669,7 @@ static void send_json(const String& json, int code = 200)
  * web_page.h). Served from flash in ONE response with Content-Encoding:
  * gzip — no heap copy, no repeated HTML requests; the page then drives
  * everything through the JSON /at-node/cmd/* endpoints. */
+#if FEATURE_HTTP
 static void handle_web_app(void)
 {
     g_http.sendHeader("Access-Control-Allow-Origin", "*");
@@ -675,6 +684,7 @@ static void handle_legacy_page(void)
     g_http.sendHeader("Location", "/");
     g_http.send(302, "text/plain", "");
 }
+#endif /* FEATURE_HTTP */
 
 
 static void handle_help_json(void)
@@ -954,6 +964,7 @@ static String build_ability_json(void)
     j += ",\"mqtt\":"    + String(FEATURE_MQTT ? "true" : "false");
     j += ",\"rathole\":" + String(FEATURE_RATHOLE ? "true" : "false");
     j += ",\"i2c\":"     + String(FEATURE_I2C ? "true" : "false");
+    j += ",\"http\":"    + String(FEATURE_HTTP ? "true" : "false");
     j += ",\"breath_led\":" + String(FEATURE_BREATH_LED ? "true" : "false");
     j += "}";
     return j;
@@ -962,6 +973,13 @@ static String build_ability_json(void)
 static void handle_ability(void)
 {
     send_json("{\"ok\":true,\"ability\":" + build_ability_json() + "}");
+}
+
+/* 0..100 signal quality from dBm: -50dBm -> 100%, -100dBm -> 0%. */
+static int rssi_to_pct(int rssi)
+{
+    int q = 2 * (rssi + 100);
+    return q < 0 ? 0 : (q > 100 ? 100 : q);
 }
 
 static void handle_cmd_status(void)
@@ -981,6 +999,19 @@ static void handle_cmd_status(void)
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
     json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
     json += ",\"heap\":" + String(ESP.getFreeHeap());
+    int wrssi = WiFi.RSSI();
+    json += ",\"wifi_rssi\":" + String(wrssi);
+    json += ",\"wifi_pct\":" + String(rssi_to_pct(wrssi));
+#if FEATURE_BLE
+    /* Live RSSI of the first connected BLE host (0 when none). */
+    int8_t brssi = 0;
+    if (g_server) {
+        std::vector<uint16_t> peers = g_server->getPeerDevices();
+        if (!peers.empty()) ble_gap_conn_rssi(peers[0], &brssi);
+    }
+    json += ",\"ble_rssi\":" + String(brssi);
+    json += ",\"ble_pct\":" + String(brssi ? rssi_to_pct(brssi) : 0);
+#endif
     json += ",\"ability\":" + build_ability_json();
     json += "}";
     send_json(json);
@@ -1402,6 +1433,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#if FEATURE_HTTP
     } else if (cmd.startsWith("AT+HTTP=") || cmd == "AT+HTTP") {
         String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
         if (args == "status") {
@@ -1422,6 +1454,7 @@ static void handle_at(void)
         } else {
             resp = "ERROR";
         }
+#endif
 #if FEATURE_BLE
     } else if (cmd.startsWith("AT+PAIR=") || cmd == "AT+PAIR") {
         String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
@@ -2480,8 +2513,10 @@ static void serial_exec(const String& line)
         Serial.println("  AT+TUNNEL=<1>,connect|disconnect|clear|status");
 #endif
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
+#if FEATURE_HTTP
         Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
         Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
+#endif
 #if FEATURE_BLE
         Serial.println("  AT+PAIR=<1|0|status>       BLE public pairing advertising (60s timeout)");
 #endif
@@ -2497,7 +2532,13 @@ static void serial_exec(const String& line)
         Serial.print("role=esp32_at_node connected=");
         Serial.print(is_connected() ? "1" : "0");
         Serial.print(" ip=");
-        Serial.println(WiFi.localIP().toString());
+        Serial.print(WiFi.localIP().toString());
+        Serial.print(" wifi_rssi=");
+        Serial.print(WiFi.RSSI());
+        Serial.print("dBm (");
+        Serial.print(rssi_to_pct(WiFi.RSSI()));
+        Serial.print("%)");
+        Serial.println();
 #if FEATURE_BLE
     } else if (line.startsWith("AT+TAP=")) {
         String args = line.substring(7);
@@ -2830,6 +2871,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#if FEATURE_HTTP
     } else if (line.startsWith("AT+HTTP=") || line == "AT+HTTP") {
         String args = (line.length() > 8) ? line.substring(8) : String("status");
         if (args == "status") {
@@ -2850,6 +2892,7 @@ static void serial_exec(const String& line)
         } else {
             Serial.println("ERROR");
         }
+#endif
 #if FEATURE_BLE
     } else if (line.startsWith("AT+PAIR=") || line == "AT+PAIR") {
         String args = (line.length() > 8) ? line.substring(8) : String("status");
@@ -2998,6 +3041,7 @@ void setup(void)
             Serial.println("mDNS init failed");
         }
 
+#if FEATURE_HTTP
         g_http.on("/", HTTP_GET, handle_web_app);
         g_http.on("/at-node/status", HTTP_GET, handle_legacy_page);
         g_http.on("/at-node/help", HTTP_GET, handle_legacy_page);
@@ -3061,6 +3105,9 @@ void setup(void)
         } else {
             Serial.println("HTTP server disabled");
         }
+#else
+        Serial.println("HTTP control plane not compiled (serial-only config)");
+#endif
     } else {
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
@@ -3102,7 +3149,9 @@ void setup(void)
 
 void loop(void)
 {
+#if FEATURE_HTTP
     if (g_wifi_ready && g_http_enabled) g_http.handleClient();
+#endif
     handle_serial();
 #if FEATURE_BLE
     type_poll();

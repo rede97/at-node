@@ -41,14 +41,24 @@ function applyAbility(a) {
     document.querySelector('nav button[data-tab="status"]').click();
   }
 }
+/* colored text bar: 10 blocks filled by pct, green>=60 amber>=30 red below */
+function sigBar(pct) {
+  const n = Math.round(pct / 10);
+  const color = pct >= 60 ? '#0a0' : (pct >= 30 ? '#c80' : '#d33');
+  let s = '<span style="color:' + color + ';letter-spacing:1px">';
+  for (let i = 0; i < 10; i++) s += i < n ? '&#9608;' : '&#9617;';
+  return s + '</span> ' + pct + '%';
+}
 function statusRefresh() {
   get('/at-node/cmd/status').then(s => {
     $('hb').className = 'ok';
     $('s-device').textContent = s.device;
     $('s-hostname').textContent = s.hostname + '.local';
     $('s-ip').textContent = s.ip;
+    $('s-wifirssi').innerHTML = s.wifi_rssi + ' dBm &nbsp;' + sigBar(s.wifi_pct);
     $('s-bleaddr').textContent = s.ble_addr;
-    $('s-ble').innerHTML = s.connected ? '<span class="ok">connected</span>' : '<span class="bad">not connected</span>';
+    $('s-ble').innerHTML = (s.connected ? '<span class="ok">connected</span>' : '<span class="bad">not connected</span>') +
+      (s.connected && s.ble_rssi ? ' ' + s.ble_rssi + ' dBm ' + sigBar(s.ble_pct) : '');
     $('s-typing').textContent = s.typing ? 'yes' : 'no';
     $('s-mqtt').innerHTML = s.mqtt ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
     $('s-ap').textContent = s.ap ? 'active' : 'off';

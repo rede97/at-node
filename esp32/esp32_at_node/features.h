@@ -30,6 +30,15 @@
 #define FEATURE_I2C        1   /* Wire on SDA=GPIO8, SCL=GPIO9 */
 #endif
 
+#ifndef FEATURE_HTTP
+#define FEATURE_HTTP       1   /* LAN HTTP control plane on port 80 (incl. web UI).
+                                * 0 = serial-only configuration: no routes are
+                                * registered and the server never starts, removing
+                                * the unauthenticated LAN attack surface. The
+                                * button-triggered AP provisioning portal (8080)
+                                * is independent and stays available. */
+#endif
+
 /* I2C off frees GPIO8, which is the onboard LED on common ESP32-C3
  * boards (SuperMini etc.). Use it as a breathing liveness indicator:
  * breathing = loop() alive; frozen/dark = wedged or dead. */

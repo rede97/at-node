@@ -62,14 +62,14 @@
 
 ### 功能宏与固件变体（`features.h` + `build.ps1 -Variant`）
 
-编译期开关：`FEATURE_BLE` / `FEATURE_MQTT` / `FEATURE_RATHOLE` / `FEATURE_I2C`
-（默认全 1）。关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，
+编译期开关：`FEATURE_BLE` / `FEATURE_MQTT` / `FEATURE_RATHOLE` / `FEATURE_I2C` /
+`FEATURE_HTTP`（默认全 1）。关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，
 `AT+GET` 对应键返回未知键。变体：
 
 | Variant | 宏 | 用途 |
 |---|---|---|
 | `full`（默认） | 全开 | 完整键盘节点 |
-| `base` | `RATHOLE=0` | 纯键盘节点（BLE+MQTT+I2C），无隧道 |
+| `base` | `RATHOLE=0 HTTP=0` | 生产键盘节点（BLE+MQTT+I2C），无隧道、**无 LAN HTTP 控制面**（防局域网攻击，仅串口配置；按钮触发的 AP 配网页 8080 不受影响） |
 | `rathole` | `BLE=0 MQTT=0 I2C=0` | 隧道专用测试板（free_heap ~180K vs 全开 ~20K） |
 
 ```bash
@@ -77,9 +77,14 @@ powershell -File esp32/esp32_at_node/build.ps1 -Port COMx -Variant rathole
 ```
 
 **Ability 接口**：`AT+ABILITY` / `GET /at-node/cmd/ability` / MQTT `ability` 方法
-返回 `{"ble":..,"mqtt":..,"rathole":..,"i2c":..,"breath_led":..}`（同时内嵌在
+返回 `{"ble","mqtt","rathole","i2c","http","breath_led"}`（同时内嵌在
 `/at-node/cmd/status` 里）；Web UI 据此隐藏无对应功能的标签页并在 Status 页显示
 功能徽章。未编译的功能路由直接 404。
+
+**信号强度**：`/at-node/cmd/status` 带 `wifi_rssi`/`wifi_pct`（BLE 编译时另有
+`ble_rssi`/`ble_pct`，取首个已连主机）；百分比 = `2×(rssi+100)` 截断 0-100
+（-50dBm→100%，-100dBm→0%）。Status 页显示 dBm + 10 格彩条 + 百分比，
+`AT+STATUS` 同样输出。
 
 **呼吸灯（`FEATURE_BREATH_LED`，I2C 关闭时默认开）**：GPIO8 板载 LED 以 ~2s 周期
 gamma 校正呼吸——呼吸=loop() 活着；定格/熄灭=死机。默认按 SuperMini C3 低电平点亮
