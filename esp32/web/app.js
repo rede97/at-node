@@ -53,6 +53,7 @@ function statusRefresh() {
     $('s-mqtt').innerHTML = s.mqtt ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
     $('s-ap').textContent = s.ap ? 'active' : 'off';
     $('s-http').textContent = s.http_enabled ? 'on' : 'off';
+    $('s-heap').textContent = s.heap !== undefined ? s.heap + ' B' : '-';
     if (!ability && s.ability) applyAbility(s.ability);
   }).catch(() => { $('hb').className = 'bad'; });
 }

@@ -980,6 +980,7 @@ static void handle_cmd_status(void)
 #endif
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
     json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
+    json += ",\"heap\":" + String(ESP.getFreeHeap());
     json += ",\"ability\":" + build_ability_json();
     json += "}";
     send_json(json);
