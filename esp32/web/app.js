@@ -199,6 +199,55 @@ function wifiSave() {
   }).catch(() => msg('device re-associating — reconnect to its new network state'));
 }
 
+/* --- config export/import ------------------------------------------------ */
+/* Pure client-side: parse/build JSON in the browser and drive the existing
+ * config endpoints; no JSON library on the Arduino side. */
+async function cfgExport() {
+  try {
+    const d = await get('/at-node/cmd/config/list');
+    const out = {};
+    for (const e of d.keys) if (!e.secret) out[e.key] = e.value;
+    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'atnode-config.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    msg('exported ' + Object.keys(out).length + ' keys');
+    $('cfg-detail').textContent = '';
+  } catch (e) { msg('export failed'); }
+}
+async function cfgImport(input) {
+  const f = input.files[0];
+  input.value = '';
+  if (!f) return;
+  let obj;
+  try { obj = JSON.parse(await f.text()); }
+  catch { msg('import failed: not valid JSON'); return; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    msg('import failed: expected a JSON object of key:value pairs'); return;
+  }
+  let known;
+  try {
+    const d = await get('/at-node/cmd/config/list');
+    known = new Set(d.keys.map(e => e.key));
+  } catch { msg('import failed: cannot read device key list'); return; }
+  const skipped = [], failed = [];
+  let ok = 0;
+  for (const [k, v] of Object.entries(obj)) {
+    if (!known.has(k)) { skipped.push(k); continue; }   // unsupported: ignore
+    try {
+      const r = await post('/at-node/cmd/config', new URLSearchParams({ key: k, val: String(v) }));
+      if (r.ok) ok++; else failed.push(k);
+    } catch { failed.push(k); }
+  }
+  msg('imported ' + ok + ' key(s)' + (failed.length ? ', ' + failed.length + ' FAILED' : ''));
+  $('cfg-detail').textContent =
+    (skipped.length ? 'ignored unsupported: ' + skipped.join(', ') + '. ' : '') +
+    (failed.length ? 'failed: ' + failed.join(', ') + '. ' : '') +
+    (ok ? 'Changes like WiFi/MQTT/tunnel apply per key semantics (some reconnect, some need reboot).' : '');
+}
+
 /* --- API help ----------------------------------------------------------- */
 let helpLoaded = false;
 function helpLoad() {

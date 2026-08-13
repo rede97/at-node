@@ -15,6 +15,7 @@
     <button data-tab="mqtt">MQTT</button>
     <button data-tab="tunnel">Tunnel</button>
     <button data-tab="wifi">WiFi</button>
+    <button data-tab="config">Config</button>
     <button data-tab="help">API</button>
   </nav>
 </header>
@@ -104,6 +105,18 @@
   <button onclick="wifiSave()">Save &amp; Reconnect</button>
   <p><small>Saved to NVS; the device re-associates immediately. If it drops off the
   network, use the serial console (<code>AT+WIFI=</code>) or AP provisioning mode.</small></p>
+</section>
+
+<section id="tab-config" hidden>
+  <h2>Config Export / Import</h2>
+  <div class="note">Export downloads all non-secret config keys as one JSON object.
+  Import accepts any JSON object of <code>key: value</code> pairs — keys this
+  firmware does not support are ignored. Secret keys (passwords, tokens) are
+  never exported; add them manually to an import file when needed.</div>
+  <button onclick="cfgExport()">Export JSON</button>
+  <button class="ghost" onclick="document.getElementById('cfg-file').click()">Import JSON</button>
+  <input type="file" id="cfg-file" accept=".json,application/json" style="display:none" onchange="cfgImport(this)">
+  <p><small id="cfg-detail"></small></p>
 </section>
 
 <section id="tab-help" hidden>

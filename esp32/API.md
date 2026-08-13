@@ -528,6 +528,12 @@ Read a config value. **Params**: `key`. Secret keys return an empty value.
 
 ### GET /at-node/cmd/config/list
 
+All keys with values (secrets masked). The web UI's Config tab implements
+**export/import** on top of this: export downloads every non-secret key as a
+JSON object; import posts each key of a user-supplied JSON object to
+`POST /at-node/cmd/config`, ignoring keys the firmware does not support
+(e.g. `mqtt.*` on a rathole-only build). All parsing is client-side JS.
+
 List all config keys (secret keys marked, values omitted).
 
 ```json

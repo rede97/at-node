@@ -48,7 +48,7 @@
 - ✅ BLE 配对安全：默认不广播，需通过 `AT+PAIR=1` / `POST /at-node/cmd/ble/pair?enable=1` / MQTT `ble/pair?enable=1` 显式进入 60s 公共配对模式；配对后断连转为定向广播，仅已绑定主机可连
 - ✅ NVS 擦除：`AT+NVS=clear` / `POST /at-node/cmd/nvs/clear` 恢复出厂设置并自动重启
 - ✅ rathole 内网穿透客户端：**单隧道**（plain TCP transport，一条 SSH 即可跳板，降低公网暴露），`AT+TUNNEL=<1>,...` 串口配置 + Web 配置页 + REST 端点，NVS 持久化可开机自连；实测穿透 HTTP 控制面与 TCP echo 全通
-- ✅ Web 控制面：`esp32/web/` 独立前端项目，`uv run python esp32/web/build.py` 打包内联 + gzip 成**单页应用**（`web_page.h`，~4.5KB），固件从 flash 一次性发送（`Content-Encoding: gzip`），页面内所有状态/配置均由 JSON `/at-node/cmd/*` 驱动；旧分页 URL（`/at-node/status|mqtt|tunnel|pair|help`）302 到 `/`
+- ✅ Web 控制面：`esp32/web/` 独立前端项目，`uv run python esp32/web/build.py` 打包内联 + gzip 成**单页应用**（`web_page.h`，~4.9KB），固件从 flash 一次性发送（`Content-Encoding: gzip`），页面内所有状态/配置均由 JSON `/at-node/cmd/*` 驱动；旧分页 URL（`/at-node/status|mqtt|tunnel|pair|help`）302 到 `/`。Config 页支持**配置导出/导入**（JSON 文件，纯浏览器 JS 解析 + 逐键调 `/at-node/cmd/config`，固件零 JSON 库开销；不支持的键自动忽略并在页面列出，密钥类不导出）
 
 ### 统一配置层
 
