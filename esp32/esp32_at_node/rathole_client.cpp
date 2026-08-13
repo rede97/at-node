@@ -483,11 +483,11 @@ static void manager_task(void* pv)
             if (millis() - up_since > 3000) backoff_ms = backoff_base;
         }
         /* Sliced backoff: stop/reconfig takes effect within ~100ms instead
-         * of waiting out a backoff that can reach 60s. */
+         * of waiting out a backoff that can reach 30s. */
         for (uint32_t w = 0; w < backoff_ms && t.want_run && !t.reconfig; w += 100) {
             delay(100);
         }
-        backoff_ms = min(backoff_ms * 2, (uint32_t)60000);
+        backoff_ms = min(backoff_ms * 2, (uint32_t)30000);
     }
 }
 
