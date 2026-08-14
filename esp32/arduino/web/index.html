@@ -33,13 +33,28 @@
     <tr><th>MQTT</th><td id="s-mqtt">-</td></tr>
     <tr><th>AP Mode</th><td id="s-ap">-</td></tr>
     <tr><th>HTTP Server</th><td id="s-http">-</td></tr>
+    <tr><th>HTTP Control</th><td>
+      <label><input type=checkbox id="h-enable"> enabled (runtime)</label>
+      <label><input type=checkbox id="h-auto"> auto-start (NVS)</label>
+      <button onclick="httpSvcSave()">Apply</button>
+    </td></tr>
     <tr><th>Free Heap</th><td id="s-heap">-</td></tr>
     <tr><th>Temperature</th><td id="s-temp">-</td></tr>
     <tr><th>Features</th><td id="s-feat">-</td></tr>
   </table>
+  <p><small>Unchecking HTTP "enabled" stops this web UI immediately — re-enable via
+  serial (<code>AT+HTTP=enable,1</code>) or reboot (reverts to auto).</small></p>
 </section>
 
 <section id="tab-ble" hidden>
+  <h2>BLE Service</h2>
+  <table>
+    <tr><th>Enabled (runtime)</th><td><input type=checkbox id="b-enable"></td></tr>
+    <tr><th>Auto-start on boot (NVS)</th><td><input type=checkbox id="b-auto"></td></tr>
+  </table>
+  <button onclick="bleSvcSave()">Save Service</button>
+  <p><small>Enable is temporary (reverts to auto on reboot); auto is persisted.
+  Disabling stops advertising; an active host link is unaffected until it drops.</small></p>
   <h2>BLE Pairing</h2>
   <table>
     <tr><th>BLE Name</th><td id="b-name">-</td></tr>
@@ -65,6 +80,7 @@
     <tr><th>Username</th><td><input type=text id="m-user" placeholder="(optional)"></td></tr>
     <tr><th>Password</th><td><input type=password id="m-pass" placeholder="(unchanged if empty)"></td></tr>
     <tr><th>CA fingerprint</th><td><input type=text id="m-ca" placeholder="SHA256 hex, optional"></td></tr>
+    <tr><th>Enabled (runtime)</th><td><input type=checkbox id="m-enable"></td></tr>
     <tr><th>Auto-connect</th><td><input type=checkbox id="m-auto"></td></tr>
   </table>
   <button onclick="mqttSave()">Save</button>

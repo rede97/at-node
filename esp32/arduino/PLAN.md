@@ -28,7 +28,7 @@ esp32/
 │   ├── arduino.ino            # 主 sketch（与目录同名，Arduino 约定）
 │   ├── wifi_config.h          # WiFi 凭据（gitignore）
 │   ├── wifi_config.h.example  # 模板
-│   ├── web/                   # Web 控制面前端（build.py → web_page.h）
+│   ├── web/                   # Web 控制面前端（Bun: `bun run build` → web_page.h）
 │   ├── web_page.h             # 生成的 gzip 单页应用
 │   └── build.ps1 + build-c3.ps1 / build-esp32.ps1
 │                              # 编译/上传：共享引擎 + 板卡专用封装

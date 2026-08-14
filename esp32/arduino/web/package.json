@@ -1,0 +1,9 @@
+{
+  "name": "atnode-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "AT-Node web control panel — builds into a gzipped single-page C header (web_page.h)",
+  "scripts": {
+    "build": "bun run build.ts"
+  }
+}

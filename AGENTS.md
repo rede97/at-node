@@ -137,7 +137,7 @@ Network-enabled AT Node with WiFi HTTP (`/at-node/*`) / MQTT control plane — s
 `esp32/arduino/PLAN.md` and `esp32/arduino/README.md`. Full AT command parity with CH582.
 
 - **Chips**: ESP32-C3 (verified), classic ESP32 (support target). **ESP32-S3 NOT supported on Arduino** — final decision + root cause: `esp32/COMPAT_REPORT.md`; S3 goes to `esp32/zephyr/` (TODO).
-- **Sketch**: `arduino.ino` (must match dir name). Web UI is a gzipped single-page app built from `esp32/arduino/web/` (`uv run python esp32/arduino/web/build.py` → `web_page.h`), served from flash in one response; all dynamic content via JSON `/at-node/cmd/*`.
+- **Sketch**: `arduino.ino` (must match dir name). Web UI is a gzipped single-page app built from `esp32/arduino/web/` (Bun project: `cd esp32/arduino/web && bun run build` → `web_page.h`), served from flash in one response; all dynamic content via JSON `/at-node/cmd/*`.
 - **Config**: all persistent config goes through one registry (`config_set/get/list`): `AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS` on serial, `/at-node/cmd/config` over HTTP, `config/set|get|list` over MQTT; key space `device.*`, `wifi.*`, `mqtt.*`, `http.*`, `ble.*`, `rathole.enable`, `tunnel.1.*`. Legacy commands/endpoints are aliases.
 - **Build/flash — agents default to the board wrappers**:
   - `esp32/arduino/build-c3.ps1 -Port <COM>` — ESP32-C3 SuperMini (fqbn pins `CDCOnBoot=cdc`)

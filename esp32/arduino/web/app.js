@@ -49,6 +49,30 @@ function sigBar(pct) {
   for (let i = 0; i < 10; i++) s += i < n ? '&#9608;' : '&#9617;';
   return s + '</span> ' + pct + '%';
 }
+/* generic config registry access (enable/auto service switches) */
+function cfgGet(key) {
+  return get('/at-node/cmd/config?key=' + encodeURIComponent(key)).then(d => d.value);
+}
+function cfgSet(key, val) {
+  return post('/at-node/cmd/config?key=' + encodeURIComponent(key) + '&val=' + val);
+}
+/* HTTP service switches on the status page — fill once, polls never touch them */
+let httpSvcLoaded = false;
+function httpSvcFill() {
+  if (httpSvcLoaded) return;
+  Promise.all([cfgGet('http.enable'), cfgGet('http.auto')]).then(v => {
+    $('h-enable').checked = v[0] === '1';
+    $('h-auto').checked = v[1] === '1';
+    httpSvcLoaded = true;
+  }).catch(() => {});
+}
+function httpSvcSave() {
+  const en = $('h-enable').checked, auto = $('h-auto').checked;
+  if (!en && !confirm('Disable HTTP now? This web UI goes dead until serial re-enable or reboot.')) return;
+  Promise.all([cfgSet('http.enable', en ? '1' : '0'), cfgSet('http.auto', auto ? '1' : '0')])
+    .then(rs => msg(rs.every(d => d.ok) ? (en ? 'http applied' : 'http disabled — use serial to re-enable') : 'apply failed'))
+    .catch(() => msg(en ? 'apply failed' : 'http disabled — use serial to re-enable'));
+}
 function statusRefresh() {
   get('/at-node/cmd/status').then(s => {
     $('hb').className = 'ok';
@@ -63,6 +87,7 @@ function statusRefresh() {
     $('s-mqtt').innerHTML = s.mqtt ? '<span class="ok">connected</span>' : '<span class="bad">disconnected</span>';
     $('s-ap').textContent = s.ap ? 'active' : 'off';
     $('s-http').textContent = s.http_enabled ? 'on' : 'off';
+    httpSvcFill();
     $('s-heap').textContent = s.heap !== undefined ? s.heap + ' B' : '-';
     $('s-temp').textContent = s.temp_c !== undefined ? s.temp_c + ' °C' : '-';
     if (!ability && s.ability) applyAbility(s.ability);
@@ -70,7 +95,23 @@ function statusRefresh() {
 }
 
 /* --- BLE ---------------------------------------------------------------- */
+let bleSvcLoaded = false;
+function bleSvcFill() {
+  if (bleSvcLoaded) return;
+  Promise.all([cfgGet('ble.enable'), cfgGet('ble.auto')]).then(v => {
+    $('b-enable').checked = v[0] === '1';
+    $('b-auto').checked = v[1] === '1';
+    bleSvcLoaded = true;
+  }).catch(() => {});
+}
+function bleSvcSave() {
+  Promise.all([
+    cfgSet('ble.enable', $('b-enable').checked ? '1' : '0'),
+    cfgSet('ble.auto', $('b-auto').checked ? '1' : '0')
+  ]).then(rs => { msg(rs.every(d => d.ok) ? 'ble service saved' : 'save failed'); bleRefresh(); });
+}
 function bleRefresh() {
+  bleSvcFill();
   get('/at-node/cmd/ble/status').then(s => {
     $('b-name').textContent = s.name;
     $('b-addr').textContent = s.addr;
@@ -117,6 +158,7 @@ function mqttRefresh(fill) {
       $('m-port').value = s.port || '';
       $('m-ca').value = s.ca_fp || '';
       $('m-auto').checked = !!s.auto;
+      cfgGet('mqtt.enable').then(v => { $('m-enable').checked = v === '1'; }).catch(() => {});
       mqttLoaded = true;
     }
   }).catch(() => { msg('mqtt status failed'); });
@@ -126,7 +168,8 @@ function mqttSave() {
     broker: $('m-broker').value, port: $('m-port').value,
     user: $('m-user').value, auto: $('m-auto').checked ? '1' : '0' });
   if ($('m-pass').value) p.set('pass', $('m-pass').value);
-  const jobs = [post('/at-node/cmd/mqtt/config', p)];
+  const jobs = [post('/at-node/cmd/mqtt/config', p),
+    cfgSet('mqtt.enable', $('m-enable').checked ? '1' : '0')];
   if ($('m-ca').value) jobs.push(post('/at-node/cmd/mqtt/ca', new URLSearchParams({ fp: $('m-ca').value })));
   Promise.all(jobs).then(rs => msg(rs.every(d => d.ok) ? 'saved (reconnect to apply)' : 'save failed'));
 }
