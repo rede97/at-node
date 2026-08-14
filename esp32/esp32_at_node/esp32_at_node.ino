@@ -100,6 +100,8 @@ static bool      g_wifi_ready = false;
 static bool      g_http_enabled = true;
 #if FEATURE_BLE
 static bool      g_pairing_mode = false;   /* default off for security */
+static bool      g_ble_enabled = true;     /* runtime master switch (NVS) */
+static bool      g_ble_auto = true;        /* auto-start on boot (NVS) */
 static uint32_t  g_pair_timeout_at = 0;    /* auto-stop advertising deadline */
 #endif
 
@@ -117,6 +119,7 @@ static PubSubClient     g_mqtt(g_mqtt_wifi_plain);
 static bool             g_mqtt_connected = false;
 static bool             g_mqtt_connect_pending = false;
 static bool             g_mqtt_auto = false;   /* auto-reconnect on boot (NVS) */
+static bool             g_mqtt_enabled = true; /* runtime master switch (NVS) */
 static String           g_mqtt_broker;
 static TaskHandle_t     g_mqtt_task = NULL;
 static SemaphoreHandle_t g_mqtt_sem = NULL;
@@ -351,6 +354,11 @@ static void load_config(void)
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
     g_mqtt_auto    = prefs.getString("mqtt_auto", "0").toInt() != 0;
+    g_mqtt_enabled = prefs.getString("mqtt_enable", "1").toInt() != 0;
+#endif
+#if FEATURE_BLE
+    g_ble_enabled = prefs.getString("ble_enable", "1").toInt() != 0;
+    g_ble_auto    = prefs.getString("ble_auto", "1").toInt() != 0;
 #endif
     g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
     prefs.end();
@@ -401,6 +409,24 @@ static void set_http_enabled(bool enable, bool persist = true)
  * if no host connects. After a connection/disconnection, the device falls
  * back to directed advertising to the bonded peer (or stops if unpaired). */
 #if FEATURE_BLE
+/* BLE master switch: disable stops advertising (NimBLE stays up for fast
+ * re-enable). Persisted to NVS; auto controls boot-time advertising. */
+static bool cfg_s_bleten(const String& v) {
+    g_ble_enabled = cfg_truthy(v);
+    save_config("ble_enable", g_ble_enabled ? "1" : "0");
+    if (!g_ble_enabled) {
+        NimBLEDevice::getAdvertising()->stop();
+    } else if (g_pairing_mode) {
+        NimBLEDevice::getAdvertising()->start();
+    }
+    return true;
+}
+static bool cfg_s_bleauto(const String& v) {
+    g_ble_auto = cfg_truthy(v);
+    save_config("ble_auto", g_ble_auto ? "1" : "0");
+    return true;
+}
+
 static void set_ble_adv_enabled(bool enable)
 {
     g_pairing_mode = enable;
@@ -500,6 +526,13 @@ static bool cfg_s_muser(const String& v) { g_mqtt_user = v; save_config("mqtt_us
 static bool cfg_s_mpass(const String& v) { g_mqtt_pass = v; save_config("mqtt_pass", v); return true; }
 static bool cfg_s_mca(const String& v)   { g_mqtt_ca_fp = v; save_config("mqtt_ca_fp", v); return true; }
 static bool cfg_s_mauto(const String& v) { g_mqtt_auto = cfg_truthy(v); save_config("mqtt_auto", g_mqtt_auto ? "1" : "0"); return true; }
+static bool cfg_s_mten(const String& v) {
+    g_mqtt_enabled = cfg_truthy(v);
+    save_config("mqtt_enable", g_mqtt_enabled ? "1" : "0");
+    g_mqtt_connect_pending = false;
+    if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);  /* wake task to apply */
+    return true;
+}
 #endif
 #if FEATURE_RATHOLE
 static bool cfg_s_tunen(const String& v)  { rathole_set_enabled(cfg_truthy(v)); return true; }
@@ -524,9 +557,14 @@ static const CfgEntry CFG_TABLE[] = {
     {"mqtt.pass",       true,  cfg_s_mpass,   [](void){ return String(); }},
     {"mqtt.ca",         false, cfg_s_mca,     [](void){ return g_mqtt_ca_fp; }},
     {"mqtt.auto",       false, cfg_s_mauto,   [](void){ return String(g_mqtt_auto ? 1 : 0); }},
+    {"mqtt.enable",     false, cfg_s_mten,    [](void){ return String(g_mqtt_enabled ? 1 : 0); }},
 #endif
 #if FEATURE_HTTP
     {"http.enable",     false, cfg_s_httpen,  [](void){ return String(g_http_enabled ? 1 : 0); }},
+#endif
+#if FEATURE_BLE
+    {"ble.enable",      false, cfg_s_bleten,  [](void){ return String(g_ble_enabled ? 1 : 0); }},
+    {"ble.auto",        false, cfg_s_bleauto, [](void){ return String(g_ble_auto ? 1 : 0); }},
 #endif
 #if FEATURE_RATHOLE
     {"rathole.enable",  false, cfg_s_tunen,   [](void){ return String(rathole_is_enabled() ? 1 : 0); }},
@@ -2030,6 +2068,13 @@ static void mqtt_task_func(void* arg)
     for (;;) {
         xSemaphoreTake(g_mqtt_sem, 1000 / portTICK_PERIOD_MS);
 
+        if (!g_mqtt_enabled) {
+            if (g_mqtt_connected) {
+                g_mqtt.disconnect();
+                g_mqtt_connected = false;
+            }
+            continue;
+        }
         bool want = (g_mqtt_broker.length() > 0) && g_wifi_ready;
         if (want && !g_mqtt_connected) {
             /* Auto-reconnect only when mqtt_auto enabled (set after first
@@ -2477,7 +2522,7 @@ static bool ble_init(void)
     /* On boot, if we have a bonded host, advertise privately (directed) to it.
      * This lets the bonded host reconnect without making us publicly discoverable. */
     int nb = NimBLEDevice::getNumBonds();
-    if (nb > 0) {
+    if (g_ble_auto && nb > 0) {
         NimBLEAddress addr = NimBLEDevice::getBondedAddress(nb - 1);
         adv->start(0, &addr);
         Serial.printf("BLE directed advertising started to bonded peer %s\n", addr.toString().c_str());
@@ -2545,6 +2590,8 @@ static void serial_exec(const String& line)
         Serial.print(is_connected() ? "1" : "0");
         Serial.print(" ip=");
         Serial.print(WiFi.localIP().toString());
+        Serial.print(" hostname=");
+        Serial.print(g_hostname);
         Serial.print(" wifi_rssi=");
         Serial.print(WiFi.RSSI());
         Serial.print("dBm (");
@@ -2552,6 +2599,16 @@ static void serial_exec(const String& line)
         Serial.print("%)");
         Serial.print(" temp_c=");
         Serial.print(cpu_temp_c(), 1);
+        Serial.print(" heap=");
+        Serial.print(ESP.getFreeHeap());
+        Serial.print(" mqtt=");
+#if FEATURE_MQTT
+        Serial.print(g_mqtt_connected ? "connected" : "disconnected");
+#else
+        Serial.print("off");
+#endif
+        Serial.print(" http=");
+        Serial.print(g_http_enabled ? "on" : "off");
         Serial.println();
 #if FEATURE_BLE
     } else if (line.startsWith("AT+TAP=")) {
@@ -2843,10 +2900,14 @@ static void serial_exec(const String& line)
                 Serial.print("+MQTT:");
                 Serial.print(g_mqtt_connected ? "connected" : "disconnected");
                 Serial.print(",auto=");
-                Serial.println(g_mqtt_auto ? "1" : "0");
+                Serial.print(g_mqtt_auto ? "1" : "0");
+                Serial.print(",enabled=");
+                Serial.println(g_mqtt_enabled ? "1" : "0");
                 Serial.println("OK");
             } else if (sub == "auto") {
                 Serial.println(config_set("mqtt.auto", val) ? "OK" : "ERROR");
+            } else if (sub == "enable") {
+                Serial.println(config_set("mqtt.enable", val) ? "OK" : "ERROR");
             } else if (sub == "ca") {
                 /* val = SHA256 fingerprint or "status" */
                 if (val == "status") {
@@ -2916,6 +2977,18 @@ static void serial_exec(const String& line)
         } else if (args == "1" || args == "0") {
             set_ble_adv_enabled(args == "1");
             Serial.println("OK");
+        } else {
+            Serial.println("ERROR");
+        }
+    } else if (line.startsWith("AT+BLE=") || line == "AT+BLE") {
+        String args = (line.length() > 7) ? line.substring(7) : String("status");
+        if (args == "status") {
+            Serial.println("+BLE:" + String(g_ble_enabled ? "enabled" : "disabled") + ",auto=" + String(g_ble_auto ? "1" : "0"));
+            Serial.println("OK");
+        } else if (args.startsWith("enable,")) {
+            Serial.println(config_set("ble.enable", args.substring(7)) ? "OK" : "ERROR");
+        } else if (args.startsWith("auto,")) {
+            Serial.println(config_set("ble.auto", args.substring(5)) ? "OK" : "ERROR");
         } else {
             Serial.println("ERROR");
         }
@@ -3222,15 +3295,15 @@ void loop(void)
 #endif
     handle_serial();
 #if FEATURE_BLE
-    type_poll();
+    if (g_ble_enabled) type_poll();
 #endif
 #if FEATURE_MQTT
     mqtt_poll();
 #endif
     ap_portal_poll();
 #if FEATURE_BLE
-    ble_adv_poll();
-    if (g_adv_restart_at && (int32_t)(millis() - g_adv_restart_at) >= 0) {
+    if (g_ble_enabled) ble_adv_poll();
+    if (g_ble_enabled && g_adv_restart_at && (int32_t)(millis() - g_adv_restart_at) >= 0) {
         g_adv_restart_at = 0;
         if (!is_connected()) {
             NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
