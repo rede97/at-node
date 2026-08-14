@@ -150,7 +150,6 @@ let tunLoaded = false;
 function tunRefresh(fill) {
   get('/at-node/cmd/tunnel/status').then(d => {
     const t = d.tunnels[0];
-    $('t-master').innerHTML = t.master ? '<span class="ok">enabled</span>' : '<span class="bad">disabled</span>';
     $('t-state').innerHTML = t.connected ? '<span class="ok">connected</span>'
       : (t.running ? '<span class="bad">connecting</span>' : 'stopped');
     $('t-heap').textContent = t.free_heap;
@@ -166,12 +165,6 @@ function tunRefresh(fill) {
       tunLoaded = true;
     }
   }).catch(() => { msg('tunnel status failed'); });
-}
-function tunMaster(on) {
-  post('/at-node/cmd/tunnel/enable?enable=' + (on ? 1 : 0)).then(d => {
-    msg(d.ok ? 'rathole ' + (on ? 'enabled' : 'disabled') : 'failed');
-    tunRefresh(false);
-  });
 }
 function tunSave() {
   const p = new URLSearchParams({ id: 1,
