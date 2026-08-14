@@ -12,7 +12,16 @@ description: ESP32 系列硬件兼容性速查表（C3/S3 实测）。记录已�
 | 板子 | 芯片 | 烧录器 (VID) | fqbn 关键参数 | Flash | PSRAM |
 |---|---|---|---|---|---|
 | SuperMini | ESP32-C3 | 原生 USB-JTAG (`303A:1001`) | `CDCOnBoot=cdc` | 4MB quad | 无 |
+| 标准 ESP32 DevKitC | ESP32-D0WDQ6 | CH340/CP2102 | `FlashMode=dio, PartitionScheme=huge_app` | 4MB | 无 |
 | nanoESP32-S3 | ESP32-S3 N8R8 | ESPLink/DAPLink (`0D28:0204`) | `CDCOnBoot=default, FlashMode=dio, PSRAM=opi` | 8MB | 8MB OPI |**（已放弃支持）** |
+
+## 标准 ESP32（原版 D0WDQ6）踩坑
+
+- **FlashMode 用 dio**：常见 4MB flash，`FlashMode=dio` 兼容性最好（默认 qio 可能读 flash 失败，boot 止于 `boot:0x13` 且无 `load:` 消息）。
+- **I2C 引脚必须 GPIO21/22**：原版 ESP32 的 **GPIO8/9 是 SPI flash 引脚**（SD1/SD2），`Wire.begin(8,9)`（C3 的引脚）会崩 → TG1WDT 复位循环。固件已条件编译：原版 ESP32 用 `21,22`，C3/S3 用 `8,9`。
+- **DTR/RTS 正常运行态 = `dtr=False, rts=False`**（CH340/CP2102 自动下载电路，和 S3 的 ESPLink 极性相反）。
+- **无 PSRAM**，mbedTLS/WiFiClientSecure 正常（不踩 S3 的 USE_MALLOC 坑）。
+- 完整 fqbn：`esp32:esp32:esp32:FlashMode=dio,PartitionScheme=huge_app`
 
 ## nanoESP32-S3（S3）踩坑 —— **已放弃支持（mbedTLS+PSRAM 在 Arduino 工具链内无法修复，不推荐使用）**
 
@@ -30,8 +39,8 @@ description: ESP32 系列硬件兼容性速查表（C3/S3 实测）。记录已�
 
 ## 通用坑（换任何板子都可能踩）
 
-- **DTR/RTS 极性**：自动下载电路 DTR→EN、RTS→GPIO0。正常运行态 = `dtr=False, rts=True`（EN=1、GPIO0=1）；`dtr=True` 拉低 EN 触发复位，`rts=False` 拉低 GPIO0 进 bootloader/下载模式（`boot:0x0 DOWNLOAD`）。pyserial 读串口前设 `dtr=False, rts=True`；复位用 **DTR 脉冲**（`dtr=True` 0.15s → `dtr=False`），且**不要 `reset_input_buffer()`**（会清掉一次性 boot 输出）。
+- **DTR/RTS 极性因烧录器而异**：DTR→EN、RTS→GPIO0。标准 ESP32（CH340/CP2102）正常运行态 = `dtr=False, rts=False`；S3（ESPLink DAPLink）正常运行态 = `dtr=False, rts=True`。`dtr=True` 拉低 EN 触发复位。读串口前按烧录器设对 RTS，否则芯片被卡在复位/下载态读不到 boot 输出。
 - **`temperatureRead()` 已是摄氏**：Arduino-ESP32 3.x 内部已转（C3/S3 走 `temperature_sensor_get_celsius`，原版 ESP32 走 `(F-32)/1.8`）。别再转华氏→摄氏（会得到 12°C 假值）。
 - **PSRAM 参数三态**：`disabled` / `enabled`(QSPI quad) / `opi`(octal)。模组尾缀 R 后数字 = PSRAM MB（N8=无，N8R8=8MB）。用错 → 初始化失败 → panic 无输出。
 - **FlashMode 以板子文档为准**：Arduino 默认 `qio`，但部分板（nanoESP32-S3）要 `dio`。官方示例的 `--flash_mode` 是权威依据。
-- **串口无输出的排查顺序**：① DTR/RTS 时序（应 `dtr=False, rts=True`，复位用 DTR 脉冲）→ ② FlashMode（dio vs qio）→ ③ PSRAM（opi vs quad vs disabled）→ ④ 用物理现象（LED 闪烁）判 boot，别只信串口。
+- **串口无输出的排查顺序**：① DTR/RTS 时序（按烧录器设对 RTS：CH340=`rts=False`，ESPLink=`rts=True`）→ ② FlashMode（dio vs qio）→ ③ PSRAM（opi vs quad vs disabled）→ ④ 用物理现象（LED 闪烁）判 boot，别只信串口。
