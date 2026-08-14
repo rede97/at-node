@@ -64,6 +64,7 @@ function statusRefresh() {
     $('s-ap').textContent = s.ap ? 'active' : 'off';
     $('s-http').textContent = s.http_enabled ? 'on' : 'off';
     $('s-heap').textContent = s.heap !== undefined ? s.heap + ' B' : '-';
+    $('s-temp').textContent = s.temp_c !== undefined ? s.temp_c + ' °C' : '-';
     if (!ability && s.ability) applyAbility(s.ability);
   }).catch(() => { $('hb').className = 'bad'; });
 }

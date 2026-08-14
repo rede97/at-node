@@ -985,6 +985,13 @@ static int rssi_to_pct(int rssi)
     int q = 2 * (rssi + 100);
     return q < 0 ? 0 : (q > 100 ? 100 : q);
 }
+/* Internal die temperature, Celsius. temperatureRead() already returns °C
+ * on every ESP32 variant (original + C3/S3), so no conversion is needed. */
+static float cpu_temp_c(void)
+{
+    float t = temperatureRead();
+    return isnan(t) ? 0.0f : t;
+}
 
 static void handle_cmd_status(void)
 {
@@ -1003,6 +1010,7 @@ static void handle_cmd_status(void)
     json += ",\"ap\":" + String(ap_portal_active() ? "true" : "false");
     json += ",\"http_enabled\":" + String(g_http_enabled ? "true" : "false");
     json += ",\"heap\":" + String(ESP.getFreeHeap());
+    json += ",\"temp_c\":" + String(cpu_temp_c(), 1);
     int wrssi = WiFi.RSSI();
     json += ",\"wifi_rssi\":" + String(wrssi);
     json += ",\"wifi_pct\":" + String(rssi_to_pct(wrssi));
@@ -2542,6 +2550,8 @@ static void serial_exec(const String& line)
         Serial.print("dBm (");
         Serial.print(rssi_to_pct(WiFi.RSSI()));
         Serial.print("%)");
+        Serial.print(" temp_c=");
+        Serial.print(cpu_temp_c(), 1);
         Serial.println();
 #if FEATURE_BLE
     } else if (line.startsWith("AT+TAP=")) {
