@@ -2563,20 +2563,24 @@ static void serial_exec(const String& line)
         Serial.println("  AT+IR=<NEC|SIRC|RAW>,...");
         Serial.println("  AT+WIFI=ssid|pass|status,<val>");
 #if FEATURE_MQTT
-        Serial.println("  AT+MQTT=broker|port,<val> connect|status|clear");
+        Serial.println("  AT+MQTT=broker|port|enable|auto,<val> connect|status|clear");
 #endif
 #if FEATURE_RATHOLE
         Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
-        Serial.println("  AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>");
-        Serial.println("  AT+TUNNEL=<1>,connect|disconnect|clear|status");
+        Serial.println("  AT+TUNNEL=server|token|service|local|auto|retry|enable,<val>");
+        Serial.println("  AT+TUNNEL=connect|disconnect|clear|status");
 #endif
         Serial.println("  AT+AP=<1|0>                  provisioning AP");
 #if FEATURE_HTTP
-        Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control (NVS)");
-        Serial.println("  AT+HTTP=enable,<1|0>         enable/disable HTTP server");
+        Serial.println("  AT+HTTP=<1|0|status|clear>   HTTP server control");
+        Serial.println("  AT+HTTP=enable,<1|0>         runtime toggle (temporary)");
+        Serial.println("  AT+HTTP=auto,<1|0>           auto-start on boot (NVS)");
 #endif
 #if FEATURE_BLE
         Serial.println("  AT+PAIR=<1|0|status>       BLE public pairing advertising (60s timeout)");
+        Serial.println("  AT+BLE=enable,<1|0>          BLE runtime toggle (temporary)");
+        Serial.println("  AT+BLE=auto,<1|0>            BLE auto-start on boot (NVS)");
+        Serial.println("  AT+BLE=status                BLE enable/auto state");
 #endif
         Serial.println("  AT+NVS=clear                 erase all NVS settings and restart");
         Serial.println("  Full API catalog: GET /at-node/help.json or MQTT sys/info");
@@ -3006,8 +3010,9 @@ static void serial_exec(const String& line)
 #if FEATURE_RATHOLE
     } else if (line.startsWith("AT+TUNNEL=")) {
         /* AT+TUNNEL=status | enable | enable,<0|1>
-         * AT+TUNNEL=<1>,server|token|service|local|auto|retry|enable,<val>
-         * AT+TUNNEL=<1>,connect|disconnect|clear|status          */
+         * AT+TUNNEL=server|token|service|local|auto|retry|enable,<val>   (id 省略,默认隧道1)
+         * AT+TUNNEL=connect|disconnect|clear|status                       (id 省略)
+         * AT+TUNNEL=<1>,... 旧带 id 语法仍兼容 */
         String args = line.substring(10);
         int c1 = args.indexOf(',');
         if (args == "status") {
@@ -3022,13 +3027,26 @@ static void serial_exec(const String& line)
         } else if (args.startsWith("enable,")) {
             rathole_set_enabled(args.substring(7).toInt() != 0);
             Serial.println("OK");
-        } else if (c1 > 0) {
-            int id = args.substring(0, c1).toInt();
-            String rest = args.substring(c1 + 1);
+        } else {
+            /* Optional leading <id> (single tunnel: default 1). Accept both
+             * "AT+TUNNEL=server,x" and legacy "AT+TUNNEL=1,server,x". */
+            int id = 1;
+            String rest = args;
+            int c1 = args.indexOf(',');
+            String first = (c1 < 0) ? args : args.substring(0, c1);
+            bool isId = first.length() > 0;
+            for (size_t i = 0; i < first.length(); i++) {
+                char ch = first[i];
+                if (ch < '0' || ch > '9') { isId = false; break; }
+            }
+            if (isId) {
+                id = first.toInt();
+                rest = (c1 < 0) ? "" : args.substring(c1 + 1);
+            }
             int c2 = rest.indexOf(',');
             String sub = (c2 < 0) ? rest : rest.substring(0, c2);
             String val = (c2 < 0) ? "" : rest.substring(c2 + 1);
-            if (id < 1 || id > RATHOLE_MAX_TUNNELS) {
+            if (sub.length() == 0 || id < 1 || id > RATHOLE_MAX_TUNNELS) {
                 Serial.println("ERROR");
             } else if (sub == "server" || sub == "token" || sub == "service" ||
                        sub == "local" || sub == "auto" || sub == "retry" ||
@@ -3049,8 +3067,6 @@ static void serial_exec(const String& line)
             } else {
                 Serial.println("ERROR");
             }
-        } else {
-            Serial.println("ERROR");
         }
 #endif
     } else if (line.startsWith("AT+AP=")) {
