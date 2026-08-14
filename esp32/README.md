@@ -7,7 +7,7 @@
 
 | 目录 | 框架 | 支持芯片 | 状态 |
 |---|---|---|---|
-| [arduino/](arduino/) | Arduino-ESP32 | **ESP32-C3**（已验证）、**原版 ESP32**（支持目标） | ✅ Active |
+| [arduino/](arduino/) | Arduino-ESP32 | **ESP32-C3**（已验证）、**原版 ESP32**（已验证 2026-08-15） | ✅ Active |
 | [zephyr/](zephyr/) | Zephyr | **ESP32-S3** 及其他带 PSRAM 的高性能型号 | 📋 TODO |
 
 **ESP32-S3 不在 Arduino 变体支持范围内（最终决定，2026-08-14）**：预编译

@@ -3,7 +3,7 @@
 > 基于 Arduino-ESP32 框架的 at-node 网络版实现。
 > 与 WCH BLE（CH582）版本共享同一套 AT 命令语义，但用 WiFi HTTP / MQTT 代替 USB CDC / BLE NUS。
 
-**支持芯片**：ESP32-C3（已验证）、原版 ESP32（支持目标）。
+**支持芯片**：ESP32-C3（已验证）、原版 ESP32（已验证 2026-08-15；GPIO6-11 为 flash 保留线，引脚定义全部芯片条件化，详见 [../COMPAT_REPORT.md](../COMPAT_REPORT.md) §7）。
 **不支持 ESP32-S3**（最终决定）：S3 由 Zephyr 变体承接，根因见
 [../COMPAT_REPORT.md](../COMPAT_REPORT.md) 与 [../zephyr/](../zephyr/)。
 

@@ -2593,30 +2593,22 @@ static void serial_exec(const String& line)
         Serial.println("AT-Node v1.0 [esp32]");
         Serial.println("OK");
     } else if (line == "AT+STATUS") {
-        Serial.print("role=esp32_at_node connected=");
-        Serial.print(is_connected() ? "1" : "0");
-        Serial.print(" ip=");
-        Serial.print(WiFi.localIP().toString());
-        Serial.print(" hostname=");
-        Serial.print(g_hostname);
-        Serial.print(" wifi_rssi=");
-        Serial.print(WiFi.RSSI());
-        Serial.print("dBm (");
-        Serial.print(rssi_to_pct(WiFi.RSSI()));
-        Serial.print("%)");
-        Serial.print(" temp_c=");
-        Serial.print(cpu_temp_c(), 1);
-        Serial.print(" heap=");
-        Serial.print(ESP.getFreeHeap());
-        Serial.print(" mqtt=");
+        Serial.println("role=esp32_at_node");
+        Serial.print("connected=");  Serial.println(is_connected() ? "1" : "0");
+        Serial.print("ip=");         Serial.println(WiFi.localIP().toString());
+        Serial.print("hostname=");   Serial.println(g_hostname);
+        Serial.print("wifi_rssi=");  Serial.print(WiFi.RSSI());
+        Serial.print("dBm (");       Serial.print(rssi_to_pct(WiFi.RSSI()));
+        Serial.println("%)");
+        Serial.print("temp_c=");     Serial.println(cpu_temp_c(), 1);
+        Serial.print("heap=");       Serial.println(ESP.getFreeHeap());
+        Serial.print("mqtt=");
 #if FEATURE_MQTT
-        Serial.print(g_mqtt_connected ? "connected" : "disconnected");
+        Serial.println(g_mqtt_connected ? "connected" : "disconnected");
 #else
-        Serial.print("off");
+        Serial.println("off");
 #endif
-        Serial.print(" http=");
-        Serial.print(g_http_enabled ? "on" : "off");
-        Serial.println();
+        Serial.print("http=");       Serial.println(g_http_enabled ? "on" : "off");
 #if FEATURE_BLE
     } else if (line.startsWith("AT+TAP=")) {
         String args = line.substring(7);
@@ -3203,7 +3195,8 @@ void setup(void)
 
     load_config();
 
-    /* Check AP trigger button (GPIO10) */
+    /* Check AP trigger button (GPIO10 on C3/S3; GPIO0 = BOOT button on
+     * classic ESP32, where GPIO10 is a flash line and must not be touched) */
     bool ap_triggered = ap_portal_check_button();
 
     WiFi.mode(WIFI_STA);

@@ -107,3 +107,40 @@ S3 的运行时逐项验证受 DAPLink 串口桥硬件限制阻塞，属接线/�
 2. 确认 DAPLink 内部 UART 波特率是否随 CDC 设置（若固定，则需对齐 S3 的 `Serial` 波特率）。
 3. 换用 S3 原生 USB（若有板载 USB-C 直连）烧录 + 读串口，即可绕过 DAPLink 完成 S3 运行时逐项验证。
 4. `temperature_sensor` 在 S3 上同样走 `SOC_TEMP_SENSOR_SUPPORTED` 分支，代码路径与 C3 一致，预期可用。
+
+## 7. 原版 ESP32 运行时验证（2026-08-15，full 变体）
+
+**结论：原版 ESP32 已验证通过**——WiFi 连接、mDNS、HTTP 服务（web_page 6840B）、
+I2C（SDA=21/SCL=22）、IR（GPIO4）、BLE 键盘、串口 AT 全通。
+
+### 7.1 GPIO10 启动死循环（已修复）
+
+**现象**：烧录成功（hash 校验过）但上电即 `TG1WDT_SYS_RESET` 死循环，
+banner 后 ~0.9s 复位，无任何应用日志。
+
+**定位**：编译期排除 WDT 配置块无效；CP1–CP4 检查点定位到
+`ap_portal_check_button()`（CP2 后、CP3 前复位）。
+
+**根因**：AP 触发按钮写死 GPIO10。GPIO10 在 C3 上是普通 IO，
+在**原版 ESP32 上是 flash 数据线（SD3）**——`pinMode(10, INPUT_PULLUP)` +
+`digitalRead(10)` 干扰 flash 访问，看门狗复位。GPIO6-11 在原版 ESP32 上
+全部保留给内部 SPI flash，任何 GPIO 功能（按钮/LED/I2C）都不能占用。
+
+**修复**：引脚全部芯片条件化（`CONFIG_IDF_TARGET_ESP32`）：
+
+| 功能 | C3/S3 | 原版 ESP32 |
+|---|---|---|
+| AP 触发按钮 | GPIO10 | GPIO0（BOOT 键） |
+| 呼吸灯 | GPIO8（SuperMini 板载 LED） | GPIO2（devkit 板载 LED；GPIO8=flash SD1，rathole 变体 I2C 关闭时会踩中） |
+| I2C | SDA=8, SCL=9 | SDA=21, SCL=22（本就有） |
+
+**防复发**：`features.h` 增加编译期目标门禁——非 ESP32/C3 目标直接
+`#error`（S3 走 Zephyr 变体）；并约定**任何 GPIO 编号定义必须按
+`CONFIG_IDF_TARGET_*` 分芯片取值**。
+
+### 7.2 排查过程中的伴生发现
+
+- pyserial 默认拉起 DTR/RTS，会把板子摁在复位态（串口全静默）。
+  打开后立即 `dtr=False; rts=False`，再用 RTS 脉冲做干净复位。
+- `esp_task_wdt_reset()` 在未 `esp_task_wdt_add()` 订阅时刷屏
+  `task not found`（~200 行/秒）——WDT 订阅与喂狗调用必须成对存在。
