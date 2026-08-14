@@ -66,11 +66,16 @@
 `FEATURE_HTTP`（默认全 1）。关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，
 `AT+GET` 对应键返回未知键。变体：
 
-| Variant | 宏 | 用途 |
-|---|---|---|
-| `full`（默认） | 全开 | 完整键盘节点 |
-| `base` | `RATHOLE=0 HTTP=0` | 生产键盘节点（BLE+MQTT+I2C），无隧道、**无 LAN HTTP 控制面**（防局域网攻击，仅串口配置；按钮触发的 AP 配网页 8080 不受影响） |
-| `rathole` | `BLE=0 MQTT=0 I2C=0` | 隧道专用测试板（free_heap ~180K vs 全开 ~20K） |
+| Variant | 代号 | 宏 | 用途 |
+|---|---|---|---|
+| `full`（默认） | — | 全开 | 完整节点（含 rathole 隧道） |
+| `remoter` | **Remoter** | `RATHOLE=0` | IR + BLE HID + MQTT + HTTP + I2C，无隧道（节省堆给 BLE/MQTT） |
+| `base` | — | `RATHOLE=0 HTTP=0` | 生产键盘节点（BLE+MQTT+I2C），无隧道、**无 LAN HTTP 控制面**（防局域网攻击，仅串口配置；按钮触发的 AP 配网页 8080 不受影响） |
+| `rathole` | **Rathole** | `BLE=0 MQTT=0 I2C=0` | 隧道专用测试板（free_heap ~180K vs 全开 ~20K） |
+
+**编译期宏 vs 运行时开关**：`FEATURE_HTTP` 是编译期宏（`base` 变体彻底移除 HTTP 代码，路由 404）；
+`AT+HTTP=0/1` / `POST /at-node/cmd/http/config` / 配置键 `http.enable` 是**运行时动态开关**
+（`g_http_enabled`，NVS 持久化，重启保持），在 `full`/`remoter`/`rathole` 变体里可随时启停 HTTP 服务，无需重刷。
 
 ```bash
 powershell -File esp32/esp32_at_node/build.ps1 -Port COMx -Variant rathole
