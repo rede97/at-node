@@ -3154,10 +3154,16 @@ void setup(void)
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
 
-    /* I2C: SDA=GPIO8, SCL=GPIO9 (ESP32-C3 default) */
+    /* I2C pins: original ESP32 uses SDA=21,SCL=22 (GPIO8/9 are flash pins
+     * there); ESP32-C3/S3 use SDA=8,SCL=9. */
 #if FEATURE_I2C
+#if CONFIG_IDF_TARGET_ESP32
+    Wire.begin(21, 22);
+    Serial.println("I2C initialized (SDA=21, SCL=22)");
+#else
     Wire.begin(8, 9);
     Serial.println("I2C initialized (SDA=8, SCL=9)");
+#endif
 #endif
 #if FEATURE_BREATH_LED
     /* I2C off -> GPIO8 free -> breathing LED: a live loop() keeps it
