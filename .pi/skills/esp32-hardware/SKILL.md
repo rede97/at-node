@@ -12,15 +12,16 @@ description: ESP32 系列硬件兼容性速查表（C3/S3 实测）。记录已�
 | 板子 | 芯片 | 烧录器 (VID) | fqbn 关键参数 | Flash | PSRAM |
 |---|---|---|---|---|---|
 | SuperMini | ESP32-C3 | 原生 USB-JTAG (`303A:1001`) | `CDCOnBoot=cdc` | 4MB quad | 无 |
-| nanoESP32-S3 | ESP32-S3 N8R8 | ESPLink/DAPLink (`0D28:0204`) | `CDCOnBoot=default, FlashMode=dio, PSRAM=opi` | 8MB | 8MB OPI |
+| nanoESP32-S3 | ESP32-S3 N8R8 | ESPLink/DAPLink (`0D28:0204`) | `CDCOnBoot=default, FlashMode=dio, PSRAM=opi` | 8MB | 8MB OPI |**（已放弃支持）** |
 
-## nanoESP32-S3（S3）踩坑
+## nanoESP32-S3（S3）踩坑 —— **已放弃支持（mbedTLS+PSRAM 在 Arduino 工具链内无法修复，不推荐使用）**
 
 - **FlashMode 必须 dio**：官方示例 `--flash_mode dio`，Arduino 默认 `qio` 会让二级 bootloader 读 app 失败 → 无输出。
 - **PSRAM 必须 opi**：N8R8 是 8MB OPI（octal 8 线）。`PSRAM=disabled` 实际被编译成 quad（sdkconfig 可见 `CONFIG_SPIRAM_MODE_QUAD`），quad 初始化 OPI PSRAM 失败 → 早期 panic 无输出。
 - **烧录器是 ESPLink**（APM32F103，基于 DAPLink），其 UART1 ↔ S3 UART0（GPIO43/44）。`Serial` 用 UART0（`CDCOnBoot=default`），经 ESPLink 的 USB-to-Serial 输出。
 - **判 boot 用 RGB LED**（WS2812B，GPIO48）：官方 demo 上电闪烁 = 硬件正常。别只看串口。
 - 完整 fqbn：`esp32:esp32:esp32s3:CDCOnBoot=default,FlashSize=8M,FlashMode=dio,PSRAM=opi,PartitionScheme=huge_app`
+- **mbedTLS（WiFiClientSecure）实例化即崩**：S3 + PSRAM=opi 下，`WiFiClientSecure`（TLS/mbedTLS）一旦实例化（全局或局部），app 在全局初始化阶段崩溃（连 `setup()` 都进不去，无 panic）。`WiFiClient`（非 TLS）正常、include-only 正常。根因 = espressif issue #4818「MBEDTLS with External PSRAM」：Arduino 3.3.10 的 esp32s3 预编译 `sdkconfig` 是 `CONFIG_SPIRAM_USE_MALLOC=y`（PSRAM 冒充全局 malloc 堆），mbedTLS 静态初始化走 PSRAM 崩溃；正确配置 `USE_CAPS_ALLOC=y`（PSRAM 只经 `heap_caps_malloc` 显式分配）。**实测改 app 层 `dio_opi/include/sdkconfig.h` 的 `CONFIG_SPIRAM_USE_MALLOC=0`（含 `--clean` 重编译）不解决** —— 崩溃在 IDF 预编译库（libesp_system.a 启动早期），必须重编译 esp32s3-libs（lib-builder + ESP-IDF v5.5.4 + Python 3.8-3.12，重任务）。
 
 ## SuperMini（C3）踩坑
 
