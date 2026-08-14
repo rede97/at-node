@@ -276,7 +276,7 @@ mosquitto_sub -h server -u <API_KEY> -t 'atnode/+/info'
 ## 9. 远程部署清单
 
 > **安全原则**：证书在服务器上生成，私钥永远不离开服务器。
-> 项目 `.gitignore` 已排除 `tools/broker/certs/` 和 `esp32/esp32_at_node/certs/`。
+> 项目 `.gitignore` 已排除 `tools/broker/certs/` 和 `esp32/arduino/certs/`。
 
 ### 9.1 服务器初始化
 

@@ -1,28 +1,28 @@
-# === Firmware (ch582/) ===
+# === Firmware (wchble/mr2/) ===
 
 # Build output
-ch582/obj/**/*.o
-ch582/obj/**/*.d
-ch582/obj/**/*.elf
-ch582/obj/**/*.hex
-ch582/obj/**/*.lst
-ch582/obj/**/*.map
-ch582/obj/**/*.siz
-ch582/obj/**/*.expand
+wchble/mr2/obj/**/*.o
+wchble/mr2/obj/**/*.d
+wchble/mr2/obj/**/*.elf
+wchble/mr2/obj/**/*.hex
+wchble/mr2/obj/**/*.lst
+wchble/mr2/obj/**/*.map
+wchble/mr2/obj/**/*.siz
+wchble/mr2/obj/**/*.expand
 
-# Build artifacts (at ch582 root)
-ch582/*.elf
-ch582/*.hex
-ch582/*.lst
-ch582/*.map
-ch582/*.siz
+# Build artifacts (at wchble/mr2 root)
+wchble/mr2/*.elf
+wchble/mr2/*.hex
+wchble/mr2/*.lst
+wchble/mr2/*.map
+wchble/mr2/*.siz
 
 # Reasonix
 .reasonix/
 
 # === EVT (reference code — not compiled) ===
 EVT/
-ch582/obj/EVT/
+wchble/mr2/obj/EVT/
 
 # === Hardware / PCB (future) ===
 # KiCad
@@ -53,7 +53,7 @@ hardware/*.BackupOf.*
 .DS_Store
 Thumbs.db
 desktop.ini
-ch582/.mrs/
+wchble/mr2/.mrs/
 
 # === Python (uv) ===
 .venv/
@@ -62,12 +62,12 @@ tools/ci/out/
 
 # === ESP32-C3 keyboard bench credentials ===
 tools/demo/esp32c3_kbd/wifi_config.h
-esp32/esp32_at_node/wifi_config.h
+esp32/arduino/wifi_config.h
 
 # === Certificates & credentials (never commit) ===
 tools/broker/certs/
 tools/broker/client.toml
-esp32/esp32_at_node/certs/
+esp32/arduino/certs/
 
 # === logs ===
 broker.log

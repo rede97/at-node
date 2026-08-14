@@ -148,7 +148,7 @@ description: ESP32-C3 development on Windows. Covers arduino-cli setup, CDCOnBoo
   旧绑定可能失效，需要 dongle 端 `AT+BT_PAIR` 清绑定后重新扫描连接。
 - `AT+BT_DISC` 会断开当前链路并抑制自动回连一次，适合测试脚本做 clean slate。
 
-## RK-S75RGB 专项（详见 ch582/PLAN.md §3.0)
+## RK-S75RGB 专项（详见 wchble/mr2/DESIGN.md §3.0)
 
 - boot 特征 0x2A22 是空壳（可订阅，永不发数据）。
 - Report Map 331B:5 个 Report ID(ID1 NKRO 16B / ID2 boot-8B /

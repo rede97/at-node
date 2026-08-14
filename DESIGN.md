@@ -3,8 +3,8 @@
 
 > Cross-platform design decisions and technology rationale.
 > **CH582 implementation details** (architecture, init sequence, constraints, extension guides):
-> see [`ch582/DESIGN.md`](ch582/DESIGN.md).
-> **AT command reference**: see [`ch582/USER-MANUAL.md`](ch582/USER-MANUAL.md).
+> see [`wchble/mr2/DESIGN.md`](wchble/mr2/DESIGN.md).
+> **AT command reference**: see [`wchble/mr2/USER-MANUAL.md`](wchble/mr2/USER-MANUAL.md).
 > **ESP32-C3 variant**: see [`esp32/README.md`](esp32/README.md).
 
 ---
@@ -77,14 +77,14 @@ Plan to implement portable business logic in Rust (`no_std`, `extern "C"` FFI) a
 |----------|-------|----------|
 | `AGENTS.md` | AI agent quick-start: architecture, build commands, constraints | AI agents |
 | `DESIGN.md` (this file) | Cross-platform philosophy, technology choices | Architects, AI agents |
-| `ch582/DESIGN.md` | CH582 architecture, layers, init, extension guides, coding conventions | Firmware developers |
-| `ch582/USER-MANUAL.md` | AT command reference (all variants, parameters, workflows) | Agent developers, users |
-| `ch582/FIELD-NOTES.md` | Debugging war stories (root cause + fix + lesson) | Debuggers |
-| `ch582/POWER.md` | Low-power design principles and quantitative analysis | Power engineers |
+| `wchble/mr2/DESIGN.md` | CH582 architecture, layers, init, extension guides, coding conventions | Firmware developers |
+| `wchble/mr2/USER-MANUAL.md` | AT command reference (all variants, parameters, workflows) | Agent developers, users |
+| `wchble/mr2/FIELD-NOTES.md` | Debugging war stories (root cause + fix + lesson) | Debuggers |
+| `wchble/mr2/POWER.md` | Low-power design principles and quantitative analysis | Power engineers |
 | `REQUIREMENTS.md` | Feature requirements and implementation status | PM, AI agents |
 | `esp32/README.md` | ESP32-C3 variant overview and quick start | ESP32 developers |
 | `esp32/API.md` | ESP32-C3 HTTP API reference | Agent developers |
 | `tools/README.md` | Tool scripts directory guide | Testers |
 | `.pi/skills/` | Platform-specific operational playbooks | AI agents (ops) |
 
-**Rule**: implementation details live in the platform subdirectory (`ch582/`, `esp32/`). Root documents are cross-platform only.
+**Rule**: implementation details live in the platform subdirectory (`wchble/`, `esp32/`, `nordic/`). Root documents are cross-platform only.

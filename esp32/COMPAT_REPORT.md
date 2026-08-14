@@ -1,7 +1,7 @@
 # ESP32 跨芯片兼容性测试报告
 
 日期：2026-08-14
-固件：`esp32/esp32_at_node/` full 变体
+固件：`esp32/arduino/` full 变体
 改动：状态接口 + Web UI 新增芯片温度字段（`temp_c`）
 
 > **⚠️ ESP32-S3 支持已放弃（2026-08-14）**：S3 在 Arduino-ESP32 3.3.10 工具链内跑 TLS（`WiFiClientSecure`/mbedTLS）会因预编译库默认 `CONFIG_SPIRAM_USE_MALLOC=y`（PSRAM 冒充全局 malloc 堆）在启动阶段崩溃，且无法通过改 app 层配置规避，唯一修复是重编译 esp32s3-libs。经评估放弃 S3 支持，**本项目仅支持 ESP32-C3**。下文的 S3 记录仅为踩坑留档，不再维护。

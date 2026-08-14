@@ -52,7 +52,7 @@ API documentation page (HTML).
 ### Browser UI (single-page app)
 
 `GET /` serves the whole web UI as ONE gzipped single-page app
-(`Content-Encoding: gzip`, ~4.5KB from flash, built by `esp32/web/build.py`).
+(`Content-Encoding: gzip`, ~4.5KB from flash, built by `esp32/arduino/web/build.py`).
 The page covers status dashboard, BLE pairing, MQTT config, rathole tunnel
 config, WiFi config and this API catalog; all dynamic content is driven by
 the JSON `/at-node/cmd/*` endpoints below — the HTML itself is never

@@ -1,13 +1,13 @@
-# build.ps1 - Build and upload esp32_at_node sketch (Windows)
+# build.ps1 - shared build/upload engine for the esp32/arduino sketch (Windows)
+#
+# Agents: do NOT call this directly. Use the board-specific wrappers:
+#   .\build-c3.ps1    -Port COMx [-Variant ...]   (ESP32-C3 SuperMini)
+#   .\build-esp32.ps1 -Port COMx [-Variant ...]   (standard ESP32)
 #
 # Prerequisites:
 #   - arduino-cli on PATH
 #   - esp32:esp32 core >= 3.3.5 installed
 #   - NimBLE-Arduino library (usually bundled with core 3.x)
-#
-# Usage:
-#   .\build.ps1 [-Port COM3] [-Variant full|remoter|base|rathole]
-#   (omit -Port to compile only)
 #
 # Variants (feature macros in features.h):
 #   full    - everything on (default)
@@ -17,15 +17,28 @@
 #             no tunnel, no LAN HTTP control plane -> serial-only config)
 #   rathole - FEATURE_BLE=0 FEATURE_MQTT=0 FEATURE_I2C=0 (Rathole: tunnel test unit;
 #             I2C off also enables the GPIO8 breathing liveness LED)
+#
+# Board notes:
+#   c3    - ESP32-C3 SuperMini. fqbn MUST carry CDCOnBoot=cdc; any other flash
+#           path routes Serial to UART0 pads (native-USB COM shows only the ROM
+#           boot log, AT dead, WiFi/HTTP fine). Symptom -> reflash, do not debug.
+#   esp32 - standard ESP32 (no native USB; Serial = UART0 via onboard USB-UART
+#           bridge, CDCOnBoot not applicable).
 
 param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("c3", "esp32")]
+    [string]$Board,
     [string]$Port = "",
     [ValidateSet("full", "remoter", "base", "rathole")]
     [string]$Variant = "full"
 )
 
 $ErrorActionPreference = "Stop"
-$fqbn = "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app"
+$fqbn = switch ($Board) {
+    "c3"    { "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app" }
+    "esp32" { "esp32:esp32:esp32:PartitionScheme=huge_app" }
+}
 
 $defs = switch ($Variant) {
     "full"    { "" }
@@ -34,7 +47,7 @@ $defs = switch ($Variant) {
     "rathole" { "-DFEATURE_BLE=0 -DFEATURE_MQTT=0 -DFEATURE_I2C=0" }
 }
 
-Write-Host "Compiling esp32_at_node [$Variant] ..." -ForegroundColor Cyan
+Write-Host "Compiling esp32/arduino [$Board/$Variant] ..." -ForegroundColor Cyan
 if ($defs -ne "") {
     arduino-cli compile --fqbn $fqbn --build-property "compiler.cpp.extra_flags=$defs" .
 } else {

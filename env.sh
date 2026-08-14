@@ -8,7 +8,7 @@
 WCH_ROOT="${WCH_ROOT:-$HOME/wch}"
 
 # Classic MounRiver GCC 8.2 — provides riscv-none-embed-gcc, the exact
-# prefix used by ch582/obj/makefile. (GCC12/GCC15 use different
+# prefix used by wchble/mr2/obj/makefile. (GCC12/GCC15 use different
 # prefixes — riscv-wch-elf / riscv32-wch-elf — and are NOT picked up.)
 WCH_GCC="$WCH_ROOT/Toolchain/RISC-V Embedded GCC/bin"
 WCH_OPENOCD="$WCH_ROOT/OpenOCD/OpenOCD/bin"

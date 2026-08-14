@@ -1,5 +1,5 @@
 /*
- * features.h - compile-time feature switches for esp32_at_node.
+ * features.h - compile-time feature switches for the esp32/arduino variant.
  *
  * Override per build via compiler flags, e.g.
  *   arduino-cli compile --build-property \

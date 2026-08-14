@@ -2,7 +2,7 @@
 """Convert WCH SDK files from GB2312 to UTF-8."""
 import os, sys, glob
 
-ROOT = sys.argv[1] if len(sys.argv) > 1 else "ch582"
+ROOT = sys.argv[1] if len(sys.argv) > 1 else "wchble/mr2"
 
 converted = 0
 for ext in ("*.c", "*.h", "*.S"):

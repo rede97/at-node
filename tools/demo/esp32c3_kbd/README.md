@@ -6,12 +6,12 @@
 
 ## 背景(必读)
 
-- 完整动机与步骤见 `ch582/PLAN.md` §8 与 §8.1
+- 完整动机与步骤见 `wchble/mr2/DESIGN.md` §8 与 §8.1
 - Windows 开发踩坑要点见 `.pi/skills/esp32-windows/SKILL.md`（必读）
 - 参照实现(同仓库):
   - `tools/esp32c3_probe/` — C3 BLE HID **主机** probe(验证过 AT-Node kbd 全链路)
 - 被测对象:CH582 dongle(`DONGLE=1` 或 `MODE=DUAL` 固件),
-  行为见 `ch582/APP/BLE/ble_dongle.c` —— boot 优先订阅,
+  行为见 `wchble/mr2/APP/BLE/ble_dongle.c` —— boot 优先订阅,
   无 boot 走 report fallback(订阅全部 report CCCD,转发 len>=8 报告)
 
 ## 交付物

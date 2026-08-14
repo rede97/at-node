@@ -1,8 +1,10 @@
 <!-- DESIGN PHILOSOPHY: This device is an AI agent peripheral. All AT commands are designed for agent-to-hardware interaction, not human UI. -->
-# at-node 需求文档
+# ATNode 需求文档
 
-> 版本：v0.1 · 最后更新：2026-07-13  
-> 硬件平台：CH582F（RISC-V rv32imac） · 后续支持 CH592 等 WCH BLE MCU
+> 版本：v0.2 · 最后更新：2026-08-15（多平台重构）
+> 项目定位：**AI Agent 的物理 I/O 外设**——LLM 的手和脚。
+> 本文档是**跨平台需求总账**：通用需求只写一遍；跨硬件差异只登记**最终决定**并指向对应平台文档条目。
+> 各芯片的硬件信息、问题原因记录在各平台目录内，不在本文档重复。
 
 ---
 
@@ -10,85 +12,157 @@
 
 ### 1.1 项目背景
 
-at-node 是一个 **AI Agent 物理外设**（基于 WCH CH582F RISC-V BLE MCU）。所有功能通过 AT 命令暴露给 Agent —— 键盘输入、红外发射、传感器采集、GPIO 控制 —— 没有 GUI，没有触屏，只有文本协议。设计理念: LLM 的手和脚。
+ATNode 是一组 **AI Agent 物理外设** 固件。所有功能通过 AT 命令（或其 HTTP/MQTT 等价物）
+暴露给 Agent —— 键盘输入、传感器采集、GPIO 控制、红外发射 —— 没有 GUI，没有触屏，
+只有文本协议。设计理念：LLM 的手和脚。
 
-项目定位为**低成本、低功耗的物理层 AI Agent 控制节点**，通过有线（USB）和无线（BLE）两种方式模拟键盘，通过串口/虚拟串口接收 AI Agent 的指令。
+项目定位为**低成本、低功耗的物理层 AI Agent 控制节点**，多平台并行实现同一套
+AT 命令语义：Agent 脚本跨平台复用，换硬件只换传输层。
 
-同时，本项目也是 **CH582/CH592 系列 MCU 的高质量开发模板**——基于三层架构（HWS/BLE/APP）设计，提供一致的命名规范和清晰的扩展点，降低 CH58x 平台的学习成本和开发门槛。详见 [DESIGN.md](DESIGN.md)。
+CH582 平台同时承担 **WCH CH58x 系列 MCU 高质量开发模板** 的角色——三层架构
+（HWS/BLE/APP）、一致命名规范、清晰扩展点。详见 [wchble/mr2/DESIGN.md](wchble/mr2/DESIGN.md)。
 
 ### 1.2 目标
 
 | 目标 | 说明 |
 |------|------|
-| **低成本** | 使用国产 WCH BLE 芯片，BOM 成本控制在最低 |
-| **低功耗** | 支持深度睡眠，电池供电可长期待机 |
-| **双模键盘** | 同时支持蓝牙（BLE HID）和有线（USB HID）键盘 |
-| **AT 命令控制** | 通过简单的文本协议控制所有功能 |
-| **AI Agent 接入** | 通过串口/虚拟串口与 LLM 管线对接 |
-| **多芯片支持** | 硬件抽象层设计，适配 CH582/CH592 等 WCH MCU |
+| **低成本** | WCH BLE 芯片起步，BOM 成本控制在最低 |
+| **低功耗** | 支持深度睡眠，电池供电可长期待机（CH582 平台） |
+| **双模键盘** | 蓝牙（BLE HID）+ 有线（USB HID）（CH582 平台） |
+| **网络控制面** | WiFi HTTP / MQTT TLS（ESP32 平台） |
+| **AT 命令控制** | 统一的文本协议控制所有功能，跨平台语义一致 |
+| **AI Agent 接入** | 串口 / USB CDC / HTTP / MQTT 与 LLM 管线对接 |
+| **多芯片支持** | 平台变体矩阵化，各平台需求差异显式登记（见 §4） |
 
 ### 1.3 适用场景
 
 - 远程唤醒电脑（WoL / USB 键盘唤醒）
 - AI Agent 通过物理键盘输入执行自动化操作
+- 无蓝牙台式机 / VM 的 BLE 键盘桥接（dongle）
 - IoT 传感器数据采集（I²C、ADC）
+- 远程/内网穿透控制（MQTT + rathole，ESP32 平台）
 - 硬件调试与测试（GPIO 控制、串口交互）
 
 ---
 
-## 2. 总体架构
+## 2. 平台与变体矩阵
 
-### 2.1 系统分层
+| 系列 | 变体目录 | 芯片 | 框架/栈 | 主控制面 | 状态 |
+|------|---------|------|---------|---------|------|
+| WCH BLE | [wchble/mr2/](wchble/mr2/) | CH582F（规划 CH592） | MounRiver Studio 2 工程，裸机 + TMOS + 预编译 BLE 栈 | USB CDC（+UART） | ✅ Active |
+| ESP32 | [esp32/arduino/](esp32/arduino/) | ESP32-C3、原版 ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS | ✅ Active |
+| ESP32 | [esp32/zephyr/](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | 📋 TODO |
+| Nordic | [nordic/zephyr/](nordic/zephyr/) | nRF52840 | Zephyr（nRF Connect SDK） | USB CDC | 📋 TODO |
 
-```
-┌──────────────────────────────────────────────┐
-│                  应用层（APP）                  │
-│  ┌───────────┐ ┌──────────┐ ┌────────────┐  │
-│  │ AT 命令解析 │ │ HID 键盘 │ │ 传感器/IO  │  │
-│  │   + 路由   │ │  管理    │ │   管理     │  │
-│  └─────┬─────┘ └────┬─────┘ └──────┬─────┘  │
-├────────┼────────────┼──────────────┼────────┤
-│        │   BLE 服务层（GATT Services）      │
-│  ┌─────┴─────┐ ┌────┴────┐ ┌──────┴──────┐ │
-│  │HID Dev/Kbd│ │ Battery │ │ Device Info │ │
-│  └───────────┘ └─────────┘ └─────────────┘ │
-├────────┼────────────┼──────────────┼────────┤
-│        │  HWS（硬件服务层）               │
-│  ┌─────┴─────┐ ┌────┴────┐ ┌──────┴──────┐ │
-│  │ KEY / LED │ │  RTC    │ │SLEEP / Core │ │
-│  └───────────┘ └─────────┘ └─────────────┘ │
-├──────────────────────────────────────────────┤
-│        BLE Stack（蓝牙协议栈）              │
-│       libCH58xBLE.a (LL/HCI/GAP/GATT)       │
-├──────────────────────────────────────────────┤
-│          StdPeriphDriver（外设驱动）           │
-│  GPIO  UART  I²C  SPI  ADC  PWM  USB  Flash  │
-├──────────────────────────────────────────────┤
-│          RVMSIS + Startup（内核层）            │
-│          PFIC/NVIC 中断 · 启动向量             │
-└──────────────────────────────────────────────┘
-```
-
-### 2.2 任务调度
-
-基于 TMOS（TI 风格的协作式调度器），单循环轮询：
-
-| 任务 | 注册位置 | 职责 |
-|------|---------|------|
-| HWS 任务 | `hws_init()` → `hws_process_event()` | 按键轮询、LED 控制、休眠管理、定时校准 |
-| BLE 协议栈 | `ble_stack_init()` → BLE 库内部 | 协议栈事件处理 |
-| HID Dev 任务 | `ble_hid_dev_init()` → `ble_hid_dev_process_event()` | HID 设备状态机、电池上报 |
-| HID 键盘任务 | `ble_hid_emu_init()` → `ble_hid_emu_process_event()` | 键盘报告生成、连接管理 |
-| AT 任务 | `AT_Init()` → `AT_ProcessEvent()` | AT 命令接收与分发 |
+各平台文档索引见 [README.md](README.md)。
 
 ---
 
-## 3. 功能需求
+## 3. 跨平台通用需求
 
-> **实现现状快照（2026-07-22)**:M1–M4 全部闭环。kbd 全链路生产态；dongle 接收器双板验证（扫描→配对→订阅→USB 转发、自动回连、退避保护、量产安静模式）;`BLE_MODE` 三态 + `AT+ROLE` 运行期切换实测；Linux CI 一键全绿（`loop_test.sh`);ISP 无线升级打通。RK-S75RGB 实机复盘完成（PLAN §3.0),**第三方复杂键盘支持已废弃**（仅保留 Just Works + boot 报告路径）。**C3 模拟键盘台架①闭环**（HTTP 驱动 ESP32-C3 键盘 → dongle 转发，双端实测 PASS)。测试：`test_at.py` / `test_dongle_loop.py` / `test_dongle_hardening.py` / `test_features.py` / `test_dongle_c3.py`。
+### 3.1 AT 命令协议（所有平台一致）
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| F3.1 | 基于文本行的请求/响应协议，`\n` 作为分隔符（`\r\n` 兼容）| P0 | ✅ |
+| F3.2 | 命令格式：`AT+<CMD>[=<param1>,<param2>,...]` | P0 | ✅ |
+| F3.3 | 响应格式：`\r\n<结果>\r\n`，成功返回 `OK`，失败返回 `ERROR:<原因>` | P0 | ✅ |
+| F3.5 | 命令缓冲区 256 字节，支持退格编辑和回显 | P2 | ✅ |
+| F3.6 | 蓝牙连接/断开时自动上报 `+BT_CONNECTED` / `+BT_DISCONNECTED`（URC） | P1 | ✅ |
+| F3.9 | `AT+HELP` 输出格式化帮助文本，按功能分组，带用法/参数/示例 | P0 | ✅ |
+| F3.10 | `AT+HELP=<CMD>` 仅显示指定命令的详细帮助 | P1 | ✅ |
+| F3.11 | 帮助文本存 Flash 只读区，不占 RAM | P2 | ✅ |
+
+基础命令集（各平台必须实现）：`AT` / `AT+RST` / `AT+VER` / `AT+HELP` / `AT+STATUS` /
+`AT+KEY` / `AT+TAP` / `AT+MOD` / `AT+KEY_STR` / `AT+KEY_SEQ` / `AT+GPIO_W` / `AT+GPIO_R` /
+`AT+ADC` / `AT+I2C_SCAN` / `AT+I2C_R` / `AT+I2C_W`。
+
+键盘 HID 语义（各平台一致）：8 字节 boot 输入报告（修饰键掩码 + 6 键值，十进制或
+0x 十六进制 HID Usage ID）；`AT+TAP` 原子按下+释放为常规注入首选；`AT+KEY_STR`
+US 布局 ~15ms/字符；`AT+KEY_SEQ` 脚本预翻译序列回放。
+
+平台特有命令在各平台文档中定义（CH582：[wchble/mr2/USER-MANUAL.md](wchble/mr2/USER-MANUAL.md)；
+ESP32：[esp32/arduino/API.md](esp32/arduino/API.md)）。
+
+### 3.2 AI Agent 对接
+
+```
+AI Agent (LLM / Python 脚本)
+    │
+    ├── 物理串口 ──→ UART TTL ──→ ATNode（全平台）
+    ├── USB ──→ USB CDC (虚拟串口) ──→ ATNode（CH582 / nRF52840）
+    ├── LAN ──→ WiFi HTTP (/at-node/cmd/*) ──→ ATNode（ESP32）
+    └── 云 ──→ MQTT TLS / rathole 隧道 ──→ ATNode（ESP32）
+```
+
+AI Agent 只需发送 `AT+KEY_STR=hello`（或 HTTP 等价端点）即可完成物理键盘输入，
+无需操作系统层面的输入法注入或驱动支持。
+
+### 3.3 安全
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| Q4.1 | 键盘模拟功能必须显式声明其安全风险（README 顶部警告） | P0 | ✅ |
+| Q4.2 | AT 命令接口应可配置为仅接受特定物理接口 | P1 | ✅（ESP32：HTTP 可关；CH582：通道固定） |
+| Q4.3 | 配对绑定信息加密存储（CH582 SNV / ESP32 NVS） | P1 | ✅ |
+| Q4.4 | 网络控制面默认最小暴露：ESP32 HTTP 无认证，仅限可信 NAT；远程走 MQTT TLS | P0 | ✅（见 §4 D6） |
+
+### 3.4 AI 可读性
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| Q3.0 | 根目录 AGENTS.md 包含完整架构图、分层栈、初始化序列、约束清单 | P0 | ✅ |
+| Q3.1 | 每个源文件头注释说明模块职责和数据流向 | P0 | ✅ |
+| Q3.2 | 代码注释纯 ASCII 英文，无编码兼容问题 | P1 | ✅ |
+| Q3.3 | 命名自解释——函数前缀表示层级（`hws_`/`ble_`/`AT_`） | P1 | ✅ |
+| Q3.4 | 平台 DESIGN.md 提供设计哲学和扩展指南 | P1 | ✅ |
+| Q3.5 | AGENTS.md + 各平台 DESIGN.md 双重引导，AI 读完即建立心智模型 | P2 | ✅ |
+
+### 3.5 可靠性与可移植性
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| Q1.1 | 看门狗定时器，异常时自动复位 | P1 | ✅（CH582 `AT+WDG` 运行时开关） |
+| Q1.2 | AT 命令异常输入不会导致设备崩溃 | P1 | ✅ |
+| Q1.3 | BLE 断连后自动重连/广播 | P1 | ✅ |
+| Q1.4 | Flash 参数区磨损均衡 | P2 | ⬜ |
+| Q2.1 | 硬件服务层隔离芯片差异，上层不直接操作寄存器 | P1 | ✅（CH582 HWS 层） |
+| Q2.2 | 芯片型号统一在 `config.h` 中通过宏切换 | P1 | ✅（CH582 `CHIP_ID`） |
+| Q2.3 | AT 命令解析器与硬件无关，可独立测试 | P2 | ✅ |
+
+---
+
+## 4. 跨硬件差异 — 最终决定登记
+
+> 本节只登记**最终决定**与理由摘要；硬件细节、问题原因、实测数据一律在指向的平台文档中维护。
+
+| # | 差异点 | 最终决定（日期） | 详情 |
+|---|--------|----------------|------|
+| D1 | 红外发射（IR） | **CH582 不实现**（已从固件系统性删除）；**ESP32 Arduino 版实现**（RMT 38kHz，NEC/SIRC/RAW，GPIO4） | [esp32/arduino/README.md](esp32/arduino/README.md) |
+| D2 | ESP32-S3 支持 | **Arduino 变体不支持 S3**（2026-08-14）：预编译 esp32s3-libs 默认 `CONFIG_SPIRAM_USE_MALLOC=y`，mbedTLS 启动崩溃，app 层无法规避；S3 及 PSRAM 机型由 **Zephyr 变体**承接 | [esp32/COMPAT_REPORT.md](esp32/COMPAT_REPORT.md)、[esp32/zephyr/README.md](esp32/zephyr/README.md) |
+| D3 | 主控制面 | **CH582：USB CDC 为唯一 AT 通道**（UART1 仅调试，2026-07-25）；**ESP32：WiFi HTTP 为主 + MQTT TLS 远程 + 串口全功能后备** | [wchble/mr2/USER-MANUAL.md](wchble/mr2/USER-MANUAL.md)、[esp32/arduino/README.md](esp32/arduino/README.md) |
+| D4 | 低功耗 ↔ USB | **CH582 硬件互斥**（休眠关 USB 时钟，枚举丢失），编译期 `HWS_SLEEP` 一刀切；运行时 VBUS 双模切换为产品化必备（T7.x）；CH592 若支持休眠保持 USB 可解除（T6.5） | [wchble/mr2/POWER.md](wchble/mr2/POWER.md)、§5.9 |
+| D5 | dongle 第三方键盘兼容 | **第三方复杂键盘（RK 类多 Report ID/NKRO/Report Map 解析）正式废弃**；仅支持 Just Works 配对 + boot keyboard 8 字节报告路径；第三方简单 boot 键盘按兼容目标支持 | [wchble/mr2/DESIGN.md](wchble/mr2/DESIGN.md)、[wchble/mr2/FIELD-NOTES.md](wchble/mr2/FIELD-NOTES.md) |
+| D6 | ESP32 HTTP 认证 | **HTTP 控制面不做认证**，仅部署于可信 NAT；不可信网络用 `AT+HTTP=0` 关闭，保留 MQTT TLS | [esp32/arduino/README.md](esp32/arduino/README.md) §安全策略 |
+| D7 | ESP32 服务开关语义 | 统一 **enable（运行时临时，内存）+ auto（上电自启，NVS）两层**（HTTP/MQTT/BLE）；rathole 保持三级（master/enable/auto） | [esp32/arduino/README.md](esp32/arduino/README.md) §功能宏与固件变体 |
+| D8 | ESP32 刷机通道 | **C3 必须经 `build-c3.ps1`**（fqbn 带 `CDCOnBoot=cdc`）；标准 ESP32 经 `build-esp32.ps1`；agent 默认使用板卡专用脚本，禁止裸 arduino-cli/IDE 默认刷机 | [esp32/arduino/README.md](esp32/arduino/README.md) §快速开始 |
+| D9 | BLE 角色运行期切换 | **CH582 不支持热切**：角色在 `BLE_LibInit` 定死，DUAL 构建 `AT+ROLE` = 写标志 + 软复位 | [wchble/mr2/DESIGN.md](wchble/mr2/DESIGN.md) |
+
+---
+
+## 5. CH582 平台需求（wchble/mr2）
+
+> 硬件规格/引脚/USB 端点：[wchble/mr2/HARDWARE.md](wchble/mr2/HARDWARE.md)；
+> 问题原因记录：[wchble/mr2/FIELD-NOTES.md](wchble/mr2/FIELD-NOTES.md)；
+> AT 命令细节：[wchble/mr2/USER-MANUAL.md](wchble/mr2/USER-MANUAL.md)。
+>
+> **实现现状快照（2026-07-22）**：M1–M4 全部闭环。kbd 全链路生产态；dongle 接收器双板验证
+> （扫描→配对→订阅→USB 转发、自动回连、退避保护、量产安静模式）；`BLE_MODE` 三态 +
+> `AT+ROLE` 运行期切换实测；Linux CI 一键全绿（`loop_test.sh`）；ISP 无线升级打通。
+> **C3 模拟键盘台架闭环**（HTTP 驱动 ESP32-C3 键盘 → dongle 转发，双端实测 PASS）。
 > 状态图例：✅ 已验证 | 🚧 部分实现/未验证 | ⬜ 未实现
 
-### 3.1 BLE 蓝牙键盘（✅ 已实现）
+### 5.1 BLE 蓝牙键盘（✅ 已实现）
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
@@ -100,32 +174,29 @@ at-node 是一个 **AI Agent 物理外设**（基于 WCH CH582F RISC-V BLE MCU�
 | F1.6 | 支持绑定（Bonding）与配对 | P1 | ✅ |
 | F1.7 | 支持 HID 空闲超时断开（默认 60s） | P2 | ✅ |
 | F1.8 | 支持从机连接延时（Slave Latency）以降低功耗 | P2 | ✅ |
-| F1.9 | 通过 AT 命令发送任意 HID 键值（非当前单一 F1） | P0 | ✅ `AT+KEY`/`AT+MOD`/`AT+KEY_SEQ` |
+| F1.9 | 通过 AT 命令发送任意 HID 键值 | P0 | ✅ `AT+KEY`/`AT+MOD`/`AT+KEY_SEQ` |
 
-#### 3.1.1 BLE 键盘多模(✅ 已实现,单活动链路模型)
+#### 5.1.1 BLE 键盘多模（✅ 已实现，单活动链路模型）
 
 > CH582 键盘支持多模连接：同时配对绑定 3 台主机（PC/笔记本/平板），
 > 通过 `AT+DEV` 或快捷键无缝切换当前输出目标，**无需复位**。
 > 构建变体 `MODE=KBD_MULTI` 启用，与单模键盘（`MODE=KBD`）和
 > 接收器（`MODE=DONGLE`）互斥；`MODE=DUAL` 保留单模键盘+dongle 调试。
->
-> 多设备场景常见于蓝牙键盘在 3 台主机之间切换（桌面+笔记本+平板），
-> 类似 Logitech 多设备键盘体验。
 
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F1.10 | 支持 3 台主机同时配对并绑定（`PERIPHERAL_MAX_CONNECTION=3`, `BLE_SNV_NUM=3`) | P2  ✅ |
-| F1.11 | 每个连接独立维护 `conn_handle`，`kb_flush()` 按当前选中设备发送 | P2  ✅ |
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| F1.10 | 支持 3 台主机同时配对并绑定（`PERIPHERAL_MAX_CONNECTION=3`, `BLE_SNV_NUM=3`) | P2 | ✅ |
+| F1.11 | 每个连接独立维护 `conn_handle`，`kb_flush()` 按当前选中设备发送 | P2 | ✅ |
 | F1.12 | `AT+DEV=<target>` 无缝切换当前输出设备，`AT+DEV` 查询当前设备列表（target=USB\|BLE1\|BLE2\|BLE3） | P2 | ✅（单活动链路 + 预留自动回连） |
-| F1.15 | `BLE_MEMHEAP_SIZE` 按连接数动态调整（每连接 ~1.5 KB，3 连接约 12 KB）| P1  ✅ |
+| F1.15 | `BLE_MEMHEAP_SIZE` 按连接数动态调整（每连接 ~1.5 KB，3 连接约 12 KB）| P1 | ✅ |
 
-#### 3.1.2 BLE HID Host 接收器模式(✅ 已实现)
+#### 5.1.2 BLE HID Host 接收器模式（✅ 已实现）
 
 > AT-Node 作为 Central 主动连接一台 BLE 键盘，接收其 HID 报告并经
 > USB HID 转发给 PC —— 把任意 BLE 键盘变成"有线键盘"（KVM/远控场景）。
 >
-> **2026-07-21 双板验证**:AT-Node(kbd 固件）作为测试键盘，dongle 完成
-> 扫描→Just Works 配对→绑定→GATT 发现→Boot 模式订阅→通知转发 USB,
+> **2026-07-21 双板验证**：AT-Node（kbd 固件）作为测试键盘，dongle 完成
+> 扫描→Just Works 配对→绑定→GATT 发现→Boot 模式订阅→通知转发 USB，
 > `test_dongle_loop.py` 连续 3 次全 PASS，按键字符出现在主机编辑器。
 
 **模式配置（两级）：**
@@ -133,7 +204,7 @@ at-node 是一个 **AI Agent 物理外设**（基于 WCH CH582F RISC-V BLE MCU�
 | 级别 | 机制 | 说明 |
 |------|------|------|
 | 编译期裁剪 | `BLE_MODE` 宏：`KBD`(1) / `DONGLE`(2) / `DUAL`(3) | KBD=只键盘；DONGLE=只接收器；DUAL=两者编入，运行期可切 |
-| 运行期切换 | `AT+ROLE=KBD\|DONGLE`（仅 DUAL 构建）| 写模式标志到 DataFlash → `SYS_ResetExecute()` → 按标志启动 |
+| 运行期切换 | `AT+ROLE=KBD\|DONGLE`（仅 DUAL 构建）| 写模式标志到 DataFlash → `SYS_ResetExecute()` → 按标志启动（见 §4 D9） |
 
 **内存代价（编译期裁剪的意义）：**
 
@@ -149,23 +220,22 @@ DUAL 构建因切换必经复位，复位后按 DataFlash 标志**单角色启�
 双份成本只有：静态链接的 GATT server 表（~1 KB RAM）与按最大值
 的堆预留（6 KB vs 5 KB）。
 
-运行期切换**必须经过一次软复位**（无法热切换）：BLE 角色在
-`BLE_LibInit` 时定死，热重配风险高。路径为"存标志 + 软复位"，
-切换时间 ≈ 一次重启（<1 s）。
+运行期切换**必须经过一次软复位**（无法热切换，见 §4 D9）：路径为
+"存标志 + 软复位"，切换时间 ≈ 一次重启（<1 s）。
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
-| F1.16 | `BLE_MODE` 三态宏接入 config.h（替代现有 `BLE_DONGLE` 布尔宏）| P3 | ✅（KBD/DONGLE/DUAL，派生 `BLE_HAS_KBD/DONGLE` 门控）|
+| F1.16 | `BLE_MODE` 三态宏接入 config.h（替代 `BLE_DONGLE` 布尔宏）| P3 | ✅（KBD/DONGLE/DUAL，派生 `BLE_HAS_KBD/DONGLE` 门控）|
 | F1.17 | DONGLE 构建：Central 角色扫描/连接/绑定 BLE 键盘 | P3 | ✅ 双板验证（含 Just Works/自动配对码） |
-| F1.18 | GATT client 解析 HID over GATT 报告（Report Map 解析或 Boot 模式）| P3 | ✅ Boot 模式已验证；RK 真机已实测复盘（见 PLAN §3.0，全量解析归 F1.22） |
+| F1.18 | GATT client 解析 HID over GATT 报告（Report Map 解析或 Boot 模式）| P3 | ✅ Boot 模式已验证；全量解析随 D5 废弃 |
 | F1.19 | 收到的键值经 `kb_usb_send_report()` 转发给 PC | P3 | ✅ 端到端验证（按键出现在主机） |
-| F1.20 | DONGLE 构建裁掉 GATT server 服务与广播代码（`#if` 门控）| P3 | ✅ `ble_peripheral_init()` 按 `BLE_DONGLE` 门控，dongle 构建无 Peripheral 服务 |
-| F1.21 | DUAL 构建：`AT+ROLE` 运行期切换（DataFlash 标志 + 软复位）| P3 | ✅ 双板实测（`make MODE=DUAL`，标志存 0x7C00，BT 命令按运行期角色分发，标志随固件刷写保持）|
+| F1.20 | DONGLE 构建裁掉 GATT server 服务与广播代码（`#if` 门控）| P3 | ✅ |
+| F1.21 | DUAL 构建：`AT+ROLE` 运行期切换（DataFlash 标志 + 软复位）| P3 | ✅ 双板实测（标志存 0x7C00，标志随固件刷写保持）|
 
-> **范围声明（2026-07-22）**：接收器**仅支持 Just Works 配对 + boot keyboard
-> input report（8 字节标准布局）** 路径（与 AT-Node 键盘板自身的工作模式一致）。
-> 第三方复杂键盘（RK 类多功能：多 Report ID/NKRO/Report Map 解析）**正式废弃
-> 不实现**（PLAN §3/§3.0)；第三方简单 boot 键盘按兼容目标支持。
+> **范围声明（2026-07-22，即 §4 D5）**：接收器**仅支持 Just Works 配对 + boot
+> keyboard input report（8 字节标准布局）** 路径。第三方复杂键盘（RK 类多功能：
+> 多 Report ID/NKRO/Report Map 解析）**正式废弃不实现**；第三方简单 boot 键盘按
+> 兼容目标支持。
 
 **AT 命令组（DONGLE 构建，✅=已实现）：**
 
@@ -185,7 +255,7 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 > 后，可再暴露通用 GATT 读写（`AT+GATT_RD/WR`），升级为通用 BLE
 > 网卡 —— 边际成本低，单独评估。
 
-### 3.2 USB 有线键盘（✅ 已实现）
+### 5.2 USB 有线键盘（✅ 已实现）
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
@@ -194,244 +264,55 @@ AT+BT_LIST            ✅ 已绑定设备列表(SNV)
 | F2.3 | 支持与 BLE 键盘同时工作（双模） | P2 | ✅ |
 | F2.5 | USB CDC ACM 虚拟串口，AT 命令通道 | P1 | ✅ |
 
-### 3.3 AT 命令接口(✅ 已实现,详见 ch582/USER-MANUAL.md)
+### 5.3 AT 命令接口（✅ 已实现，详见 [wchble/mr2/USER-MANUAL.md](wchble/mr2/USER-MANUAL.md)）
 
-#### 3.3.1 通用协议
+通用协议见 §3.1。CH582 特有决策：**USB CDC 为唯一 AT 通道**（UART1 仅作调试输出，
+2026-07-25，即 §4 D3）。
 
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F3.1 | 基于文本行的请求/响应协议，`\n` 作为分隔符（`\r\n` 兼容）| P0 |
-| F3.2 | 命令格式：`AT+<CMD>[=<param1>,<param2>,...]` | P0 |
-| F3.3 | 响应格式：`\r\n<结果>\r\n`，成功返回 `OK`，失败返回 `ERROR:<原因>` | P0 |
-| F3.4 | USB CDC 为唯一 AT 通道（UART1 仅作调试输出，2026-07-25 决策） | P1 |
-| F3.5 | 命令缓冲区 256 字节，支持退格编辑和回显 | P2 |
+CH582 平台命令集（在通用命令之上）：
 
-#### 3.3.2 AT 命令集
+| 命令 | 功能 | 状态 |
+|------|------|------|
+| `AT+DEV[=USB\|BLE\|BLE1\|BLE2\|BLE3]` | 键盘输出目标路由；无参查询状态 | ✅ |
+| `AT+TAP=<ms>,<mods>,<k1>,..,<k6>` | 按下并自动释放（TMOS 定时器，非阻塞）；日常点按首选 | ✅ |
+| `AT+ISP` | 进入 ROM ISP bootloader（擦 page0 软复位，wchisp 烧录） | ✅ |
+| `AT+ROLE[=KBD\|DONGLE]` | 查询/切换 BLE 角色（DUAL 构建：写标志 + 软复位） | ✅ |
+| `AT+SLEEP=<mode>[,<sec>]` | RTC 定时休眠并唤醒（USB 构建下禁用） | ✅ |
+| `AT+BT_SCAN/CONN/DISC/PAIR/STATE/PASSKEY/AUTO/LIST` | dongle 命令组（见 §5.1.2） | ✅ |
+| `AT+WDG[=0\|1]` | 看门狗运行时开关：默认关，武装后 100ms 周期喂狗，复位不记忆 | ✅ |
+| ~~`AT+IR`~~ | ~~红外发射~~ | ❌ 已删除（§4 D1） |
 
-| 命令 | 功能 | 参数 | 优先级 | 状态 |
-|------|------|------|--------|------|
-| `AT` | 握手测试（返回 OK） | 无 | P0 | ✅ |
-| `AT+RST` | 软件复位设备 | 无 | P1 | ✅ |
-| `AT+VER` | 固件版本 + BLE 栈版本 + `[kbd\|dongle]` 角色标签 | 无 | P1 | ✅ |
-| `AT+HELP` | 命令列表帮助（分组） | 无 | P0 | ✅ |
-| `AT+ECHO=<text>` | 回显文本 | text | P3 | ✅ |
-| `AT+DEV[=USB\|BLE\|BLE1\|BLE2\|BLE3]` | 键盘输出目标路由；无参查询状态 | 可选 | P0 | ✅ |
-| `AT+KEY=<mods>,<k1>,..,<k6>` | 发送 raw HID 报告（修饰键 + 最多 6 键值）| mods: 8-bit mask, k1..k6: 十进制 HID Usage ID | P0 | ✅ |
-| `AT+TAP=<ms>,<mods>,<k1>,..,<k6>` | 按下并自动释放（TMOS 定时器，非阻塞）；日常点按首选，AT+KEY 手动模式留给长按等特殊场景 | ms: 0=50 默认，钳位 10–1000 | P0 | ✅ |
-| `AT+KEY_STR=<text>` | 发送字符串（自动转换为按键序列）| text: ASCII 字符串 | P1 | ✅ 固件内置（US 布局，~15ms/字符；不支持 ',' '='） |
-| `AT+KEY_SEQ=<delay>,<mods>,<k1>..<k6>,...` | 批量 HID 报告回放（脚本预翻译序列）| delay: ms间隔, 每7值为一个报告 | P0 | ✅ |
-| `AT+MOD=<mask>` | 设置修饰键（Ctrl/Alt/Shift/Win） | mask: 8 位位掩码 | P0 | ✅ |
-| `AT+ISP` | 进入 ROM ISP bootloader（擦 page0 软复位，wchisp 烧录） | 无 | P2 | ✅（配合 `tools/ci/isp_flash.py` 高频重试） |
-| `AT+ROLE[=KBD\|DONGLE]` | 查询/切换 BLE 角色（DUAL 构建：写标志 + 软复位） | 无 | P3 | ✅ 双板实测 |
-| `AT+GPIO_W=<pin>,<level>` | 设置 GPIO 输出电平（推挽 5mA） | pin: 0-15=PA,16-39=PB; level: 0/1 | P1 | ✅ 冒烟已验（HWS_GPIO 宏可配） |
-| `AT+GPIO_R=<pin>` | 读取 GPIO 输入电平（上拉输入模式） | pin: 同左 | P1 | ✅ 冒烟已验 |
-| `AT+ADC=<ch>` | 读取外部单端 ADC 通道，返回 mV | ch: 0-13 | P1 | ✅ 冒烟已验（HWS_ADC 宏可配） |
-| `AT+I2C_SCAN` | 扫描 I²C 总线上的设备（SCL=PB13/SDA=PB12） | 无 | P1 | ✅ 冒烟已验（HWS_I2C 宏可配） |
-| `AT+I2C_R=<addr>,<reg>,<len>` | 读取 I²C 设备寄存器（hex 参数，len≤32） | addr: 7 位地址, reg: 寄存器, len: 字节数 | P1 | ✅ 冒烟已验 |
-| `AT+I2C_W=<addr>,<reg>,<data>` | 写入 I²C 设备寄存器（hex，≤16 字节） | addr, reg, data: 十六进制 | P1 | ✅ 冒烟已验 |
-| `AT+SLEEP=<mode>[,<sec>]` | RTC 定时休眠并唤醒（USB 构建下禁用，电池/UART 场景用） | mode: 0=空闲, 1=睡眠, 2=下电; sec 默认 5 | P2 | ✅（USB 构建拒绝执行） |
-| `AT+STATUS` | 查询设备状态（角色/输出模式/BLE/电量） | 无 | P2 | ✅ |
-| `AT+BT_SCAN[=<sec>[,<过滤>]]` | 扫描 BLE 设备，按信号排序（idx 0=最近）；过滤=名称子串或 HID | sec: 1–30，默认 5 | P3 | ✅ |
-| `AT+BT_CONN=<idx\|addr\|name>` | 连接扫描结果（dongle）：索引 / 12 位地址 / 名称子串（信号最强者优先） | name 大小写不敏感 | P3 | ✅ |
-| `AT+BT_DISC` | 断开 BLE 链路（kbd=断主机；dongle=断键盘） | 无 | P1 | ✅ |
-| `AT+BT_PAIR` | 断开并清除全部绑定（kbd=主机绑定；dongle=键盘绑定，用于更换键盘） | 无 | P1 | ✅ |
-| `AT+BT_STATE` | dongle 状态诊断（dongle） | 无 | P3 | ✅ |
-| `AT+BT_PASSKEY=<6digits>` | 应答/预设 SMP 配对码（dongle） | 默认 123456 | P3 | ✅ |
-| `AT+BT_AUTO[=0\|1]` | 自动回连绑定键盘；开机/断链即回连，AT+BT_DISC 单次抑制 | 默认 1 | P3 | ✅ |
-| `AT+BT_LIST` | 已绑定设备列表（SNV） | 无 | P3 | ✅ |
-| ~~`AT+IR`~~ | ~~红外发射~~ | — | — | ❌ 已删除（CH582 不实现，ESP32-C3 版已实现） |
-| `AT+WDG[=0\|1]` | 看门狗运行时开关：默认关，武装后 100ms 周期喂狗，复位不记忆 | 无 | P1 | ✅ |
+**输入注入纪律**：常规注入一律 `AT+TAP`（原子按下+释放）或 `AT+KEY_STR`/`AT+KEY_SEQ`
+（序列引擎自动配对 press/release）；裸 `AT+KEY` 仅限修饰键按住等特殊场景，且必须显式
+补 `AT+KEY=0,0` 释放。卡住时止血：补发 `AT+KEY=0,0` ×2-3。
+（[wchble/mr2/FIELD-NOTES.md](wchble/mr2/FIELD-NOTES.md) F18）
 
-#### 3.3.4 帮助文档（AT+HELP 输出）
-
-`AT+HELP` 应输出以下内容的格式化版本，按功能分组、带简要说明和示例：
-
-```
-╔══════════════════════════════════════════════════════════╗
-║                at-node AT Command Help                   ║
-╚══════════════════════════════════════════════════════════╝
-
-─── 基础命令 ──────────────────────────────────────────────
-  AT                 握手测试                    → OK
-  AT+HELP [=CMD]     显示帮助（可指定命令）       → 帮助文本
-  AT+RST             软件复位设备                → OK
-  AT+VER             固件版本与 BLE 协议栈版本    → VER:x.x BLE:x.x
-  AT+STATUS          设备状态                    → 连接、电量、信号等
-  AT+SLEEP=<mode>    进入休眠（0=空闲/1=睡眠/2=下电）→ OK
-
-─── 键盘命令 ──────────────────────────────────────────────
-  AT+KEY=<mods>,<k1>,..,<k6>  发送 raw HID 报告            → OK
-  AT+MOD=<mask>      设置修饰键（位掩码）        → OK
-  AT+KEY_SEQ=<d>,<mods>,<k1>..  批量 HID 报告回放       → OK
-
-  <mods>     = 8-bit 修饰键掩码（1=Ctrl 2=Shift 4=Alt 8=Win）
-  <kc>       = HID Usage ID（十进制或 0x 十六进制）
-  <mask>     = 8bit: 1=Ctrl 2=Shift 4=Alt 8=Win
-
-─── 传感器与 I/O ──────────────────────────────────────────
-  AT+GPIO_W=<pin>,<level>   GPIO 输出           → OK
-  AT+GPIO_R=<pin>           GPIO 输入读取        → <level>
-  AT+ADC=<ch>               ADC 采样             → <value>mV
-  AT+I2C_SCAN               I²C 总线扫描         → 设备列表
-  AT+I2C_R=<addr>,<reg>,<len>  I²C 寄存器读取    → <data>
-  AT+I2C_W=<addr>,<reg>,<data> I²C 寄存器写入    → OK
-
-─── 无线与网络 ────────────────────────────────────────────
-  AT+BT_SCAN          BLE 设备扫描               → 设备列表
-  AT+WOL=<mac>        发送 Wake-on-LAN 魔法包    → OK
-
-─── 示例 ──────────────────────────────────────────────────
-  AT+KEY=2,0x04               # Shift+A（修饰键=2，键=A）
-  AT+KEY=0,0x39               # CapsLock（无修饰，键=CapsLock）
-  AT+DEV=BLE                  # 切换到 BLE 输出
-```
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F3.9 | `AT+HELP` 输出格式化的帮助文本，按功能分组，包含每个命令的用法、参数说明和示例 | P0 |
-| F3.10 | `AT+HELP=<CMD>` 仅显示指定命令的详细帮助，不输出全部 | P1 | ✅ |
-| F3.11 | 帮助文本存储在 Flash 只读区，不占用 RAM | P2 | ✅（字面量天然 .rodata） |
-
-#### 3.3.5 自动报告（URC）
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F3.6 | 蓝牙连接/断开时自动上报 `+BT_CONNECTED` / `+BT_DISCONNECTED` | P1 | ✅ |
-
-### 3.4 UART 串口（✅ 已实现基础，🚧 待扩展）
+### 5.4 UART / USB 虚拟串口（✅ 已实现）
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
 | F4.1 | UART1 调试输出（TX），115200-8N1 | P0 | ✅ |
 | F4.2 | UART1 收发（RX + TX），支持 AT 命令输入 | P0 | ✅ 与 CDC 共用同一线路解析器 |
-
-### 3.5 USB 虚拟串口（✅ 已实现基础）
-
-| 编号 | 需求 | 优先级 | 状态 |
-|------|------|--------|------|
 | F5.1 | USB CDC ACM 设备，枚举为虚拟 COM 口 | P1 | ✅ CDC+HID 复合设备（VID 1a86 / PID 2107） |
 | F5.2 | 虚拟串口与物理串口可同时工作，AT 命令共享 | P1 | ✅ 双通道独立响应路由，CDC 回显输入行 |
-| F5.3 | 支持通过虚拟串口进行固件升级（DFU） | P2 | ✅ `AT+ISP` + `tools/ci/isp_flash.py` 已实测（ROM ISP 通道，非自定义 IAP） |
+| F5.3 | 支持通过虚拟串口进行固件升级 | P2 | ✅ `AT+ISP` + `tools/ci/isp_flash.py`（ROM ISP 通道） |
 
-### 3.6 GPIO 控制(✅ 已实现)
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F6.1 | 通过 AT 命令配置引脚为推挽输出 / 浮空输入 / 上拉/下拉输入 | P1 | ✅ `GPIO_W=<p>,<l>[,5|20]` `GPIO_R=<p>[,0|1|2]` |
-| F6.2 | 通过 AT 命令读取引脚数字电平 | P1 | ✅ |
-| F6.3 | 通过 AT 命令设置引脚输出高/低 | P1 | ✅ |
-
-### 3.7 ADC 采样(✅ 已实现,Vref 校准 + PGA)
+### 5.5 GPIO / ADC / I²C（✅ 已实现）
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
-| F7.1 | 支持外部单通道 ADC 采样（当前已实现内部温度采样） | P1 | ✅ |
-| F7.2 | 通过 AT 命令指定通道并返回 mV 值 | P1 | ✅ |
-| F7.3 | 支持电池电压采样（`hws_batt` 经 `ADC_InterBATSampInit` 实现） | P2 | ✅ | ✅ |
+| F6.1 | 配置引脚为推挽输出 / 浮空输入 / 上拉/下拉输入 | P1 | ✅ `GPIO_W=<p>,<l>[,5|20]` `GPIO_R=<p>[,0|1|2]` |
+| F6.2 | 读取引脚数字电平 | P1 | ✅ |
+| F6.3 | 设置引脚输出高/低 | P1 | ✅ |
+| F7.1 | 外部单通道 ADC 采样 | P1 | ✅（Vref 校准 + PGA） |
+| F7.2 | AT 命令指定通道返回 mV | P1 | ✅ |
+| F7.3 | 电池电压采样（`hws_batt` 经 `ADC_InterBATSampInit`） | P2 | ✅ |
+| F8.1 | I²C 主机 100kHz/400kHz 可配 | P1 | ✅ |
+| F8.2 | 扫描 7 位地址，返回应答设备列表 | P1 | ✅ |
+| F8.3 | 读指定设备寄存器（1~N 字节） | P1 | ✅ |
+| F8.4 | 写指定设备寄存器 | P1 | ✅ |
 
-### 3.8 I²C 主机(✅ 已实现读写,扫描不做)
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F8.1 | I²C 主机模式，标准模式 100kHz / 快速模式 400kHz 可配 | P1 |
-| F8.2 | 扫描 7 位地址 0x00~0x7F，返回有应答的设备列表 | P1 |
-| F8.3 | 读取指定设备的指定寄存器（1~N 字节） | P1 |
-| F8.4 | 写入指定设备的指定寄存器 | P1 |
-
-### 3.10 红外发射（❌ 已删除，CH582 不实现）
-
-> IR 功能已从 CH582 固件系统性删除。ESP32-C3 网络版已实现红外发射。
-> 以下保留为历史记录。
-
-| 命令 | 说明 | 示例 |
-|------|------|------|
-| `AT+IR=NEC,<hex>` | NEC 32-bit | `AT+IR=NEC,0x807F00FF` |
-| `AT+IR=SIRC,<hex>,<bits>` | Sony SIRC | `AT+IR=SIRC,0xA90,12` |
-| `AT+IR=RAW,<t1>,<t2>,...` | 原始时序 µs | `AT+IR=RAW,9000,4500,560,...` |
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| F11.3 | `AT+IR=NEC,<hex>` 按 NEC 协议（38kHz, 560/1690µs）发送 32 位 | P2 |
-| F11.4 | `AT+IR=SIRC,<hex>,<bits>` 按 Sony SIRC 协议（40kHz 可选）发送 | P3 |
-| F11.5 | `AT+IR=RAW,<t1>,<t2>,...` 按时序数组逐对发送，最大 128 对 | P2 |
-| F11.6 | AT_LINE_MAX 扩展至 1024 以支持完整 AC 时序编码 | P2 |
-
----
-
-## 4. 硬件需求
-
-### 4.1 当前平台（CH582F）
-
-| 参数 | 值 |
-|------|-----|
-| MCU | CH582F（RISC-V rv32imac，60 MHz） |
-| Flash | 448 KB |
-| RAM | 32 KB |
-| BLE | 4.2/5.0 |
-| 外设 | GPIO × 38、I²C × 1、SPI × 2、ADC 14ch × 10bit、PWM × 14、USB 2.0 FS |
-| 封装 | QFN48 / QFN32 |
-
-### 4.2 规划平台（CH592）
-
-| 参数 | 值 |
-|------|-----|
-| MCU | CH592（RISC-V） |
-| Flash/RAM | 更大/更灵活的可选配 |
-| BLE | 5.4 |
-| 功耗 | 更低（先进工艺） |
-| 成本 | 更低 |
-| 兼容性 | 引脚兼容 CH582，外设 API 全兼容 |
-
-### 4.3 引脚分配
-
-| 引脚 | 功能 | 备注 |
-|------|------|------|
-| PA0 | LED1 | 推挽输出，低电平亮 |
-| PB22 | KEY1 | 上拉输入，低电平触发 |
-| PB4 | KEY2 | 上拉输入，低电平触发 |
-| PA9 (TXD1) | UART1 TX | 调试输出（115200 波特率） |
-| PA8 (RXD1) | UART1 RX | 调试输入 |
-| PB10/PB11 | USB D+/D- | USB 2.0 FS（不可作 GPIO） |
-| PB13 | I²C SCL | 上拉，100 kHz |
-| PB12 | I²C SDA | 上拉 |
-| ADC ch0-13 | 外部模拟输入 | 单端，0–VDD |
-
----
-
-## 5. 接口需求
-
-### 5.1 物理接口
-
-| 接口 | 类型 | 用途 |
-|------|------|------|
-| UART1 | 3.3V TTL（115200-8N1） | 调试与 AT 命令 |
-| USB 2.0 FS | Device + Host | 有线键盘（Device）+ 虚拟串口（CDC） |
-| BLE 4.2/5.0 | 无线 | 蓝牙键盘 |
-| I²C | 3.3V 电平 | 传感器读取 |
-| GPIO | 3.3V 电平 | 开关量控制、外设触发 |
-| ADC | 0~VDD | 模拟量采集 |
-
-### 5.2 AI Agent 对接
-
-```
-AI Agent (LLM / Python 脚本)
-    │
-    ├── 物理串口 ──→ UART TTL ──→ at-node
-    │                           │
-    ├── USB ──→ USB CDC (虚拟串口) ──→ at-node
-    │                                    │
-    │                           ┌────────┴────────┐
-    │                           │ 键盘（BLE+USB）  │ ←── 对被控电脑
-    │                           │ 传感器采集       │
-    │                           │ GPIO 控制        │
-    │                           └─────────────────┘
-```
-
-AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输入，无需操作系统层面的输入法注入或驱动支持。
-
----
-
-## 6. 性能需求
+### 5.6 性能需求
 
 | 编号 | 需求 | 指标 | 优先级 |
 |------|------|------|--------|
@@ -442,54 +323,53 @@ AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输
 | P1.5 | 广播功耗 | < 500μA（广播间隔 100ms）| P2 |
 | P1.6 | 连续工作时长（500mAh 电池） | > 30 天（待机） / > 8 小时（持续按键）| P2 |
 | P1.7 | RAM 占用 | < 8 KB（AT 任务 + 缓冲区）| P2 |
-| P1.8 | Flash 占用 | < 256 KB（全部功能；原 128 KB 指标已不适应 dongle/dual 双角色构建，当前 kbd 165 KB / dual 200 KB）| P1 |
+| P1.8 | Flash 占用 | < 256 KB（全部功能；当前 kbd 165 KB / dual 200 KB）| P1 |
 
----
+### 5.7 低功耗测试需求（CH582 专项）
 
-## 7. 低功耗测试需求
+> 低功耗设计原理与定量分析：[wchble/mr2/POWER.md](wchble/mr2/POWER.md)。
+> 本节保留测试需求与指标定义。
 
-> 本项目的低功耗特性需通过实际硬件测量来验证和标定，以评估 CH582F 芯片的极限功耗能力以及电池供电下的实际待机时长。
-
-### 7.1 测试目标
+#### 5.7.1 测试目标
 
 | 编号 | 目标 | 说明 |
 |------|------|------|
-| T1.1 | 测定 CH582F **芯片级极限最低功耗** | 在最小系统（仅供电 + 去耦电容）下测量 MCU 各休眠模式的电流 |
-| T1.2 | 测定 **系统级极限最低功耗** | 在实际 PCB（含 LED、按键上拉、LDO 等外围）下测量各模式电流 |
-| T1.3 | 计算并验证 **电池待机时长** | 基于实测功耗推算，并在实际电池供电下做长时间待机验证 |
+| T1.1 | 测定 CH582F **芯片级极限最低功耗** | 最小系统（仅供电 + 去耦电容）下测量各休眠模式电流 |
+| T1.2 | 测定 **系统级极限最低功耗** | 实际 PCB（含 LED、按键上拉、LDO 等外围）下测量 |
+| T1.3 | 计算并验证 **电池待机时长** | 基于实测功耗推算 + 实际电池长时间待机验证 |
 
-### 7.2 测试模式与场景
+#### 5.7.2 测试模式与场景
 
 | 编号 | 模式 | 芯片状态 | 外设状态 | 说明 |
 |------|------|---------|---------|------|
-| T2.1 | **深度睡眠（下电模式）** | 仅 RTC 运行，CPU 断电，SRAM 保持或断电可选 | 所有外设时钟关闭，GPIO 保持或高阻 | 寻找到达芯片手册标称的极限值 |
-| T2.2 | **睡眠模式（Sleep）** | CPU 暂停，SRAM 保持，RTC 运行 | 外设时钟关闭，唤醒后可立即恢复 | 可定时唤醒轮询场景 |
+| T2.1 | **深度睡眠（下电模式）** | 仅 RTC 运行，CPU 断电，SRAM 保持或断电可选 | 所有外设时钟关闭，GPIO 保持或高阻 | 寻找芯片手册标称极限值 |
+| T2.2 | **睡眠模式（Sleep）** | CPU 暂停，SRAM 保持，RTC 运行 | 外设时钟关闭，唤醒后立即恢复 | 定时唤醒轮询场景 |
 | T2.3 | **空闲模式（Idle）** | CPU 暂停，SRAM 保持 | 外设保持状态，任意中断唤醒 | 最低延迟唤醒场景 |
-| T2.4 | **BLE 广播（待连接）** | CPU 间歇工作 | BLE 射频定时广播 | 设备未被连接时的典型功耗 |
-| T2.5 | **BLE 连接（空闲）** | CPU 间歇工作 | BLE 射频按连接间隔监听 | 已连接但无按键操作 |
-| T2.6 | **BLE 连接（持续按键）** | CPU 持续工作 | BLE 射频发送 + GPIO 扫描 | 最耗电的工作场景 |
+| T2.4 | **BLE 广播（待连接）** | CPU 间歇工作 | BLE 射频定时广播 | 未连接时典型功耗 |
+| T2.5 | **BLE 连接（空闲）** | CPU 间歇工作 | BLE 射频按连接间隔监听 | 已连接无按键 |
+| T2.6 | **BLE 连接（持续按键）** | CPU 持续工作 | BLE 射频发送 + GPIO 扫描 | 最耗电工作场景 |
 
-### 7.3 测试方法
+#### 5.7.3 测试方法
 
 | 编号 | 方法 | 说明 |
 |------|------|------|
-| T3.1 | **精密万用表 / 源表** | 串联高精度万用表（如 Keysight 34465A、Fluke 8846A）或使用源表（SMU），测量各模式下的平均电流 |
-| T3.2 | **串联电阻 + 示波器** | 在电源回路串联 10Ω 精密电阻，用示波器抓取电流波形，观察瞬态尖峰和脉冲占空比 |
-| T3.3 | **低功耗专用评估板** | 使用 CH582F 最小系统板（无 LED、无额外上拉），排除外围干扰 |
-| T3.4 | **实际电池放电测试** | 使用 500mAh 锂电池，记录从满电到关机的时间，与实际任务循环对应 |
+| T3.1 | **精密万用表 / 源表** | 串联高精度万用表（Keysight 34465A、Fluke 8846A）或 SMU，测平均电流 |
+| T3.2 | **串联电阻 + 示波器** | 10Ω 精密电阻抓电流波形，观察瞬态尖峰和占空比 |
+| T3.3 | **低功耗专用评估板** | CH582F 最小系统板（无 LED、无额外上拉），排除外围干扰 |
+| T3.4 | **实际电池放电测试** | 500mAh 锂电池，记录满电到关机时间 |
 
-### 7.4 待测数据
+#### 5.7.4 待测数据
 
 | 编号 | 数据项 | 说明 |
 |------|--------|------|
 | T4.1 | 各模式 **平均电流**（μA） | 至少连续采样 1 分钟取均值 |
-| T4.2 | 各模式 **峰值电流**（mA） | 重点关注 BLE 射频发射和 Flash 擦写时的瞬态峰值 |
-| T4.3 | **深度睡眠唤醒时间**（μs） | 从唤醒事件触发到 CPU 执行第一条指令的延迟 |
-| T4.4 | **广播间隔 vs 平均功耗** 曲线 | 在 20ms~1000ms 广播间隔下分别测量 |
-| T4.5 | **连接间隔 vs 平均功耗** 曲线 | 在 7.5ms~100ms 连接间隔下分别测量 |
-| T4.6 | **电池放电曲线** | 记录电压从 4.2V 下降到 2.8V 的过程 |
+| T4.2 | 各模式 **峰值电流**（mA） | 重点 BLE 射频发射和 Flash 擦写瞬态 |
+| T4.3 | **深度睡眠唤醒时间**（μs） | 唤醒事件到 CPU 第一条指令的延迟 |
+| T4.4 | **广播间隔 vs 平均功耗** 曲线 | 20ms~1000ms 分别测量 |
+| T4.5 | **连接间隔 vs 平均功耗** 曲线 | 7.5ms~100ms 分别测量 |
+| T4.6 | **电池放电曲线** | 4.2V → 2.8V 全过程 |
 
-### 7.5 预期指标（参考芯片数据手册）
+#### 5.7.5 预期指标（参考芯片数据手册）
 
 | 参数 | CH582F 手册标称 | 实测目标 |
 |------|----------------|---------|
@@ -498,17 +378,15 @@ AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输
 | 空闲模式（Idle） | — | < 100 μA |
 | 广播平均（100ms 间隔） | — | < 200 μA |
 | 连接平均（10ms 间隔） | — | < 500 μA |
-| 发射峰值（0dBm） | 5.2 mA（发射瞬态） | < 6 mA |
+| 发射峰值（0dBm） | 5.2 mA | < 6 mA |
 
-> 注：实测目标为系统级值（包含 LDO 静态功耗、外围漏电等），高于芯片手册纯 MCU 值属正常。
+> 注：实测目标为系统级值（含 LDO 静态功耗、外围漏电），高于芯片手册纯 MCU 值属正常。
 
-### 7.6 电池待机测算
-
-以实测的深度睡眠功耗为基准，分场景估算：
+#### 5.7.6 电池待机测算
 
 | 场景 | 假设条件 | 待机时长（500mAh） |
 |------|---------|------------------|
-| 纯睡眠（下电模式） | 1 μA | **~57 年**（实际受电池自放电和寿命限制） |
+| 纯睡眠（下电模式） | 1 μA | **~57 年**（受电池自放电和寿命限制） |
 | 睡眠 + 每日唤醒 1 次按键 | 平均 2 μA | **~28 年** |
 | BLE 广播（1s 间隔，待连接） | 50 μA | **~417 天** |
 | BLE 广播（100ms 间隔，待连接） | 200 μA | **~104 天** |
@@ -517,29 +395,25 @@ AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输
 
 > 以上为理论推算值，需通过实际测试修订。
 
-### 7.7 测试报告输出
-
-完成低功耗测试后需输出：
+#### 5.7.7 测试报告输出
 
 | 编号 | 交付物 | 说明 |
 |------|--------|------|
-| T5.1 | **功耗测量数据表** | 各模式、各配置下的电流测量记录（Excel/CSV） |
+| T5.1 | **功耗测量数据表** | 各模式、各配置电流测量记录（Excel/CSV） |
 | T5.2 | **电流波形截图** | 示波器抓取的典型工作脉冲波形 |
-| T5.3 | **电池放电曲线图** | 500mAh 电池的完整放电过程 |
-| T5.4 | **待机时长结论** | 在典型使用场景下的实测待机天数 |
-| T5.5 | **功耗优化建议** | 针对非理想因素（外围漏电、软件轮询频率等）的改进方案 |
+| T5.3 | **电池放电曲线图** | 500mAh 电池完整放电过程 |
+| T5.4 | **待机时长结论** | 典型使用场景实测待机天数 |
+| T5.5 | **功耗优化建议** | 针对非理想因素的改进方案 |
 
-### 7.8 低功耗与 USB 互斥
+#### 5.7.8 低功耗与 USB 互斥（最终决定见 §4 D4）
 
-> ⚠️ **硬件约束**：CH582F 进入休眠（Sleep / Shutdown）后 USB 外设时钟关闭，USB 枚举会丢失，主机侧将报告"设备描述符请求失败（代码 43）"。**低功耗休眠与 USB 功能不可同时使用。**
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| T6.1 | 当工程宏 `HWS_SLEEP = TRUE` 时，**禁止启用 USB**，仅通过硬件串口（UART）与上位机通信 | P0 |
-| T6.2 | 当 `HWS_SLEEP = FALSE` 时，USB 正常可用；若需休眠，由 AT 命令 `AT+SLEEP` 显式触发 | P0 |
-| T6.3 | `AT+SLEEP` 命令执行前须先**关闭 USB**（清除 `R8_UDEV_CTRL.port_en`、断开 `DP_PU` 上拉），休眠结束后由上位机重新发起 USB 枚举 | P1 |
-| T6.4 | 设备启动时检测 `HWS_SLEEP` 宏：若启用，`USB_Device_Setup()` 直接返回不初始化 | P0 |
-| T6.5 | CH592 等后续芯片若支持休眠态保持 USB 连接，可解除此互斥 | P3 |
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| T6.1 | `HWS_SLEEP = TRUE` 时**禁止启用 USB**，仅硬件 UART 与上位机通信 | P0 | ✅（编译期强制） |
+| T6.2 | `HWS_SLEEP = FALSE` 时 USB 正常；需休眠由 `AT+SLEEP` 显式触发 | P0 | ✅ |
+| T6.3 | `AT+SLEEP` 执行前先**关闭 USB**（清 `port_en`、断 DP 上拉），唤醒后由上位机重新枚举 | P1 | ✅ |
+| T6.4 | 启动时检测 `HWS_SLEEP`：启用则 `USB_Device_Setup()` 直接返回 | P0 | ✅ |
+| T6.5 | CH592 等后续芯片若支持休眠态保持 USB 连接，可解除此互斥 | P3 | 📋 规划 |
 
 **典型配置组合**：
 
@@ -550,20 +424,18 @@ AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输
 | 电池供电低功耗 | TRUE | ❌ 禁用 | 硬件 UART AT 命令 |
 | BLE 蓝牙键盘 | FALSE | ✅ 启用 | USB + BLE 双模 |
 
-### 7.9 USB 热插拔与低功耗双模（运行时切换）🔜
+#### 5.7.9 USB 热插拔与低功耗双模（运行时切换）🔜
 
-> 当前 `HWS_SLEEP` 是编译期开关：插着 USB 时不需要省电、拔掉 USB 时无法睡眠——但这两种场景在同一台设备上交替出现。实际产品需要运行时检测 VBUS，无缝切换模式。
->
-> 在原型阶段，编译期一刀切是合理的。双模运行时切换是产品化的必备特性。
+> 当前 `HWS_SLEEP` 是编译期开关。实际产品需要运行时检测 VBUS，无缝切换模式。
 
 | 编号 | 需求 | 优先级 |
 |------|------|--------|
-| T7.1 | **VBUS 检测**：GPIO 输入引脚 + 分压电阻监测 USB 5V，上电时判断初始模式 | P1 |
-| T7.2 | **插入 USB**：VBUS 边沿中断 → 初始化 USB 设备 → 禁止深度睡眠（`hws_sleep_enter` 返回 0）→ BLE 保持连接 | P1 |
-| T7.3 | **拔出 USB**：VBUS 边沿中断 → 反初始化 USB（`port_en` 清零、DP 上拉断开）→ 恢复睡眠能力 → BLE 继续保持连接 | P1 |
-| T7.4 | **睡眠回调自感知**：`hws_sleep_enter()` 内部检查 `usb_active` 标志，USB 活跃时直接返回不睡眠——无需改 BLE 配置（sleepCB 始终注册） | P1 |
-| T7.5 | **初始化时 GPIO 策略自适应**：`hws_platform_init()` 的 GPIO 全拉输入仅在 `!vbus_present()` 时执行（插着 USB 时不需要漏电防护） | P2 |
-| T7.6 | **BLE 保持**：USB 拔插不影响 BLE 连接——双通道可同时工作，USB 供电时功耗无限制 | P1 |
+| T7.1 | **VBUS 检测**：GPIO 输入引脚 + 分压电阻监测 USB 5V，上电判断初始模式 | P1 |
+| T7.2 | **插入 USB**：VBUS 边沿中断 → 初始化 USB → 禁止深度睡眠 → BLE 保持连接 | P1 |
+| T7.3 | **拔出 USB**：VBUS 边沿中断 → 反初始化 USB → 恢复睡眠能力 → BLE 保持连接 | P1 |
+| T7.4 | **睡眠回调自感知**：`hws_sleep_enter()` 检查 `usb_active` 标志，USB 活跃直接返回 | P1 |
+| T7.5 | **初始化 GPIO 策略自适应**：GPIO 全拉输入仅在 `!vbus_present()` 时执行 | P2 |
+| T7.6 | **BLE 保持**：USB 拔插不影响 BLE 连接 | P1 |
 
 **状态转换图**：
 
@@ -573,125 +445,101 @@ AI Agent 只需通过串口发送 `AT+KEY_STR=hello` 即可完成物理键盘输
               └─ VBUS=0 (电池)    ──→ BLE+睡眠      ──→ 插入 ──→ USB+BLE 双模
 ```
 
-**硬件需求**：
-
-```
-USB VBUS (5V) ──→ 分压电阻 (2:1) ──→ 3.3V ──→ GPIO 输入引脚
-                                         ↓
-                                    检测 VBUS 边沿中断
-```
+**硬件需求**：USB VBUS (5V) → 分压电阻 (2:1) → 3.3V → GPIO 输入引脚（VBUS 边沿中断）。
 
 **边界条件**：
-- USB 枚举需要 ~100ms，枚举期间不能睡眠（否则枚举中断）
-- 拔出时 MCU 正在睡眠：VBUS 掉电不会唤醒 MCU，需要 RTC 定时唤醒检测 GPIO 电平（~1s 周期），或在 VBUS 引脚配置 PMOS 边沿唤醒电路
-- 当前 BLE 参数在插入/拔出时保持不变，后续可联动切换（拔掉后调大连接间隔省电）
+- USB 枚举需 ~100ms，枚举期间不能睡眠
+- 拔出时 MCU 正在睡眠：VBUS 掉电不唤醒 MCU，需 RTC 定时唤醒检测（~1s 周期）或 PMOS 边沿唤醒电路
+- 当前 BLE 参数插入/拔出时不变，后续可联动切换（拔掉后调大连接间隔省电）
 
 ---
 
-## 8. 非功能需求
+## 6. ESP32 平台需求（esp32/arduino）
 
-### 8.1 可靠性
+> 详细功能/配置/API/坑录：[esp32/arduino/README.md](esp32/arduino/README.md)、
+> [esp32/arduino/API.md](esp32/arduino/API.md)、[esp32/arduino/RATHOLE.md](esp32/arduino/RATHOLE.md)。
+> 跨芯片兼容实测与 S3 放弃根因：[esp32/COMPAT_REPORT.md](esp32/COMPAT_REPORT.md)。
 
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| Q1.1 | 看门狗定时器，异常时自动复位 | P1 | ✅ `AT+WDG[=0\|1]` 运行时开关（HWS 层 `hws_wdg`，默认关、复位不记忆；喂狗为 100ms HWS 表任务；前置条件：CDC 异步有界） |
-| Q1.2 | AT 命令异常输入不会导致设备崩溃 | P1 |
-| Q1.3 | BLE 断连后自动重连/广播 | P1 |
-| Q1.4 | Flash 参数区磨损均衡 | P2 |
-
-### 8.2 可移植性
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| Q2.1 | HWS 层隔离底层芯片差异，上层不直接操作寄存器 | P1 |
-| Q2.2 | 芯片型号统一在 `config.h` 中通过 `CHIP_ID` 宏切换 | P1 |
-| Q2.3 | AT 命令解析器与硬件无关，可独立测试 | P2 |
-
-### 8.3 AI 可读性
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| Q3.0 | 根目录 AGENTS.md 包含完整架构图、分层栈、初始化序列、约束清单——AI 读完即建立心智模型 | P0 |
-| Q3.1 | 每个 `.c` 文件头注释说明模块职责和数据流向，AI 不需翻其他文件理解用途 | P0 |
-| Q3.2 | 所有注释纯 ASCII 英文，无编码兼容问题 | P1 |
-| Q3.3 | 命名自解释——函数前缀表示层级（`hws_`/`ble_`/`AT_`），AI 不需额外上下文推断位置 | P1 |
-| Q3.4 | 项目根目录 DESIGN.md 提供设计哲学和扩展指南，AI 可以正确决策"加个 I²C 驱动应该放在 HWS 还是 APP" | P1 |
-| Q3.5 | DESIGN.md + AGENTS.md 双重引导，AI 读完即建立完整心智模型，无需人工解释上下文 | P2 |
-
-### 8.4 安全
-
-| 编号 | 需求 | 优先级 |
-|------|------|--------|
-| Q4.1 | 键盘模拟功能必须显式声明其安全风险 | P0 |
-| Q4.2 | AT 命令接口应可配置为仅接受特定物理接口 | P1 |
-| Q4.3 | 配对绑定信息加密存储于 SNV | P1 |
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| E1.1 | 与 CH582 语义一致的网络版：同一 Agent 脚本换传输层即可复用 | P0 | ✅ |
+| E1.2 | WiFi HTTP 主控制面（`/at-node/cmd/*` JSON） | P0 | ✅ |
+| E1.3 | MQTT TLS 远程控制面（指纹验证，独立 FreeRTOS task） | P0 | ✅ |
+| E1.4 | 串口全功能 AT 后备通道（与 HTTP 等价） | P0 | ✅ |
+| E1.5 | BLE HID 键盘输出（NimBLE boot keyboard，仅 Peripheral） | P0 | ✅ |
+| E1.6 | 统一配置注册表（AT/HTTP/MQTT 三通道等价，NVS 持久化） | P0 | ✅ |
+| E1.7 | 服务开关统一 enable + auto 两层语义（§4 D7） | P1 | ✅ |
+| E1.8 | 编译期功能变体：full / remoter / base / rathole（`features.h`） | P1 | ✅ |
+| E1.9 | rathole 内网穿透客户端（单隧道，plain TCP，NVS 持久化自连） | P1 | ✅ |
+| E1.10 | Web 控制面（gzip 单页应用，flash 一次发送，JSON 驱动） | P1 | ✅ |
+| E1.11 | AP 配网（GPIO10 触发或 `AT+AP=1`，Captive Portal） | P1 | ✅ |
+| E1.12 | BLE 配对安全（默认不广播，显式 60s 公共配对窗口） | P1 | ✅ |
+| E1.13 | IR 红外发射（RMT 38kHz，NEC/SIRC/RAW）（§4 D1） | P2 | ✅ |
+| E1.14 | WiFi 看门狗（断线 15s 周期重连，服务随链路恢复） | P1 | ✅ |
+| E1.15 | 芯片温度上报（`temp_c`，HTTP/AT/Web 三通道） | P3 | ✅ |
 
 ---
 
-## 9. 代码结构
+## 7. 规划平台需求（TODO）
 
-```
-ch582/APP/                    ← 应用层
-├── main.c                       # 入口 + 初始化序列 ✅
-├── ble_init.c                   # BLE Peripheral 初始化聚合 ✅
-├── at_parser.c / at_parser.h    # AT 解析器（UART+CDC 双通道）✅
-├── at_cmds.c                    # AT 命令表 + 键盘路由 ✅
-├── hidkbd_ble.c                 # BLE 键盘广播/连接/报告 ✅
-├── hidkbd_usb.c                 # USB 键盘报告发送 ✅
-├── usb_dev.c / usb_dev.h        # USB 复合设备（CDC+HID）✅
-├── include/
-│   ├── config.h                 # 全局配置宏 ✅
-│   ├── at_parser.h              # AT 解析器接口 ✅
-│   ├── ble_init.h               # BLE 初始化接口 ✅
-│   ├── hidkbd_common.h          # 键盘路由接口 ✅
-│   └── hidkbd.h                 # BLE 键盘事件定义 ✅
-├── HWS/                         ← 硬件服务层 ✅
-│   ├── hws.h                    # 伞形头文件
-│   ├── hws_core.c               # 初始化 + TMOS 事件处理
-│   ├── hws_key.c / hws_key.h    # 按键轮询
-│   ├── hws_led.c / hws_led.h    # LED 控制
-│   ├── hws_rtc.c / hws_rtc.h    # RTC 定时
-│   └── hws_sleep.c / hws_sleep.h # 休眠管理
-└── BLE/                         ← BLE GATT 服务层 ✅
-    ├── ble_stack.c / ble_stack.h       # BLE 协议栈初始化
-    ├── ble_hid_dev.c / ble_hid_dev.h   # HID Device Service
-    ├── ble_hid_kbd.c / ble_hid_kbd.h   # HID Keyboard Service
-    ├── ble_batt.c / ble_batt.h         # Battery Service
-    ├── ble_dev_info.c / ble_dev_info.h # Device Info Service
-    └── ble_scan_param.c / ble_scan_param.h # Scan Parameters
-```
+### 7.1 esp32/zephyr（ESP32-S3 等 PSRAM 机型）
+
+> 承接被 Arduino 变体放弃的 S3（§4 D2）。规划与准入条件：
+> [esp32/zephyr/README.md](esp32/zephyr/README.md)。
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| Z1.1 | Zephyr 工程骨架（ESP32-S3 目标，PSRAM 启用） | P2 | ⬜ |
+| Z1.2 | WiFi HTTP + MQTT TLS 控制面（对齐 esp32/arduino 语义） | P2 | ⬜ |
+| Z1.3 | BLE HID 键盘（NimBLE host on Zephyr） | P2 | ⬜ |
+| Z1.4 | PSRAM 大负载：完整 CA bundle、更大 Web 资产、多并发隧道 | P3 | ⬜ |
+
+### 7.2 nordic/zephyr（nRF52840）
+
+> 规划与准入条件：[nordic/zephyr/README.md](nordic/zephyr/README.md)。
+
+| 编号 | 需求 | 优先级 | 状态 |
+|------|------|--------|------|
+| N1.1 | Zephyr 工程骨架（nRF52840，nRF Connect SDK） | P3 | ⬜ |
+| N1.2 | BLE HID 键盘（Peripheral）+ USB CDC/HID 复合——对齐 CH582 行为 | P3 | ⬜ |
+| N1.3 | AT 命令全语义对齐（无 WiFi，无网络控制面） | P3 | ⬜ |
 
 ---
 
-## 10. 开发路线图
+## 8. 开发路线图
 
-| 阶段 | 内容 | 预计 |
+| 阶段 | 内容 | 状态 |
 |------|------|------|
-| **v0.1** | BLE HID 键盘基础功能（单体结构） | ✅ 已完成 |
-| **v0.2** | 重构三层分离（HWS/BLE/APP）+ AT 命令 + USB CDC+HID 复合 | 🚧 进行中 |
+| **v0.1** | CH582 BLE HID 键盘基础功能 | ✅ 已完成 |
+| **v0.2** | CH582 三层分离（HWS/BLE/APP）+ AT 命令 + USB CDC+HID 复合 | ✅ 已完成 |
 | **v0.3** | 符号重命名统一 + 代码质量提升 + 模板化文档 | ✅ 已完成 |
-| **v0.4** | GPIO/ADC/I²C 命令 + 传感器管理 | 🚧 规划 |
-| **v0.5** | CH592 移植 + 低功耗测试与优化 | 🚧 规划 |
+| **v0.4** | CH582 GPIO/ADC/I²C 命令 + 多模键盘 + dongle 接收器 | ✅ 已完成 |
+| **v0.5** | ESP32-C3 网络版（HTTP/MQTT/rathole/Web 控制面） | ✅ 已完成 |
+| **v0.6** | 多平台目录重构 + 需求归类（本次） | ✅ 已完成 |
+| **v0.7** | CH592 移植 + CH582 低功耗实测（§5.7） | 📋 规划 |
+| **v0.8** | esp32/zephyr（S3）与 nordic/zephyr（nRF52840）启动 | 📋 规划 |
 
 ---
 
-## 11. 附录
+## 9. 附录
 
-### 11.1 参考文档
+### 9.1 参考文档
 
 - [CH582 数据手册](https://www.wch.cn/products/CH582.html)
-- [CH583 EVT 参考代码](../EVT/)
+- [CH583 EVT 参考代码](EVT/)
 - [HID Usage Tables (USB-IF)](https://www.usb.org/hid)
 - [BLE HID over GATT Profile Spec](https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile/)
 
-### 11.2 术语
+### 9.2 术语
 
 | 术语 | 说明 |
 |------|------|
-| TMOS | TI 风格的协作式任务调度器 |
+| TMOS | TI 风格的协作式任务调度器（CH582 BLE 栈内置） |
 | HID | Human Interface Device，人机交互设备 |
 | GATT | Generic Attribute Profile，BLE 属性协议 |
 | CDC | Communication Device Class，USB 通信设备类 |
 | HWS | Hardware Services，硬件服务层——纯寄存器操作，不含协议栈逻辑 |
 | URC | Unsolicited Result Code，主动上报消息 |
-| SNV | 简易非易失存储（Flash 模拟 EEPROM） |
+| SNV | 简易非易失存储（Flash 模拟 EEPROM，CH582） |
+| NVS | Non-Volatile Storage（ESP32 键值存储） |
+| MR2 | MounRiver Studio 2，WCH RISC-V IDE/工具链 |

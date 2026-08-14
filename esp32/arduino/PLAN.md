@@ -20,16 +20,20 @@
 
 ```
 esp32/
-├── README.md                  # ESP32 版整体说明
-├── PLAN.md                    # 本文件
-├── esp32_at_node/             # 主 sketch
-│   ├── esp32_at_node.ino      # 主程序
+├── README.md                  # ESP32 系列说明（变体矩阵、S3 决策）
+├── COMPAT_REPORT.md           # 跨芯片兼容性实测（C3/S3）
+├── arduino/                   # Arduino 变体（C3 / 原版 ESP32）— 本计划对应目录
+│   ├── README.md              # Arduino 变体主文档
+│   ├── PLAN.md                # 本文件
+│   ├── arduino.ino            # 主 sketch（与目录同名，Arduino 约定）
 │   ├── wifi_config.h          # WiFi 凭据（gitignore）
 │   ├── wifi_config.h.example  # 模板
-│   ├── http_server.cpp/h      # HTTP 路由与 JSON 解析
-│   ├── at_parser.cpp/h        # 原生 AT 命令解析与执行
-│   ├── ble_keyboard.cpp/h     # NimBLE HID keyboard 封装
-│   └── build.ps1              # 编译/上传脚本（PartitionScheme=huge_app）
+│   ├── web/                   # Web 控制面前端（build.py → web_page.h）
+│   ├── web_page.h             # 生成的 gzip 单页应用
+│   └── build.ps1 + build-c3.ps1 / build-esp32.ps1
+│                              # 编译/上传：共享引擎 + 板卡专用封装
+│                              # （C3: CDCOnBoot=cdc, PartitionScheme=huge_app；agent 默认用封装）
+└── zephyr/                    # Zephyr 变体（ESP32-S3 等 PSRAM 机型，TODO）
 ```
 
 ## 3. HTTP 路由设计

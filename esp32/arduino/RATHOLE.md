@@ -1,6 +1,6 @@
 # rathole 隧道客户端(ESP32-C3)— 架构与实战记录
 
-`esp32_at_node/rathole_client.cpp` 实现 rathole 协议 v1 客户端,把设备上的
+`esp32/arduino/rathole_client.cpp` 实现 rathole 协议 v1 客户端,把设备上的
 TCP 服务(SSH 等)反向穿透到公网 rathole server。**单隧道**(id 恒为 1,
 一条 SSH 即可跳板,降低公网暴露与 RAM 占用)。
 
@@ -70,7 +70,7 @@ ICMP 不应答,串口 AT 却正常(不吃网络堆)——表象"设备死了"。
 ### R2 HTML 页整页拷堆 → 低堆时页面必挂
 `send_html(const String&)` 把 ~14KB 页面从 flash 拷进堆 String 再发;heap 13.6K
 时实测 8.6s 只收到半截(curl code 18)。修复:静态页改 `send_P` 流式发送;
-随后更进一步:整个 Web UI 改为 gzip 单页应用(`esp32/web/` → `web_page.h`,
+随后更进一步:整个 Web UI 改为 gzip 单页应用(`esp32/arduino/web/` → `web_page.h`,
 15.2KB→4.5KB,一次响应零堆拷贝,页面内全走 JSON API)。
 
 ### R3 跨任务 `cli.stop()` → 空指针 panic(最恶性)
@@ -124,7 +124,7 @@ curl http://127.0.0.1:5202/at-node/cmd/status
 
 ## 6. 已知边界
 
-- 功能宏变体:`build.ps1 -Variant rathole` 出 BLE/MQTT/I2C 全关的隧道专用固件
+- 功能宏变体:`build-c3.ps1 -Variant rathole` 出 BLE/MQTT/I2C 全关的隧道专用固件
   (free_heap ~180K,是调隧道协议/压力的首选环境);`base` 出无隧道键盘固件。
   能力查询 `AT+ABILITY` / `/at-node/cmd/ability`。I2C 关 → GPIO8 呼吸灯(死活指示)。
 

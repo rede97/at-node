@@ -1,7 +1,7 @@
 # at-node 代码审计报告
 
 - **审计日期**: 2026-07-26
-- **审计范围**: CH582F 固件（`ch582/APP/`、`ch582/APP/HWS/`、`ch582/APP/BLE/`）+ ESP32-C3 变体（`esp32/esp32_at_node/`）
+- **审计范围**: CH582F 固件（`wchble/mr2/APP/`、`wchble/mr2/APP/HWS/`、`wchble/mr2/APP/BLE/`）+ ESP32-C3 变体（`esp32/arduino/`）
 - **审计方式**: 静态代码审查，关键发现已对照原始 WCH EVT SDK 验证
 - **处理方式**: 简单且无副作用的问题已直接修复（见 §A）；涉及硬件验证、架构权衡或安全设计的问题留待人工评估（见 §B）
 
@@ -9,16 +9,16 @@
 
 | # | 严重度 | 问题 | 文件 | 状态 |
 |---|--------|------|------|------|
-| 1 | 严重 | 休眠路径重复调用 `SYS_DisableAllIrq`，中断状态被覆盖 | [hws_sleep.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_sleep.c) | ✅ 已修复 |
-| 2 | 严重 | `Idle_Value[2]` 数组越界（HID 接口号为 2） | [usb_dev.c](file://e:/Projects/at_node/ch582/APP/usb_dev.c) | ✅ 已修复 |
-| 3 | 中等 | 电池电压换算 `uint16_t` 减法下溢 + 与 config.h 文档的 ×4 因子不一致 | [hws_batt.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_batt.c) | ✅ 已验证关闭（用户实测无问题） |
-| 4 | 中等 | ADC 换算 pga=0/1 分支同样的减法下溢 | [hws_adc.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_adc.c) | ✅ 已验证关闭（用户实测无问题） |
-| 5 | 中等 | ESP32 HTTP 控制端点无任何认证 | [esp32_at_node.ino](file://e:/Projects/at_node/esp32/esp32_at_node/esp32_at_node.ino) | ✅ 已解决（本地可信 NAT + 现有 `AT+HTTP` 开关） |
-| 6 | 低 | `keystr_buf` 不完整类型前置声明 + 重复定义 | [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c) | ✅ 已修复 |
-| 7 | 低 | `AT+ADC` 处理器中 `pga > 3` 重复检查（死代码） | [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c) | ✅ 已修复 |
-| 8 | 低 | `kb_flush` 预算式忙等待，最长阻塞调度器约 240ms | [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c) | ⏳ 待评估（架构权衡） |
-| 9 | 低 | 扫描响应连接间隔注释（"100ms"/"1s"）与实际值不符 | [hidkbd_ble.c](file://e:/Projects/at_node/ch582/APP/hidkbd_ble.c) | ✅ 已修复 |
-| 10 | 低 | `at_write_uart` 逐字节忙等待 TX FIFO | [at_parser.c](file://e:/Projects/at_node/ch582/APP/at_parser.c) | ⏳ 待评估（性能） |
+| 1 | 严重 | 休眠路径重复调用 `SYS_DisableAllIrq`，中断状态被覆盖 | [hws_sleep.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_sleep.c) | ✅ 已修复 |
+| 2 | 严重 | `Idle_Value[2]` 数组越界（HID 接口号为 2） | [usb_dev.c](file://e:/Projects/at_node/wchble/mr2/APP/usb_dev.c) | ✅ 已修复 |
+| 3 | 中等 | 电池电压换算 `uint16_t` 减法下溢 + 与 config.h 文档的 ×4 因子不一致 | [hws_batt.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_batt.c) | ✅ 已验证关闭（用户实测无问题） |
+| 4 | 中等 | ADC 换算 pga=0/1 分支同样的减法下溢 | [hws_adc.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_adc.c) | ✅ 已验证关闭（用户实测无问题） |
+| 5 | 中等 | ESP32 HTTP 控制端点无任何认证 | [esp32_at_node.ino](file://e:/Projects/at_node/esp32/arduino/arduino.ino) | ✅ 已解决（本地可信 NAT + 现有 `AT+HTTP` 开关） |
+| 6 | 低 | `keystr_buf` 不完整类型前置声明 + 重复定义 | [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c) | ✅ 已修复 |
+| 7 | 低 | `AT+ADC` 处理器中 `pga > 3` 重复检查（死代码） | [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c) | ✅ 已修复 |
+| 8 | 低 | `kb_flush` 预算式忙等待，最长阻塞调度器约 240ms | [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c) | ⏳ 待评估（架构权衡） |
+| 9 | 低 | 扫描响应连接间隔注释（"100ms"/"1s"）与实际值不符 | [hidkbd_ble.c](file://e:/Projects/at_node/wchble/mr2/APP/hidkbd_ble.c) | ✅ 已修复 |
+| 10 | 低 | `at_write_uart` 逐字节忙等待 TX FIFO | [at_parser.c](file://e:/Projects/at_node/wchble/mr2/APP/at_parser.c) | ⏳ 待评估（性能） |
 
 **总体评价**: 代码质量相当高——有完善的编译期配置校验（`#error`）、现场问题记录（FIELD-NOTES）、边界检查和防御性编程。#1 和 #2 是真实的内存/中断安全 bug，已修复并通过编译；#3/#4 经用户实测验证读数正确，已关闭；#5 经评估为本地可信 NAT 部署，复用现有 `AT+HTTP` 开关（可关 HTTP 仅留 MQTT）即满足安全需求；#8/#10 为性能权衡，留待观察。
 
@@ -28,7 +28,7 @@
 
 ### #1 休眠路径重复禁用全局中断（严重）
 
-**文件**: [hws_sleep.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_sleep.c) `hws_sleep_enter()`
+**文件**: [hws_sleep.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_sleep.c) `hws_sleep_enter()`
 
 **问题**: `SYS_DisableAllIrq(&irq_status)` 被连续调用两次。第二次调用把"已全关"的状态再次写入 `irq_status`，覆盖了第一次保存的真实中断现场。随后 `SYS_RecoverIrq(irq_status)` 恢复的是"全关闭"状态，导致函数返回后全局中断保持关闭，系统挂死。
 
@@ -52,7 +52,7 @@ time_curr = RTC_GetCycle32k();
 
 ### #2 USB HID `Idle_Value` 数组越界（严重）
 
-**文件**: [usb_dev.c](file://e:/Projects/at_node/ch582/APP/usb_dev.c)
+**文件**: [usb_dev.c](file://e:/Projects/at_node/wchble/mr2/APP/usb_dev.c)
 
 **问题**: 本设备 HID 键盘接口号为 **2**（CDC 占用接口 0/1）。SET_IDLE/GET_IDLE 处理用 `wIndexLo == 2` 作为下标访问 `Idle_Value`，但数组只声明了 2 个元素（下标 0/1），`Idle_Value[2]` 越界读写，破坏相邻静态变量。
 
@@ -68,7 +68,7 @@ static uint8_t  Idle_Value[3] = {0,0,0};  /* indexed by HID interface number (2)
 
 ### #6 `keystr_buf` 不完整类型前置声明 + 重复定义（低）
 
-**文件**: [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c)
+**文件**: [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c)
 
 **问题**: 文件顶部用 `static char keystr_buf[];`（不完整数组类型）做前置声明，完整定义 `static char keystr_buf[KEYSTR_MAX + 1];` 在数百行之后。虽然 C 标准允许"不完整 tentative 定义 + 后续补全"，但这种写法脆弱且易误导；`keystr_len/idx/active` 也存在两处重复定义。
 
@@ -76,7 +76,7 @@ static uint8_t  Idle_Value[3] = {0,0,0};  /* indexed by HID interface number (2)
 
 ### #7 `AT+ADC` 死代码重复检查（低）
 
-**文件**: [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c) `at_cmd_ADC()`
+**文件**: [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c) `at_cmd_ADC()`
 
 **问题**: 第一个 `if` 已检查 `pga > 3` 并返回，第二个 `if (pga > 3)` 永远不可达（死代码）。
 
@@ -89,7 +89,7 @@ if (ch > 13 || pga > 3) { AT_Response("ERROR: ch 0-13, pga 0-3 (0=-12dB,1=-6dB,2
 
 ### #9 BLE 扫描响应连接间隔注释错误（低）
 
-**文件**: [hidkbd_ble.c](file://e:/Projects/at_node/ch582/APP/hidkbd_ble.c) `scanRspData[]`
+**文件**: [hidkbd_ble.c](file://e:/Projects/at_node/wchble/mr2/APP/hidkbd_ble.c) `scanRspData[]`
 
 **问题**: 注释标注最小/最大连接间隔为 "100ms"/"1s"，但连接间隔单位是 1.25ms，实际宏值为 KBD_MULTI 下 12/24（= 15ms/30ms），其他模式 8（= 10ms）。注释与实际相差一个数量级。
 
@@ -103,7 +103,7 @@ if (ch > 13 || pga > 3) { AT_Response("ERROR: ch 0-13, pga 0-3 (0=-12dB,1=-6dB,2
 
 ### #3 电池电压换算下溢 + ×4 因子不一致（中等）
 
-**文件**: [hws_batt.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_batt.c) 第 28 行；[config.h](file://e:/Projects/at_node/ch582/APP/include/config.h) 第 243 行附近
+**文件**: [hws_batt.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_batt.c) 第 28 行；[config.h](file://e:/Projects/at_node/wchble/mr2/APP/include/config.h) 第 243 行附近
 
 **问题 A（下溢）**:
 ```c
@@ -122,7 +122,7 @@ return (uint16_t)((raw * vref / 512) - 3 * vref);
 
 ### #4 ADC 外部通道换算下溢（中等）
 
-**文件**: [hws_adc.c](file://e:/Projects/at_node/ch582/APP/HWS/hws_adc.c) 第 36-39 行 `pga_raw_to_mv()`
+**文件**: [hws_adc.c](file://e:/Projects/at_node/wchble/mr2/APP/HWS/hws_adc.c) 第 36-39 行 `pga_raw_to_mv()`
 
 **问题**: 与 #3 同源的减法下溢：
 - pga=0（-12dB）: `(raw×vref/512) − 3×vref`，`raw < 1536` 时下溢
@@ -136,7 +136,7 @@ return (uint16_t)((raw * vref / 512) - 3 * vref);
 
 ### #5 ESP32 HTTP 控制面无认证（中等 · 安全）
 
-**文件**: [esp32_at_node.ino](file://e:/Projects/at_node/esp32/esp32_at_node/esp32_at_node.ino) 第 2518-2545 行
+**文件**: [esp32_at_node.ino](file://e:/Projects/at_node/esp32/arduino/arduino.ino) 第 2518-2545 行
 
 **问题**: 以下 HTTP 端点无任何认证/鉴权，局域网内任意设备均可调用：
 - `/at-node/at`（POST，任意 AT 命令透传）
@@ -164,7 +164,7 @@ return (uint16_t)((raw * vref / 512) - 3 * vref);
 
 ### #8 `kb_flush` 预算式忙等待阻塞调度器（低 · 性能/架构）
 
-**文件**: [at_cmds.c](file://e:/Projects/at_node/ch582/APP/at_cmds.c) 第 55-60 行
+**文件**: [at_cmds.c](file://e:/Projects/at_node/wchble/mr2/APP/at_cmds.c) 第 55-60 行
 
 **问题**: BLE 多连接发送报告时，若 TX 队列满（`blePending`/`bleMemAllocError`），代码以最多 60 次 × 80000 次 `__nop()` 的预算自旋重试，最长阻塞 TMOS 调度器约 240ms。期间其他 TMOS 任务（按键扫描、AT 轮询等）无法运行。
 
@@ -174,7 +174,7 @@ return (uint16_t)((raw * vref / 512) - 3 * vref);
 
 ### #10 `at_write_uart` 逐字节忙等待（低 · 性能）
 
-**文件**: [at_parser.c](file://e:/Projects/at_node/ch582/APP/at_parser.c) 第 91-95 行
+**文件**: [at_parser.c](file://e:/Projects/at_node/wchble/mr2/APP/at_parser.c) 第 91-95 行
 
 **问题**:
 ```c
@@ -194,9 +194,9 @@ static void at_write_uart(uint8_t ch)
 
 | 文件 | 改动 |
 |------|------|
-| `ch582/APP/HWS/hws_sleep.c` | 删除重复的 `SYS_DisableAllIrq(&irq_status);` |
-| `ch582/APP/usb_dev.c` | `Idle_Value[2]` → `Idle_Value[3]` |
-| `ch582/APP/at_cmds.c` | `keystr_buf` 定义上移合并；删除 `AT+ADC` 死代码检查 |
-| `ch582/APP/hidkbd_ble.c` | 更正扫描响应连接间隔注释 |
+| `wchble/mr2/APP/HWS/hws_sleep.c` | 删除重复的 `SYS_DisableAllIrq(&irq_status);` |
+| `wchble/mr2/APP/usb_dev.c` | `Idle_Value[2]` → `Idle_Value[3]` |
+| `wchble/mr2/APP/at_cmds.c` | `keystr_buf` 定义上移合并；删除 `AT+ADC` 死代码检查 |
+| `wchble/mr2/APP/hidkbd_ble.c` | 更正扫描响应连接间隔注释 |
 
 > 注：以上修复均为静态审查结论，`hws_sleep.c` 涉及休眠路径，建议条件允许时做一次硬件回归（休眠-唤醒、USB 枚举、SET_IDLE/GET_IDLE）。

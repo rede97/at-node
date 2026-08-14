@@ -50,7 +50,7 @@ build_ch582() {
     fi
     log "Toolchain: $(riscv-none-embed-gcc --version | head -1)"
 
-    cd "$PROJECT_ROOT/ch582/obj"
+    cd "$PROJECT_ROOT/wchble/mr2/obj"
 
     # Build all variants
     for variant in "" "DONGLE=1" "MODE=DUAL"; do
@@ -80,8 +80,10 @@ build_esp32() {
         warn "arduino-cli not found, skipping ESP32 build"
         return 0
     fi
-    cd "$PROJECT_ROOT/esp32/esp32_at_node"
+    cd "$PROJECT_ROOT/esp32/arduino"
+    # Same fqbns as the board wrappers build-c3.ps1 / build-esp32.ps1
     arduino-cli compile --fqbn "esp32:esp32:esp32c3:CDCOnBoot=cdc,PartitionScheme=huge_app" .
+    arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" .
     cd "$PROJECT_ROOT"
     log "ESP32 build OK"
 }
@@ -96,7 +98,7 @@ run_tests() {
     cd "$PROJECT_ROOT"
     # Run encoding check (if script exists)
     if [ -f tools/utils/batch_utf8.py ]; then
-        uv run python tools/utils/batch_utf8.py ch582 --check || error "Encoding check failed"
+        uv run python tools/utils/batch_utf8.py wchble/mr2 --check || error "Encoding check failed"
         log "Encoding check OK"
     else
         warn "Encoding check script not found, skipping"
@@ -111,7 +113,7 @@ check_docs() {
     log "Checking documentation..."
     cd "$PROJECT_ROOT"
     # Verify key docs exist
-    for doc in AGENTS.md README.md REQUIREMENTS.md esp32/README.md esp32/PLAN.md esp32/API.md; do
+    for doc in AGENTS.md README.md REQUIREMENTS.md esp32/README.md esp32/arduino/PLAN.md esp32/arduino/API.md wchble/mr2/USER-MANUAL.md; do
         if [ ! -f "$doc" ]; then
             error "Missing doc: $doc"
             return 1
