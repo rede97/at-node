@@ -98,6 +98,7 @@ static bool      g_wifi_ready = false;
  * trusted local NAT networks only. On untrusted networks the operator should
  * disable it (AT+HTTP=0, persisted to NVS) and keep only the MQTT (TLS) plane. */
 static bool      g_http_enabled = true;
+static bool      g_http_auto = true;      /* auto-start on boot (NVS) */
 #if FEATURE_BLE
 static bool      g_pairing_mode = false;   /* default off for security */
 static bool      g_ble_enabled = true;     /* runtime master switch (NVS) */
@@ -354,13 +355,14 @@ static void load_config(void)
     g_mqtt_pass   = prefs.getString("mqtt_pass", "");
     g_mqtt_ca_fp   = prefs.getString("mqtt_ca_fp", "");
     g_mqtt_auto    = prefs.getString("mqtt_auto", "0").toInt() != 0;
-    g_mqtt_enabled = prefs.getString("mqtt_enable", "1").toInt() != 0;
+    g_mqtt_enabled = g_mqtt_auto;   /* enable is runtime-only; auto persists */
 #endif
 #if FEATURE_BLE
-    g_ble_enabled = prefs.getString("ble_enable", "1").toInt() != 0;
     g_ble_auto    = prefs.getString("ble_auto", "1").toInt() != 0;
+    g_ble_enabled = g_ble_auto;     /* enable is runtime-only; auto persists */
 #endif
-    g_http_enabled = prefs.getString("http_enable", "1").toInt() != 0;
+    g_http_auto    = prefs.getString("http_auto", "1").toInt() != 0;
+    g_http_enabled = g_http_auto;   /* enable is runtime-only; auto persists */
     prefs.end();
 }
 
@@ -387,10 +389,9 @@ bool mqtt_is_connected(void)
  * Security policy: HTTP is unauthenticated and intended for trusted local
  * NAT networks only; disable it (enable=false) on untrusted networks and
  * rely on the MQTT (TLS) control plane instead. */
-static void set_http_enabled(bool enable, bool persist = true)
+static void set_http_enabled(bool enable)
 {
     g_http_enabled = enable;
-    if (persist) save_config("http_enable", enable ? "1" : "0");
 #if FEATURE_HTTP
     if (!g_wifi_ready) return;
     if (enable) {
@@ -413,7 +414,6 @@ static void set_http_enabled(bool enable, bool persist = true)
  * re-enable). Persisted to NVS; auto controls boot-time advertising. */
 static bool cfg_s_bleten(const String& v) {
     g_ble_enabled = cfg_truthy(v);
-    save_config("ble_enable", g_ble_enabled ? "1" : "0");
     if (!g_ble_enabled) {
         NimBLEDevice::getAdvertising()->stop();
     } else if (g_pairing_mode) {
@@ -512,6 +512,7 @@ static bool cfg_s_wssid(const String& v) { g_wifi_ssid = v;   save_config("wifi_
 static bool cfg_s_wpass(const String& v) { g_wifi_pass = v;   save_config("wifi_pass", v); return true; }
 #if FEATURE_HTTP
 static bool cfg_s_httpen(const String& v) { set_http_enabled(cfg_truthy(v)); return true; }
+static bool cfg_s_httpauto(const String& v) { g_http_auto = cfg_truthy(v); save_config("http_auto", g_http_auto ? "1" : "0"); return true; }
 #endif
 #if FEATURE_MQTT
 static bool cfg_s_mbroker(const String& v) { g_mqtt_broker = v; save_config("mqtt_broker", v); return true; }
@@ -528,7 +529,6 @@ static bool cfg_s_mca(const String& v)   { g_mqtt_ca_fp = v; save_config("mqtt_c
 static bool cfg_s_mauto(const String& v) { g_mqtt_auto = cfg_truthy(v); save_config("mqtt_auto", g_mqtt_auto ? "1" : "0"); return true; }
 static bool cfg_s_mten(const String& v) {
     g_mqtt_enabled = cfg_truthy(v);
-    save_config("mqtt_enable", g_mqtt_enabled ? "1" : "0");
     g_mqtt_connect_pending = false;
     if (g_mqtt_sem) xSemaphoreGive(g_mqtt_sem);  /* wake task to apply */
     return true;
@@ -561,6 +561,7 @@ static const CfgEntry CFG_TABLE[] = {
 #endif
 #if FEATURE_HTTP
     {"http.enable",     false, cfg_s_httpen,  [](void){ return String(g_http_enabled ? 1 : 0); }},
+    {"http.auto",       false, cfg_s_httpauto,[](void){ return String(g_http_auto ? 1 : 0); }},
 #endif
 #if FEATURE_BLE
     {"ble.enable",      false, cfg_s_bleten,  [](void){ return String(g_ble_enabled ? 1 : 0); }},
@@ -1487,11 +1488,11 @@ static void handle_at(void)
     } else if (cmd.startsWith("AT+HTTP=") || cmd == "AT+HTTP") {
         String args = (cmd.length() > 8) ? cmd.substring(8) : String("status");
         if (args == "status") {
-            resp = "+HTTP:" + String(g_http_enabled ? "enabled" : "disabled");
+            resp = "+HTTP:" + String(g_http_enabled ? "enabled" : "disabled") + ",auto=" + String(g_http_auto ? "1" : "0");
         } else if (args == "clear") {
-            if (!g_http_enabled) set_http_enabled(true, false);
+            if (!g_http_enabled) set_http_enabled(true);
             prefs.begin("atnode", false);
-            prefs.remove("http_enable");
+            prefs.remove("http_auto");
             prefs.end();
             resp = "OK";
         } else if (args.startsWith("enable,")) {
@@ -2419,9 +2420,9 @@ static void handle_http_status(void)
 
 static void handle_http_clear(void)
 {
-    if (!g_http_enabled) set_http_enabled(true, false);
+    if (!g_http_enabled) set_http_enabled(true);
     prefs.begin("atnode", false);
-    prefs.remove("http_enable");
+    prefs.remove("http_auto");
     prefs.end();
     send_json("{\"ok\":true,\"cmd\":\"http/clear\"}");
 }
@@ -2950,12 +2951,12 @@ static void serial_exec(const String& line)
     } else if (line.startsWith("AT+HTTP=") || line == "AT+HTTP") {
         String args = (line.length() > 8) ? line.substring(8) : String("status");
         if (args == "status") {
-            Serial.println("+HTTP:" + String(g_http_enabled ? "enabled" : "disabled"));
+            Serial.println("+HTTP:" + String(g_http_enabled ? "enabled" : "disabled") + ",auto=" + String(g_http_auto ? "1" : "0"));
             Serial.println("OK");
         } else if (args == "clear") {
-            if (!g_http_enabled) set_http_enabled(true, false);
+            if (!g_http_enabled) set_http_enabled(true);
             prefs.begin("atnode", false);
-            prefs.remove("http_enable");
+            prefs.remove("http_auto");
             prefs.end();
             Serial.println("OK");
         } else if (args.startsWith("enable,")) {
