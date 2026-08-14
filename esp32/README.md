@@ -57,7 +57,7 @@
 - AT:`AT+SET=<key>=<val>` / `AT+GET=<key>` / `AT+KEYS`
 - HTTP:`POST /at-node/cmd/config?key=..&val=..`,`GET` 同路径读取，`GET /at-node/cmd/config/list` 全量
 - MQTT:`config/set` `config/get` `config/list` 方法
-- 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|auto`、`http.enable`、`rathole.enable`、`tunnel.1.server|token|service|local|auto|retry|enable`；密码/token 类为只写
+- 键空间：`device.name|hostname`、`wifi.ssid|pass`、`mqtt.broker|port|user|pass|ca|enable|auto`、`http.enable|auto`、`ble.enable|auto`、`rathole.enable`、`tunnel.1.server|token|service|local|auto|retry|enable`；密码/token 类为只写
 - 存量命令(`AT+WIFI=`、`AT+MQTT=`、`AT+HTTP=`、`AT+CONF=`、`/at-node/cmd/{wifi,mqtt,http}/config` 等）保留为注册表别名，老脚本不受影响
 
 ### 功能宏与固件变体（`features.h` + `build.ps1 -Variant`）
@@ -73,9 +73,18 @@
 | `base` | — | `RATHOLE=0 HTTP=0` | 生产键盘节点（BLE+MQTT+I2C），无隧道、**无 LAN HTTP 控制面**（防局域网攻击，仅串口配置；按钮触发的 AP 配网页 8080 不受影响） |
 | `rathole` | **Rathole** | `BLE=0 MQTT=0 I2C=0` | 隧道专用测试板（free_heap ~180K vs 全开 ~20K） |
 
-**编译期宏 vs 运行时开关**：`FEATURE_HTTP` 是编译期宏（`base` 变体彻底移除 HTTP 代码，路由 404）；
-`AT+HTTP=0/1` / `POST /at-node/cmd/http/config` / 配置键 `http.enable` 是**运行时动态开关**
-（`g_http_enabled`，NVS 持久化，重启保持），在 `full`/`remoter`/`rathole` 变体里可随时启停 HTTP 服务，无需重刷。
+**编译期宏 vs 运行时开关**：`FEATURE_HTTP` 是编译期宏（`base` 变体彻底移除 HTTP 代码，路由 404）。
+运行时开关统一为 **enable + auto 两层**：
+
+| 开关 | 语义 | 持久化 |
+|---|---|---|
+| `enable` | 运行时启停（临时） | ❌ 内存，重启后回到 `auto` 的值 |
+| `auto` | 上电自动启动 | ✅ NVS |
+
+- HTTP / MQTT / BLE 三服务统一两层：`http.enable|auto`、`mqtt.enable|auto`、`ble.enable|auto`；
+  上电 `enable = auto`，运行时 `AT+XXX=enable,<0\|1>` 临时启停、`AT+XXX=auto,<0\|1>` 持久化。
+- rathole 保持三级（`rathole.enable` 总开关 + `tunnel.N.enable` 隧道配置 + `tunnel.N.auto` 自连）；
+  其"临时启停"对应 `connect`/`disconnect`，`enable` 是持久化配置（隧道配置重启保持）。
 
 ```bash
 powershell -File esp32/esp32_at_node/build.ps1 -Port COMx -Variant rathole
