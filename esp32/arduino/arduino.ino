@@ -33,7 +33,7 @@
 #include "ap_portal.h"
 #include "wifi_config.h"
 #if FEATURE_HTTP
-#include "web_page.h"   /* gzipped single-page web UI (esp32/web/build.py) */
+#include "web_page.h"   /* gzipped single-page web UI (web/build.ts, bun run build) */
 #endif
 #if FEATURE_MQTT
 #include <WiFiClientSecure.h>
@@ -2567,6 +2567,7 @@ static void serial_exec(const String& line)
         Serial.println("  AT+MQTT=broker|port|enable|auto,<val> connect|status|clear");
 #endif
 #if FEATURE_RATHOLE
+        Serial.println("  AT+TUNNEL=*  rathole-compatible tunnel client (single tunnel, plain TCP)");
         Serial.println("  AT+TUNNEL=enable,<0|1>            rathole master switch (NVS)");
         Serial.println("  AT+TUNNEL=server|token|service|local|auto|retry|enable,<val>");
         Serial.println("  AT+TUNNEL=connect|disconnect|clear|status");
@@ -3010,12 +3011,11 @@ static void serial_exec(const String& line)
         }
 #if FEATURE_RATHOLE
     } else if (line.startsWith("AT+TUNNEL=")) {
-        /* AT+TUNNEL=status | enable | enable,<0|1>
-         * AT+TUNNEL=server|token|service|local|auto|retry|enable,<val>   (id 省略,默认隧道1)
-         * AT+TUNNEL=connect|disconnect|clear|status                       (id 省略)
-         * AT+TUNNEL=<1>,... 旧带 id 语法仍兼容 */
+        /* rathole-compatible tunnel client (single tunnel, no id).
+         * AT+TUNNEL=status | enable | enable,<0|1>
+         * AT+TUNNEL=server|token|service|local|auto|retry|enable,<val>
+         * AT+TUNNEL=connect|disconnect|clear|status                       */
         String args = line.substring(10);
-        int c1 = args.indexOf(',');
         if (args == "status") {
             Serial.println("+TUNNEL_EN:" + String(rathole_is_enabled() ? 1 : 0));
             for (int i = 0; i < RATHOLE_MAX_TUNNELS; i++) {
@@ -3029,41 +3029,26 @@ static void serial_exec(const String& line)
             rathole_set_enabled(args.substring(7).toInt() != 0);
             Serial.println("OK");
         } else {
-            /* Optional leading <id> (single tunnel: default 1). Accept both
-             * "AT+TUNNEL=server,x" and legacy "AT+TUNNEL=1,server,x". */
-            int id = 1;
-            String rest = args;
-            int c1 = args.indexOf(',');
-            String first = (c1 < 0) ? args : args.substring(0, c1);
-            bool isId = first.length() > 0;
-            for (size_t i = 0; i < first.length(); i++) {
-                char ch = first[i];
-                if (ch < '0' || ch > '9') { isId = false; break; }
-            }
-            if (isId) {
-                id = first.toInt();
-                rest = (c1 < 0) ? "" : args.substring(c1 + 1);
-            }
-            int c2 = rest.indexOf(',');
-            String sub = (c2 < 0) ? rest : rest.substring(0, c2);
-            String val = (c2 < 0) ? "" : rest.substring(c2 + 1);
-            if (sub.length() == 0 || id < 1 || id > RATHOLE_MAX_TUNNELS) {
+            int c2 = args.indexOf(',');
+            String sub = (c2 < 0) ? args : args.substring(0, c2);
+            String val = (c2 < 0) ? "" : args.substring(c2 + 1);
+            if (sub.length() == 0) {
                 Serial.println("ERROR");
             } else if (sub == "server" || sub == "token" || sub == "service" ||
                        sub == "local" || sub == "auto" || sub == "retry" ||
                        sub == "enable") {
-                Serial.println((val.length() > 0 && rathole_set(id - 1, sub, val))
+                Serial.println((val.length() > 0 && rathole_set(0, sub, val))
                                ? "OK" : "ERROR");
             } else if (sub == "connect") {
-                Serial.println(rathole_start(id - 1) ? "OK" : "ERROR");
+                Serial.println(rathole_start(0) ? "OK" : "ERROR");
             } else if (sub == "disconnect") {
-                rathole_stop(id - 1);
+                rathole_stop(0);
                 Serial.println("OK");
             } else if (sub == "clear") {
-                rathole_clear(id - 1);
+                rathole_clear(0);
                 Serial.println("OK");
             } else if (sub == "status") {
-                Serial.println("+TUNNEL:" + rathole_status_json(id - 1));
+                Serial.println("+TUNNEL:" + rathole_status_json(0));
                 Serial.println("OK");
             } else {
                 Serial.println("ERROR");
