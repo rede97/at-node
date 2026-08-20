@@ -22,13 +22,26 @@ USB CDC, WiFi HTTP, or MQTT — same command semantics on every platform.
 > Do not attach to computers you do not trust; do not expose the AT/HTTP interface
 > to untrusted networks or agents; treat the control channel as a privileged console.
 
+### What a node can do
+
+- **Keyboard injection**: BLE HID and/or USB HID boot keyboard; atomic tap /
+  text typing / key sequences (`AT+TAP`, `AT+KEY_STR`, `AT+TAP=ms,mods,key` …),
+  target routing (`AT+DEV=USB|BLE|ALL`) on multi-transport variants.
+- **Control planes**: UART/USB-CDC serial, WiFi HTTP (`/at-node/*` JSON + web UI),
+  MQTT over TLS — all three share one command dispatcher and one config registry.
+- **Peripherals**: GPIO / ADC / I2C scan & R/W, IR sender (C3), WS2812 status LED.
+- **Ops**: NVS-persisted config (`AT+SET/GET/KEYS`), pairing-window BLE security,
+  WiFi watchdog self-healing, cloud broker for remote access
+  ([`tools/broker/`](tools/broker/)).
+
 ### Platform variants
 
 | Series | Variant | Chip | Stack | Control plane | Status |
 |---|---|---|---|---|---|
-| WCH BLE | [`wchble/mr2/`](wchble/mr2/) | CH582F | MounRiver Studio 2, bare-metal + TMOS | USB CDC + UART | ✅ Active |
-| ESP32 | [`esp32/arduino/`](esp32/arduino/) | ESP32-C3, classic ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS | ✅ Active |
-| ESP32 | [`esp32/zephyr/`](esp32/zephyr/) | ESP32-S3 & PSRAM chips | Zephyr | WiFi HTTP + MQTT TLS | 📋 TODO |
+| WCH BLE | [`wchble/mr2/`](wchble/mr2/) | CH582F | MounRiver Studio 2, bare-metal + TMOS | USB CDC + UART | ✅ Active — kbd / kbd_multi (3 hosts) / dongle (BLE HID receiver) |
+| ESP32 | [`esp32/arduino/`](esp32/arduino/) | ESP32-C3, classic ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS + serial | ✅ Active — full network node (web SPA, AP portal, rathole tunnel, IR) |
+| ESP32 | [`esp32/rust/`](esp32/rust/) | ESP32-S3 (nanoESP32-S3 N8R8) | esp-rs: esp-hal + Embassy (no_std) | WiFi HTTP + MQTT TLS + serial + BLE/USB HID | 🚧 In progress — migration plan: [`esp32/rust/MIGRATION.md`](esp32/rust/MIGRATION.md) |
+| ESP32 | [`esp32/zephyr/`](esp32/zephyr/) | ESP32-S3 & PSRAM chips | Zephyr | WiFi HTTP + MQTT TLS | 🗄 Archived (commit `e759a2a`) — Zephyr route abandoned for ESP32 |
 | Nordic | [`nordic/zephyr/`](nordic/zephyr/) | nRF52840 | Zephyr (nRF Connect SDK) | USB CDC | 📋 TODO |
 
 Cross-hardware requirement differences are recorded as **final decisions** with
@@ -44,7 +57,8 @@ issue records live in each platform directory — see the doc map below.
 | [AGENTS.md](AGENTS.md) | Agent-facing repo manual (architecture, build, conventions) |
 | [AUDIT.md](AUDIT.md) | Code audit report (2026-07-26) |
 | [wchble/README.md](wchble/README.md) | WCH BLE series overview → CH582 docs (hardware, manual, field notes, power) |
-| [esp32/README.md](esp32/README.md) | ESP32 series overview → Arduino/Zephyr variants, S3 decision, compat report |
+| [esp32/README.md](esp32/README.md) | ESP32 series overview → Arduino/Rust variants, S3 decision, compat report |
+| [esp32/rust/MIGRATION.md](esp32/rust/MIGRATION.md) | Zephyr→Rust migration constraint doc (decisions, rules, phases R0–R8) |
 | [nordic/README.md](nordic/README.md) | Nordic series overview |
 | [tools/README.md](tools/README.md) | Test/broker/CI tooling |
 
@@ -61,13 +75,25 @@ issue records live in each platform directory — see the doc map below.
 > 无限制地控制你的键盘。** 不要连接不信任的电脑；不要把 AT/HTTP 接口暴露给
 > 不可信的网络或 Agent；始终把控制通道当作特权管理控制台。
 
+### 节点能力
+
+- **键盘注入**:BLE HID 和/或 USB HID(boot keyboard)；原子点按 / 文本输入 /
+  序列引擎(`AT+TAP`、`AT+KEY_STR` …)，多传输变体支持目标路由
+  (`AT+DEV=USB|BLE|ALL`)。
+- **控制面**：串口(UART/USB-CDC)、WiFi HTTP(`/at-node/*` JSON + Web 单页应用)、
+  MQTT over TLS——三通道共享同一命令分发器与统一配置注册表。
+- **外设**:GPIO / ADC / I2C 扫描读写、红外发送(C3)、WS2812 状态灯。
+- **运维**:NVS 持久化配置(`AT+SET/GET/KEYS`)、配对窗口式 BLE 安全、
+  WiFi 看门狗自愈、云 broker 远程访问([`tools/broker/`](tools/broker/))。
+
 ### 平台变体
 
 | 系列 | 变体 | 芯片 | 栈 | 主控制面 | 状态 |
 |---|---|---|---|---|---|
-| WCH BLE | [`wchble/mr2/`](wchble/mr2/) | CH582F | MounRiver Studio 2，裸机 + TMOS | USB CDC + UART | ✅ Active |
-| ESP32 | [`esp32/arduino/`](esp32/arduino/) | ESP32-C3、原版 ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS | ✅ Active |
-| ESP32 | [`esp32/zephyr/`](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | 📋 TODO |
+| WCH BLE | [`wchble/mr2/`](wchble/mr2/) | CH582F | MounRiver Studio 2，裸机 + TMOS | USB CDC + UART | ✅ Active — kbd / kbd_multi(3 主机) / dongle(BLE HID 接收器) |
+| ESP32 | [`esp32/arduino/`](esp32/arduino/) | ESP32-C3、原版 ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS + 串口 | ✅ Active — 全功能网络节点(Web SPA、AP 配网、rathole 隧道、IR) |
+| ESP32 | [`esp32/rust/`](esp32/rust/) | ESP32-S3(nanoESP32-S3 N8R8) | esp-rs:esp-hal + Embassy(no_std) | WiFi HTTP + MQTT TLS + 串口 + BLE/USB HID | 🚧 进行中 — 迁移准则：[`esp32/rust/MIGRATION.md`](esp32/rust/MIGRATION.md) |
+| ESP32 | [`esp32/zephyr/`](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | 🗄 已归档(commit `e759a2a`)— Zephyr 路线已放弃 |
 | Nordic | [`nordic/zephyr/`](nordic/zephyr/) | nRF52840 | Zephyr（nRF Connect SDK） | USB CDC | 📋 TODO |
 
 跨硬件需求差异只登记**最终决定**并指向平台文档：见
@@ -80,6 +106,7 @@ issue records live in each platform directory — see the doc map below.
 | CH582（wchble/mr2） | `cd wchble/mr2/obj && make --no-print-directory main-build`（需 MounRiver 工具链，`source env.sh`） |
 | ESP32-C3 SuperMini | `esp32/arduino/build-c3.ps1 -Port COMx` |
 | 标准 ESP32 | `esp32/arduino/build-esp32.ps1 -Port COMx` |
+| ESP32-S3（Rust，进行中） | `cd esp32/rust && cargo build --release && espflash flash --monitor`（先 `. ~/export-esp.sh`） |
 
 Agent 刷机**默认使用板卡专用脚本**（`build-c3.ps1` / `build-esp32.ps1`），
 禁止裸 arduino-cli / IDE 默认路径——原因见 [REQUIREMENTS.md](REQUIREMENTS.md) §4 D8。
