@@ -202,5 +202,6 @@ uv run python tools/broker/atnode_broker.py client list    # list devices
 - `esp32/COMPAT_REPORT.md` — ESP32 跨芯片兼容性实测 + S3 放弃根因。
 - `.pi/skills/esp32-windows/` — Windows/ESP32-C3 development pit list (pi skill).
 - `.pi/skills/esp32-hardware/` — ESP32 hardware pit list (pi skill).
+- `.pi/skills/esp32-linux/` — Linux ESP32 dev ops manual: dual-USB identity, serial discipline, flashing, JTAG, Rust toolchain, MQTT/TLS rig (pi skill).
 - `.pi/skills/ch582-linux/` — Linux build/flash/test ops manual (pi skill).
 - `EVT/` — WCH CH583 SDK reference code (gitignored, not compiled).
