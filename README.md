@@ -32,7 +32,8 @@ USB CDC, WiFi HTTP, or MQTT — same command semantics on every platform.
 - **Peripherals**: GPIO / ADC / I2C scan & R/W, IR sender (C3), WS2812 status LED.
 - **Ops**: NVS-persisted config (`AT+SET/GET/KEYS`), pairing-window BLE security,
   WiFi watchdog self-healing, cloud broker for remote access
-  ([`tools/broker/`](tools/broker/)).
+  ([`tools/broker/`](tools/broker/)), rathole tunnel for NAT traversal
+  (Arduino variant).
 
 ### Platform variants
 
@@ -84,7 +85,8 @@ issue records live in each platform directory — see the doc map below.
   MQTT over TLS——三通道共享同一命令分发器与统一配置注册表。
 - **外设**:GPIO / ADC / I2C 扫描读写、红外发送(C3)、WS2812 状态灯。
 - **运维**:NVS 持久化配置(`AT+SET/GET/KEYS`)、配对窗口式 BLE 安全、
-  WiFi 看门狗自愈、云 broker 远程访问([`tools/broker/`](tools/broker/))。
+  WiFi 看门狗自愈、云 broker 远程访问([`tools/broker/`](tools/broker/))、
+  rathole 内网穿透(Arduino 变体)。
 
 ### 平台变体
 
