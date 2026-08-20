@@ -51,7 +51,7 @@ CH582 平台同时承担 **WCH CH58x 系列 MCU 高质量开发模板** 的角�
 |------|---------|------|---------|---------|------|
 | WCH BLE | [wchble/mr2/](wchble/mr2/) | CH582F（规划 CH592） | MounRiver Studio 2 工程，裸机 + TMOS + 预编译 BLE 栈 | USB CDC（+UART） | ✅ Active |
 | ESP32 | [esp32/arduino/](esp32/arduino/) | ESP32-C3、原版 ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS | ✅ Active |
-| ESP32 | [esp32/zephyr/](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | ✅ Active |
+| ESP32 | [esp32/zephyr/](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | 🗄 已归档（e759a2a，Zephyr 放弃，转 esp-rs/Rust） |
 | Nordic | [nordic/zephyr/](nordic/zephyr/) | nRF52840 | Zephyr（nRF Connect SDK） | USB CDC | 📋 TODO |
 
 各平台文档索引见 [README.md](README.md)。
@@ -482,18 +482,24 @@ CH582 平台命令集（在通用命令之上）：
 
 ## 7. 规划平台需求（TODO）
 
-### 7.1 esp32/zephyr（ESP32-S3 等 PSRAM 机型）
+### 7.1 esp32/zephyr（ESP32-S3 等 PSRAM 机型）— 🗄 已归档（2026-08-20）
 
-> 承接被 Arduino 变体放弃的 S3（§4 D2）。规划与准入条件：
-> [esp32/zephyr/README.md](esp32/zephyr/README.md)。
+> **决定：放弃 Zephyr 路线，S3 转向 esp-rs（Rust, esp-hal + Embassy）实现。**
+> 完整实现曾完成并硬件冒烟通过，归档于 commit **e759a2a**
+> （`git show e759a2a` 可取回全部代码与文档；其 README 含完整坑录）。
+> 放弃原因：Zephyr 对 ESP32 的支持不健全、不可持续维护——
+> WiFi/BLE 为二进制 blob（崩溃无源码符号）、子系统组合从未被上游测试
+> （WiFi+BT+USB+HTTP 同开连踩 8 个集成坑，详见该 commit README 的 bug 表）、
+> Kconfig/API 在主线频繁变动、错误信息不指向根因。
+> Z1.4/Z1.5 不再适用；Rust 版规划见 esp32/rust/。
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
-| Z1.1 | Zephyr 工程骨架（ESP32-S3 目标，PSRAM 启用） | P2 | ✅ 已完成（2026-08-20，nanoESP32-S3） |
-| Z1.2 | WiFi HTTP + MQTT TLS 控制面（对齐 esp32/arduino 语义） | P2 | ✅ 已完成（构建验证，硬件冒烟待测） |
-| Z1.3 | BLE HID 键盘（NimBLE host on Zephyr） | P2 | ✅ 已完成（改用 Zephyr 原生 BLE host，非 NimBLE；另加 USB HID 键盘） |
-| Z1.4 | PSRAM 大负载：完整 CA bundle、更大 Web 资产、多并发隧道 | P3 | ⬜ |
-| Z1.5 | IR 发送（RMT） | — | 🚫 暂不实现（2026-08-20）：Zephyr 无 RMT 驱动，上游 pulse_io 仍在 RFC（zephyr#109586）；备选 LEDC PWM 载波，有需求再议 |
+| Z1.1 | Zephyr 工程骨架（ESP32-S3 目标，PSRAM 启用） | P2 | 🗄 已完成→归档（e759a2a） |
+| Z1.2 | WiFi HTTP + MQTT TLS 控制面（对齐 esp32/arduino 语义） | P2 | 🗄 已完成→归档（e759a2a，硬件冒烟通过） |
+| Z1.3 | BLE HID 键盘（NimBLE host on Zephyr） | P2 | 🗄 已完成→归档（改用 Zephyr 原生 host + USB HID） |
+| Z1.4 | PSRAM 大负载：完整 CA bundle、更大 Web 资产、多并发隧道 | P3 | ✗ 取消（随 Zephyr 路线放弃） |
+| Z1.5 | IR 发送（RMT） | — | ✗ 取消（Zephyr 无 RMT 驱动；Rust esp-hal 有 RMT，可在 Rust 版实现） |
 
 ### 7.2 nordic/zephyr（nRF52840）
 

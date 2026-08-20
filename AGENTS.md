@@ -9,7 +9,7 @@ One command semantics across platforms; agents reuse scripts, only the transport
 |---|---|---|---|---|
 | WCH BLE | `wchble/mr2/` | CH582F | MounRiver Studio 2 project, bare-metal + TMOS + precompiled BLE lib | ✅ Active |
 | ESP32 | `esp32/arduino/` | ESP32-C3, classic ESP32 (NOT S3) | Arduino-ESP32 | ✅ Active |
-| ESP32 | `esp32/zephyr/` | ESP32-S3 (nanoESP32-S3 N8R8) & PSRAM chips | Zephyr (native BLE host) | ✅ Active |
+| ESP32 | `esp32/zephyr/` | ESP32-S3 (nanoESP32-S3 N8R8) & PSRAM chips | Zephyr (native BLE host) | 🗄 Archived (commit e759a2a; Zephyr abandoned for ESP32, moving to esp-rs/Rust) |
 | Nordic | `nordic/zephyr/` | nRF52840 | Zephyr (nRF Connect SDK) | 📋 TODO placeholder |
 
 - Cross-hardware requirement differences: **final decisions only** in `REQUIREMENTS.md` §4, pointing to platform docs.
@@ -153,15 +153,16 @@ uv run python tools/test/c3_type.py --ip 192.168.1.27 "Hello World"
 uv run python tools/test/c3_type.py --ip 192.168.1.27 --ms 60 --gap 100 "Hello World"
 ```
 
-## ESP32 — Zephyr variant (`esp32/zephyr/`)
+## ESP32 — Zephyr variant (`esp32/zephyr/`) — 🗄 ARCHIVED
 
-ESP32-S3 AT Node on Zephyr: WiFi HTTP + MQTT(TLS) control planes, BLE HID + USB HID
-keyboard (AT+DEV routing), settings/NVS config registry, GPIO/ADC/I2C, WS2812 status
-LED. Shares the Arduino variant's web SPA (`../arduino/web_page.h`, included
-unmodified). Build: `esp32/zephyr/tools/build.sh [build|pristine|flash]`
-(board `nano_esp32s3/esp32s3/procpu`, needs `~/zephyrproject` + zephyr-sdk on PATH).
-Full docs (AT set, config keys, deltas vs Arduino, memory budget): `esp32/zephyr/README.md`.
-Reference/pit list: `~/zephyrproject/apps/nano_esp32s3_demo/docs/DEBUGGING.md`.
+Zephyr route **abandoned** (2026-08-20): ESP32 support in Zephyr is immature and
+unsustainable (binary-blob WiFi/BLE, untested feature combinations, moving APIs).
+The complete, build-verified, hardware-smoke-tested implementation (WiFi HTTP +
+MQTT/TLS + BLE/USB HID keyboard + config registry + GPIO/ADC/I2C + WS2812) is
+archived in commit **e759a2a** — recover with `git show e759a2a`; its
+`esp32/zephyr/README.md` carries the full bring-up bug table (k_timer ISR SPI
+scheduler corruption, p256m/TLS conflict, DRAM budget, USB PHY sharing).
+S3 work continues in Rust (esp-hal + Embassy, `esp32/rust/`).
 
 ## Remote broker (MQTT + HTTP proxy for remote device access)
 
