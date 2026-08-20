@@ -1,0 +1,6 @@
+board:
+  name: nano_esp32s3
+  full_name: nanoESP32-S3
+  vendor: muselab
+  socs:
+    - name: esp32s3

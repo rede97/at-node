@@ -1,0 +1,6 @@
+/* Triage/debug: disable USB OTG so the native USB-Serial-JTAG keeps the PHY
+ * (openocd debugging over the native USB-C port).
+ */
+&usb_otg {
+	status = "disabled";
+};

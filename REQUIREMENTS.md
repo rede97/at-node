@@ -51,7 +51,7 @@ CH582 平台同时承担 **WCH CH58x 系列 MCU 高质量开发模板** 的角�
 |------|---------|------|---------|---------|------|
 | WCH BLE | [wchble/mr2/](wchble/mr2/) | CH582F（规划 CH592） | MounRiver Studio 2 工程，裸机 + TMOS + 预编译 BLE 栈 | USB CDC（+UART） | ✅ Active |
 | ESP32 | [esp32/arduino/](esp32/arduino/) | ESP32-C3、原版 ESP32 | Arduino-ESP32 | WiFi HTTP + MQTT TLS | ✅ Active |
-| ESP32 | [esp32/zephyr/](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | 📋 TODO |
+| ESP32 | [esp32/zephyr/](esp32/zephyr/) | ESP32-S3 等 PSRAM 机型 | Zephyr | WiFi HTTP + MQTT TLS | ✅ Active |
 | Nordic | [nordic/zephyr/](nordic/zephyr/) | nRF52840 | Zephyr（nRF Connect SDK） | USB CDC | 📋 TODO |
 
 各平台文档索引见 [README.md](README.md)。
@@ -489,10 +489,11 @@ CH582 平台命令集（在通用命令之上）：
 
 | 编号 | 需求 | 优先级 | 状态 |
 |------|------|--------|------|
-| Z1.1 | Zephyr 工程骨架（ESP32-S3 目标，PSRAM 启用） | P2 | ⬜ |
-| Z1.2 | WiFi HTTP + MQTT TLS 控制面（对齐 esp32/arduino 语义） | P2 | ⬜ |
-| Z1.3 | BLE HID 键盘（NimBLE host on Zephyr） | P2 | ⬜ |
+| Z1.1 | Zephyr 工程骨架（ESP32-S3 目标，PSRAM 启用） | P2 | ✅ 已完成（2026-08-20，nanoESP32-S3） |
+| Z1.2 | WiFi HTTP + MQTT TLS 控制面（对齐 esp32/arduino 语义） | P2 | ✅ 已完成（构建验证，硬件冒烟待测） |
+| Z1.3 | BLE HID 键盘（NimBLE host on Zephyr） | P2 | ✅ 已完成（改用 Zephyr 原生 BLE host，非 NimBLE；另加 USB HID 键盘） |
 | Z1.4 | PSRAM 大负载：完整 CA bundle、更大 Web 资产、多并发隧道 | P3 | ⬜ |
+| Z1.5 | IR 发送（RMT） | — | 🚫 暂不实现（2026-08-20）：Zephyr 无 RMT 驱动，上游 pulse_io 仍在 RFC（zephyr#109586）；备选 LEDC PWM 载波，有需求再议 |
 
 ### 7.2 nordic/zephyr（nRF52840）
 

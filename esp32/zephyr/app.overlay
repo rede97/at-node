@@ -1,0 +1,58 @@
+/*
+ * App-level DT additions for nanoESP32-S3:
+ *  - I2C0 on GPIO8/SDA + GPIO9/SCL (same pins as the C3 variant)
+ *  - ADC0 (channels 0..9 -> GPIO1..GPIO10)
+ *  - USB OTG (DWC2) device controller for the USB HID keyboard
+ */
+
+&pinctrl {
+	i2c0_default: i2c0_default {
+		group1 {
+			pinmux = <I2C0_SDA_GPIO8>;
+			output-high;
+			bias-pull-up;
+			drive-open-drain;
+		};
+		group2 {
+			pinmux = <I2C0_SCL_GPIO9>;
+			output-high;
+			bias-pull-up;
+			drive-open-drain;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <I2C_BITRATE_FAST>;
+	pinctrl-0 = <&i2c0_default>;
+	pinctrl-names = "default";
+};
+
+&adc0 {
+	status = "okay";
+	#io-channel-cells = <1>;
+	io-channels = <&adc0 0>, <&adc0 1>, <&adc0 2>, <&adc0 3>, <&adc0 4>,
+		      <&adc0 5>, <&adc0 6>, <&adc0 7>, <&adc0 8>, <&adc0 9>;
+};
+
+zephyr_udc0: &usb_otg {
+	status = "okay";
+};
+
+&esp32_bt_hci {
+	status = "okay";
+};
+
+/ {
+	/* usbd_hid class instance: 8-byte boot keyboard input report.
+	 * LED output reports arrive over the control pipe (no OUT endpoint).
+	 */
+	hid_dev_0: hid_dev_0 {
+		compatible = "zephyr,hid-device";
+		label = "AT-Node Keyboard";
+		protocol-code = "keyboard";
+		in-report-size = <8>;
+		in-polling-period-us = <1000>;
+	};
+};

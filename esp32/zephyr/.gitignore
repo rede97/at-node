@@ -1,0 +1,3 @@
+build*/
+src/ca_cert.h
+certs/

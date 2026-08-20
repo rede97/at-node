@@ -1,0 +1,16 @@
+identifier: nano_esp32s3/esp32s3/procpu
+name: MuseLab nanoESP32-S3 PROCPU
+vendor: muselab
+type: mcu
+arch: xtensa
+toolchain:
+  - zephyr
+supported:
+  - gpio
+  - uart
+  - spi
+  - watchdog
+  - entropy
+  - input
+ram: 320
+flash: 8192
