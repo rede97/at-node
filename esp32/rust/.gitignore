@@ -1,0 +1,4 @@
+target/
+# Dev TLS certs for the local MQTT broker (private keys, never commit).
+# Regenerate or copy from the archived Zephyr tree as needed (R3).
+certs/

@@ -54,7 +54,7 @@ Zephyr 版留下三种可复用资产：
 | WiFi/BLE | `esp-radio`(WiFi STA + BLE 共存）| 官方；BLE host 用 `trouble` |
 | BLE HID | `trouble` HID over GATT(boot keyboard,report map 照抄 Zephyr 版描述符） | 配对语义复刻 §5.2 |
 | USB HID | `esp-hal` USB-OTG + `usb-device` + `usbd-hid` | 注意 §6 PHY 约束 |
-| MQTT | `rust-mqtt`（或 embassy 生态等价物）+ `embedded-tls`(CA DER 内嵌） | 不碰 mbedTLS |
+| MQTT | ~~`rust-mqtt`~~ → **自实现 MQTT 3.1.1 mini client**(mqttc.rs 内置)+ `embedded-tls`(pki 验证器,CA DER 内嵌) | 2026-08-20 R3 变更:rust-mqtt 0.3 v3 全 stub、0.5 v3 模块为空;atnode broker(amqtt,含云端)协议级别=4 只讲 3.1.1。embedded-tls 用 pki 不用 webpki:ring 不为 xtensa 构建。不碰 mbedTLS |
 | HTTP | `picoserve`（静态 gzip SPA + JSON 路由） | 无 std HTTP server |
 | NVS 配置 | `esp-storage` + `sequential-storage`(map 模式） | 键值语义对齐 cfg.c |
 | WS2812 | `esp-hal-smartled`(RMT) | 异步 buffer 模式，勿阻塞写 |
@@ -173,11 +173,11 @@ esp32/rust/
 | R0 | esp-generate 骨架：S3 + Embassy + esp-println + esp-backtrace,WS2812 点亮，UART0 echo | 烧录启动，串口可见 banner,LED 亮 |
 | R1 | cfg.rs(esp-storage 注册表）+ at.rs 核心 + at_serial + AT/VER/HELP/SET/GET/KEYS/RST + LED 预设/自由色 | 串口全命令通过；复位后配置保持 |
 | R2 | wifi.rs(STA + 看门狗）+ AT+WIFI/STATUS | 冷启动连接、拔插 AP 自愈、RSSI/IP 上报 |
-| R3 | mqttc.rs(TLS + LWT + cmd→resp)+ AT+MQTT 系列 | 本地 TLS broker 回环全通；杀 broker 重连 20 轮无泄漏（H4 测试） |
-| R4 | httpd.rs 全路由 + 共享 SPA + config/ble/wifi/mqtt 端点 | curl 端点清单全过；浏览器 SPA 三页正常 |
+| R3 | mqttc.rs(TLS + LWT + cmd→resp)+ AT+MQTT 系列 | 本地 TLS broker 回环全通；杀 broker 重连 20 轮无泄漏（H4 测试）【✅ 2026-08-20 通过】 |
+| R4 | httpd.rs 全路由 + 共享 SPA + config/ble/wifi/mqtt 端点 | curl 端点清单全过；浏览器 SPA 三页正常【✅ 2026-08-20 通过；ble/kbd 端点随 R5/R6 补】 |
 | R5 | kbd/usb.rs(usbd-hid)+ kbd 路由 + AT+TAP/KEY/KEY_STR/KEY_SEQ/DEV | 主机枚举 + 打字实测（用户验收） |
 | R6 | kbd/ble.rs(trouble HID + 配对窗口状态机 + bond 持久化）| 配对 → 打字 → 断连 → bonded-only 重连；清 bond |
-| R7 | hws.rs(GPIO/ADC/I2C)+ 对应 AT/HTTP 端点 | 命令与端点全过 |
+| R7 | hws.rs(GPIO/ADC/I2C)+ 对应 AT/HTTP 端点 | 命令与端点全过【✅ 2026-08-22 通过;I2C_SCAN 改 bit-bang;ADC ch7/8 移除(与 I2C 共脚)】 |
 | R8 | 收尾：README、REQUIREMENTS.md 状态、AGENTS.md、内存水位记录、已知问题清单 | 文档齐，clippy 零警告 |
 
 依赖关系：R0→R1→R2 顺序；R3/R5/R7 互不依赖可并行；R4 依赖 R1;

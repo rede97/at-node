@@ -1,0 +1,17 @@
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --chip esp32s3"
+
+[env]
+# AT console shares UART0 with the log output; keep routine logs quiet so
+# scripted AT exchanges are not interleaved with info chatter.
+ESP_LOG="warn"
+
+[build]
+rustflags = [
+  "-C", "link-arg=-nostartfiles",
+]
+
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]

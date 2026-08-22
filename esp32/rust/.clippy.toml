@@ -1,0 +1,4 @@
+# Embassy task futures live in the executor's static task pool, not on a
+# call stack, so the default 1 KiB frame budget misfires on async fns.
+# 8 KiB still catches genuinely pathological frames in sync/ISR paths.
+stack-size-threshold = 8192
