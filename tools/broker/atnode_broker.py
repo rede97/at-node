@@ -34,6 +34,11 @@ Usage:
   atnode_broker.py manager key list|revoke|enable|remove ...
   atnode_broker.py manager certs gen [--ip IP] [--certs DIR]
   atnode_broker.py manager certs fingerprint|info|verify [--certs DIR]
+
+client call params are k=v pairs; values are url-encoded for you — pass
+them RAW, never pre-escaped, and shell-quote '#':
+  atnode_broker.py client call <dev> led 'color=#FF8800'   (WS2812 color)
+  atnode_broker.py client call <dev> led                   (empty = status)
 """
 
 import argparse
@@ -331,6 +336,12 @@ class Bridge:
         self.pending = {}            # reqid -> {"event","resp"}
         self.lock = threading.Lock()
         self.connected = threading.Event()
+        # Set once the broker ACKs every subscription. rpc() MUST wait for
+        # this: publishing before SUBACK means the device's response is
+        # routed before our atnode/+/resp subscription exists -> missed
+        # response -> spurious 10 s timeout (flaky first call per process).
+        self.subscribed = threading.Event()
+        self._sub_mids = set()       # outstanding SUBSCRIBE mids
         self._expect_fp = _normalize_fp(fp)
         if self._expect_fp and len(self._expect_fp) != 64:
             raise ValueError("fp must be a SHA256 fingerprint (64 hex chars)")
@@ -342,6 +353,7 @@ class Bridge:
         else:   # username only so anonymous-plugin passes; auth bypass is by IP
             self.mqtt.username_pw_set("local", None)
         self.mqtt.on_connect = self._on_connect
+        self.mqtt.on_subscribe = self._on_subscribe
         self.mqtt.on_message = self._on_message
         if self._expect_fp or ca or port == 8883:
             if self._expect_fp:
@@ -371,11 +383,19 @@ class Bridge:
         self.connected.wait(5)
 
     def _on_connect(self, client, userdata, flags, reason_code, properties):
-        client.subscribe("atnode/+/state")
-        client.subscribe("atnode/+/info")
-        client.subscribe("atnode/+/resp")
+        self.subscribed.clear()
+        self._sub_mids = {
+            client.subscribe("atnode/+/state")[1],
+            client.subscribe("atnode/+/info")[1],
+            client.subscribe("atnode/+/resp")[1],
+        }
         self.connected.set()
         print("[bridge] connected to broker", flush=True)
+
+    def _on_subscribe(self, client, userdata, mid, reason_code_list, properties):
+        self._sub_mids.discard(mid)
+        if not self._sub_mids:
+            self.subscribed.set()
 
     def _on_message(self, client, userdata, msg):
         parts = msg.topic.split("/")
@@ -406,6 +426,8 @@ class Bridge:
                     p["event"].set()
 
     def rpc(self, dev, method, params, timeout=10.0):
+        if not self.subscribed.wait(5):
+            return {"ok": False, "error": "bridge subscription not ready"}
         reqid = uuid.uuid4().hex[:12]
         ev = threading.Event()
         with self.lock:
@@ -541,12 +563,19 @@ Auth: header  Authorization: Bearer <api-key>   (localhost bypasses)
 Common methods (see /api/devices/<id> for the live catalog):
   keyboard/tap mods,k,ms | keyboard/text s,ms,gap | keyboard/key mods,k0..k5
   gpio/write pin,level   | gpio/read pin          | adc/read ch
+  led color              WS2812 color: #RRGGBB | r,g,b | off | auto (empty = status)
   ble/status             | net/wol mac            | net/ping host,count
   sys/info
+
+Params are url-encoded for you — pass values RAW, never pre-escaped
+(led color=#FF8800, NOT %23FF8800; shell-quote '#' so the shell keeps it).
 
 Example:
   curl -H "Authorization: Bearer $KEY" \\
     -X POST "http://server:8080/api/devices/<id>/cmd/keyboard/text?s=Hello"
+  curl -H "Authorization: Bearer $KEY" \\
+    -X POST "http://server:8080/api/devices/<id>/cmd/led?color=%23FF8800"
+    (in a URL query, '#' itself must be %23 — that layer is HTTP, not the API)
 """
 
 
