@@ -69,9 +69,27 @@
 
 ### 功能宏与固件变体（`features.h` + `build.ps1 -Variant`）
 
-编译期开关：`FEATURE_BLE` / `FEATURE_MQTT` / `FEATURE_RATHOLE` / `FEATURE_I2C` /
-`FEATURE_HTTP`（默认全 1）。关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，
-`AT+GET` 对应键返回未知键。变体：
+统一功能模型（与 rust-s3 变体共用词汇）：**核心能力** = `FEATURE_BLE`（HID 键盘）、
+`ATNODE_LED`（LED）、`FEATURE_I2C`（总线）；**通信接口** = `FEATURE_HTTP` /
+`FEATURE_MQTT` / `FEATURE_RATHOLE`（WiFi 是底座，不参与裁剪）。编译期开关默认全 1，
+关掉的功能其初始化、AT 分支、REST 路由、配置键全部不编译，`AT+GET` 对应键返回未知键。
+
+**板型选择宏 `ATNODE_BOARD`**：一个宏选定整份默认配置（引脚映射 + LED 默认值），
+取值 `ATNODE_BOARD_C3` / `ATNODE_BOARD_ESP32`，默认跟随编译目标（fqbn），日常无需设置；
+显式指定且与编译目标不符 → 编译错误。板型引脚表（`PIN_I2C_SDA/SCL`、`PIN_AP_TRIGGER`）
+集中在 features.h,sketch 里禁止裸写 GPIO 号（经典 ESP32 GPIO6-11 是 flash 线）。
+
+**LED 统一模型 `ATNODE_LED`**:`0`=无 / `1`=breath 呼吸（PWM 活信标）/ `2`=color
+WS2812（预留钩子，Arduino 驱动未实现，调色请用 rust-s3 变体）。引脚与极性：
+`LED_BREATH_PIN`、`LED_BREATH_ACTIVE_LOW`、`LED_COLOR_PIN`。默认值按板型：
+
+| 板型 | 默认 | 说明 |
+|---|---|---|
+| 经典 ESP32 | `1` breath @ GPIO2（高电平点亮） | DevKit v1 板载蓝灯，与固件所有功能零冲突（strapping 但正常启动无关；ADC2 角色因 WiFi 常开本来不可用）；`-DATNODE_LED=0` 关闭 |
+| ESP32-C3 | I2C开→`0`;I2C关→`1` breath @ GPIO8（低电平点亮） | GPIO8 = SuperMini 板载灯 = 默认 I2C SDA,**二选一** |
+
+冲突全部编译期静态检查（`#error`):LED 引脚撞 flash 线（经典 6-11)、撞 I2C 引脚、
+撞 AP 触发键；`ATNODE_LED=2` 缺 `LED_COLOR_PIN` 或引脚冲突同样报错。变体：
 
 | Variant | 代号 | 宏 | 用途 |
 |---|---|---|---|
@@ -98,9 +116,9 @@ powershell -File esp32/arduino/build-c3.ps1 -Port COMx -Variant rathole
 ```
 
 **Ability 接口**：`AT+ABILITY` / `GET /at-node/cmd/ability` / MQTT `ability` 方法
-返回 `{"ble","mqtt","rathole","i2c","http","breath_led"}`（同时内嵌在
-`/at-node/cmd/status` 里）；Web UI 据此隐藏无对应功能的标签页并在 Status 页显示
-功能徽章。未编译的功能路由直接 404。
+返回 `{"ble","mqtt","rathole","i2c","http","led"}`（`led` 取值 `"none"|"breath"|"color"`，
+同时内嵌在 `/at-node/cmd/status` 里）；Web UI 据此隐藏无对应功能的标签页并在 Status 页显示
+功能徽章（LED 调色页仅 `color` 时出现）。未编译的功能路由直接 404。
 
 **信号强度**：`/at-node/cmd/status` 带 `wifi_rssi`/`wifi_pct`（BLE 编译时另有
 `ble_rssi`/`ble_pct`，取首个已连主机）；百分比 = `2×(rssi+100)` 截断 0-100
@@ -111,9 +129,9 @@ powershell -File esp32/arduino/build-c3.ps1 -Port COMx -Variant rathole
 即永久离线（只能断电）。loop() 每 15s 检测断线并 `WiFi.begin` 重试，
 链路恢复时补齐 mDNS/HTTP 路由等服务初始化（`wifi_services_up()`）。
 
-**呼吸灯（`FEATURE_BREATH_LED`，I2C 关闭时默认开）**：GPIO8 板载 LED 以 ~2s 周期
-gamma 校正呼吸——呼吸=loop() 活着；定格/熄灭=死机。默认按 SuperMini C3 低电平点亮
-（`BREATH_LED_ACTIVE_LOW 1`，高电平点亮的板子改 0）。
+**呼吸灯（`ATNODE_LED=1`，经典 ESP32 默认开 @ GPIO2,C3 在 I2C 关闭时开 @ GPIO8）**：
+板载 LED 以 ~2s 周期 gamma 校正呼吸——呼吸=loop() 活着；定格/熄灭=死机。极性按板型
+默认（经典高电平点亮 / SuperMini C3 低电平点亮），可用 `LED_BREATH_ACTIVE_LOW` 覆盖。
 
 ### rathole 隧道（`rathole_client.cpp`，架构/内存账目/坑录详见 [RATHOLE.md](RATHOLE.md)）
 

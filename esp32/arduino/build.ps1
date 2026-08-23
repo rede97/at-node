@@ -9,14 +9,16 @@
 #   - esp32:esp32 core >= 3.3.5 installed
 #   - NimBLE-Arduino library (usually bundled with core 3.x)
 #
-# Variants (feature macros in features.h):
+# Variants (feature macros in features.h — unified model: core = BLE/LED/I2C,
+# comm = HTTP/MQTT/RATHOLE; LED via ATNODE_LED=0|1|2, board profile via
+# ATNODE_BOARD, both default per compile target):
 #   full    - everything on (default)
 #   remoter - FEATURE_RATHOLE=0 (Remoter: IR + BLE HID + MQTT + HTTP + I2C,
 #             no rathole tunnel -> saves heap for BLE/MQTT)
 #   base    - FEATURE_RATHOLE=0 FEATURE_HTTP=0 (production keyboard: BLE+MQTT+I2C,
 #             no tunnel, no LAN HTTP control plane -> serial-only config)
 #   rathole - FEATURE_BLE=0 FEATURE_MQTT=0 FEATURE_I2C=0 (Rathole: tunnel test unit;
-#             I2C off also enables the GPIO8 breathing liveness LED)
+#             I2C off makes ATNODE_LED default to breath on the C3 GPIO8 LED)
 #
 # Board notes:
 #   c3    - ESP32-C3 SuperMini. fqbn MUST carry CDCOnBoot=cdc; any other flash

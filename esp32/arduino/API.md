@@ -37,7 +37,7 @@ Device status (pure JSON).
   "ble_rssi": -55,
   "ble_pct": 90,
   "ability": {"ble": true, "mqtt": true, "rathole": false, "i2c": true,
-              "http": false, "breath_led": false}
+              "http": false, "led": "breath"}
 }
 ```
 
@@ -66,11 +66,14 @@ that are compiled out have no routes (404), no AT branches, and no config keys.
 
 ```json
 {"ok": true, "ability": {"ble": true, "mqtt": true, "rathole": false,
- "i2c": true, "http": false, "breath_led": false}}
+ "i2c": true, "http": false, "led": "breath"}}
 ```
 
-The same object is embedded in `GET /at-node/cmd/status` as `ability`, is
-available via MQTT method `ability`, and via serial `AT+ABILITY`.
+`led` is the unified LED model: `"none"` | `"breath"` | `"color"` (see
+`features.h` `ATNODE_LED`; the web color-picker tab appears only for
+`"color"`). The same object is embedded in `GET /at-node/cmd/status` as
+`ability`, is available via MQTT method `ability`, and via serial
+`AT+ABILITY`.
 
 ### GET /at-node/help.json
 

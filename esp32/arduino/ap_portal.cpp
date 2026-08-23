@@ -16,17 +16,14 @@
 #define AP_IP            IPAddress(192, 168, 4, 1)
 #define AP_NETMASK       IPAddress(255, 255, 255, 0)
 
-/* Button trigger configuration */
-#if CONFIG_IDF_TARGET_ESP32
-/* Classic ESP32: GPIO10 is a flash data line (SD3) — pinMode/digitalRead on
- * it TG1WDT-resets the chip ~1s in (observed 2026-08-15, boot loop at
- * ap_portal_check_button). Use GPIO0 (BOOT button, pulled up on devkits).
- * Caveat: holding it low at power-on enters download mode — same as any
- * BOOT-button usage. */
-#define AP_TRIGGER_PIN   0
-#else
-#define AP_TRIGGER_PIN   10
-#endif
+/* Button trigger configuration — pin comes from the board profile in
+ * features.h. Classic ESP32 uses GPIO0 (BOOT button): GPIO10 is a flash
+ * data line (SD3) there — pinMode/digitalRead on it TG1WDT-resets the
+ * chip ~1s in (observed 2026-08-15, boot loop at ap_portal_check_button).
+ * Caveat on classic: holding BOOT low at power-on enters download mode —
+ * same as any BOOT-button usage. */
+#include "features.h"
+#define AP_TRIGGER_PIN   PIN_AP_TRIGGER
 #define AP_TRIGGER_MS    3000
 
 /* DNS server for captive portal */

@@ -143,7 +143,8 @@ Network-enabled AT Node with WiFi HTTP (`/at-node/*`) / MQTT control plane — s
   - `esp32/arduino/build-c3.ps1 -Port <COM>` — ESP32-C3 SuperMini (fqbn pins `CDCOnBoot=cdc`)
   - `esp32/arduino/build-esp32.ps1 -Port <COM>` — classic ESP32
   - Both wrap `build.ps1 -Board c3|esp32`. Never flash with bare `arduino-cli`/IDE defaults: on C3 a missing `CDCOnBoot=cdc` silently routes `Serial` to UART0 pads — native-USB COM shows only the ROM boot log, AT dead, while WiFi/HTTP keep working. Symptom → reflash with build-c3.ps1, do not debug the sketch.
-  - Variants: `-Variant full|base|remoter|rathole` (feature macros in `features.h`); `base` = no tunnel/no LAN HTTP, `rathole` = tunnel-only test unit (I2C off → GPIO8 breathing liveness LED).
+  - Variants: `-Variant full|base|remoter|rathole` (feature macros in `features.h`); `base` = no tunnel/no LAN HTTP, `rathole` = tunnel-only test unit (I2C off → C3 breath LED on GPIO8).
+  - Feature model (shared with rust-s3): core = BLE HID / LED / I2C; comm = HTTP / MQTT / rathole; WiFi always on. Board profile `ATNODE_BOARD` (default = compile target) owns all pin defaults. LED: `ATNODE_LED`=0/1/2 (none/breath/WS2812); classic ESP32 defaults to breath @ GPIO2, C3 breath(GPIO8) XOR I2C, conflicts are `#error` in `features.h`.
 - **Ability**: reported via `AT+ABILITY` / `/at-node/cmd/ability`; the SPA hides tabs for disabled features.
 - **WiFi watchdog**: boot connect has only a 30s window and the driver does not reliably re-associate — loop() retries `WiFi.begin` every 15s while down and `wifi_services_up()` brings up mDNS/HTTP whenever the link comes up. A board "off-network after flashing" is almost always the wrong-fqbn flash above, not WiFi config; reflash, then watch serial for `WiFi reconnecting...` → `WiFi connected` self-recovery.
 

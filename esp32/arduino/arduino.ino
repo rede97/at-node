@@ -1009,7 +1009,13 @@ static String build_ability_json(void)
     j += ",\"rathole\":" + String(FEATURE_RATHOLE ? "true" : "false");
     j += ",\"i2c\":"     + String(FEATURE_I2C ? "true" : "false");
     j += ",\"http\":"    + String(FEATURE_HTTP ? "true" : "false");
-    j += ",\"breath_led\":" + String(FEATURE_BREATH_LED ? "true" : "false");
+#if ATNODE_LED == ATNODE_LED_BREATH
+    j += ",\"led\":\"breath\"";
+#elif ATNODE_LED == ATNODE_LED_COLOR
+    j += ",\"led\":\"color\"";
+#else
+    j += ",\"led\":\"none\"";
+#endif
     j += "}";
     return j;
 }
@@ -3223,22 +3229,18 @@ void setup(void)
         Serial.println("\r\nWiFi connection failed, HTTP disabled");
     }
 
-    /* I2C pins: original ESP32 uses SDA=21,SCL=22 (GPIO8/9 are flash pins
-     * there); ESP32-C3/S3 use SDA=8,SCL=9. */
+    /* I2C pins come from the board profile in features.h (classic ESP32
+     * cannot use 8/9 — those are flash data lines there). */
 #if FEATURE_I2C
-#if CONFIG_IDF_TARGET_ESP32
-    Wire.begin(21, 22);
-    Serial.println("I2C initialized (SDA=21, SCL=22)");
-#else
-    Wire.begin(8, 9);
-    Serial.println("I2C initialized (SDA=8, SCL=9)");
+    Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+    Serial.println("I2C initialized (SDA=" + String(PIN_I2C_SDA) +
+                   ", SCL=" + String(PIN_I2C_SCL) + ")");
 #endif
-#endif
-#if FEATURE_BREATH_LED
-    /* I2C off -> GPIO8 free -> breathing LED: a live loop() keeps it
-     * breathing; a wedged/dead board freezes or darkens it. */
-    ledcAttach(BREATH_LED_PIN, 5000, 8);
-    Serial.println("Breath LED on GPIO" + String(BREATH_LED_PIN));
+#if ATNODE_LED == ATNODE_LED_BREATH
+    /* Breathing liveness LED: a live loop() keeps it breathing; a
+     * wedged/dead board freezes or darkens it. */
+    ledcAttach(LED_BREATH_PIN, 5000, 8);
+    Serial.println("Breath LED on GPIO" + String(LED_BREATH_PIN));
 #endif
 
     /* IR: RMT on GPIO4 */
@@ -3315,7 +3317,7 @@ void loop(void)
         }
     }
 #endif
-#if FEATURE_BREATH_LED
+#if ATNODE_LED == ATNODE_LED_BREATH
     /* ~2s triangle-wave breathing, gamma-corrected. Runs in loop(): a
      * frozen pattern means loop() is wedged; dark means dead/hung hard. */
     {
@@ -3327,10 +3329,10 @@ void loop(void)
             phase = (phase + 5) % 512;
             uint32_t tri = phase < 256 ? phase : 511 - phase;
             uint32_t duty = (tri * tri) >> 8;
-#if BREATH_LED_ACTIVE_LOW
+#if LED_BREATH_ACTIVE_LOW
             duty = 255 - duty;
 #endif
-            ledcWrite(BREATH_LED_PIN, duty);
+            ledcWrite(LED_BREATH_PIN, duty);
         }
     }
 #endif

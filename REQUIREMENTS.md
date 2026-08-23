@@ -147,6 +147,7 @@ AI Agent 只需发送 `AT+KEY_STR=hello`（或 HTTP 等价端点）即可完成�
 | D7 | ESP32 服务开关语义 | 统一 **enable（运行时临时，内存）+ auto（上电自启，NVS）两层**（HTTP/MQTT/BLE）；rathole 保持三级（master/enable/auto） | [esp32/arduino/README.md](esp32/arduino/README.md) §功能宏与固件变体 |
 | D8 | ESP32 刷机通道 | **C3 必须经 `build-c3.ps1`**（fqbn 带 `CDCOnBoot=cdc`）；标准 ESP32 经 `build-esp32.ps1`；agent 默认使用板卡专用脚本，禁止裸 arduino-cli/IDE 默认刷机 | [esp32/arduino/README.md](esp32/arduino/README.md) §快速开始 |
 | D9 | BLE 角色运行期切换 | **CH582 不支持热切**：角色在 `BLE_LibInit` 定死，DUAL 构建 `AT+ROLE` = 写标志 + 软复位 | [wchble/mr2/DESIGN.md](wchble/mr2/DESIGN.md) |
+| D10 | ESP32 功能模型与 LED | **统一功能模型**（2026-08-23）：核心能力（BLE HID / LED / I2C）与通信接口（HTTP / MQTT / rathole）两合集，WiFi 为底座不裁剪；**LED 三态** `ATNODE_LED`=0无/1呼吸/2彩色 WS2812，breath 归入 LED 域。冲突编译期 `#error`：C3 呼吸灯（GPIO8）与 I2C 二选一；经典 ESP32 默认 breath @ GPIO2（板载蓝灯，零冲突）；S3 WS2812 @ GPIO48 独立（Rust `led-color` feature 默认开）；Arduino 的 WS2812 为预留钩子（驱动未实现，调色用 rust-s3）。板型选择宏 `ATNODE_BOARD` 一键切换默认配置集，默认跟随编译目标 | [esp32/arduino/features.h](esp32/arduino/features.h)、[esp32/rust/README.md](esp32/rust/README.md) |
 
 ---
 

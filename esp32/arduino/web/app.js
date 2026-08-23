@@ -26,14 +26,17 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
 let ability = null;
 function applyAbility(a) {
   ability = a;
+  // led: "none" | "breath" | "color" (true = legacy color build)
+  const led = a.led === true ? 'color' : (a.led || 'none');
   const badge = (on, label) => '<span class="' + (on ? 'ok' : 'bad') + '">' +
     (on ? '&#10003;' : '&#10007;') + label + '</span>';
   $('s-feat').innerHTML = [
     badge(a.ble, 'BLE'), badge(a.mqtt, 'MQTT'), badge(a.rathole, 'rathole'),
-    badge(a.i2c, 'I2C'), badge(a.breath_led, 'breathLED'), badge(a.led, 'LED'),
+    badge(a.i2c, 'I2C'), badge(led !== 'none', led === 'none' ? 'LED' : 'LED:' + led),
   ].join(' ');
-  // hide tabs whose feature is not compiled in
-  const tabFeat = { ble: a.ble, mqtt: a.mqtt, tunnel: a.rathole, led: !!a.led };
+  // hide tabs whose feature is not compiled in (LED tab = color picker,
+  // only meaningful with a WS2812; breath has nothing to adjust)
+  const tabFeat = { ble: a.ble, mqtt: a.mqtt, tunnel: a.rathole, led: led === 'color' };
   document.querySelectorAll('nav button').forEach(b => {
     const f = tabFeat[b.dataset.tab];
     if (f === false) b.hidden = true;
