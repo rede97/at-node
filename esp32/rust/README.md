@@ -8,7 +8,47 @@ Zephyr 版的 Rust 重实现（后者已归档 commit `e759a2a`)。约束文档�
 - **状态灯**:WS2812 @ GPIO48(RMT ch0),预设 = boot 黄 / wifi 连接中蓝闪 / online 绿 / error 红
 - **调色**:任意 RGB 色,三通道同一颜色语义(`#RRGGBB` | `r,g,b` | `off` | `auto`):
   `AT+LED=<spec>` / `AT+LED?`;HTTP `GET|POST /at-node/cmd/led?color=<spec>`;
-  MQTT RPC `led`(`color=<spec>`,空 = 查询);Web UI「LED」页调色板(ability `led:true` 时显示)
+  MQTT RPC `led`(`color=<spec>`,空 = 查询);Web UI「LED」页调色板(ability `led:"color"` 时显示)
+- **LED 裁剪**:cargo feature `led-color`(默认开)。S3 的 LED 独占 GPIO48,与任何功能无冲突;
+  `--no-default-features` 编译时驱动整体移除(无 RMT/无 led task),GPIO48 回到安全 GPIO 池,
+  ability 报 `"led":"none"`,各通道设置命令返回 `led disabled`
+- **USB HID 键盘**(cargo feature `kbd-usb`,默认开;R5):原生 USB 口(OTG,GPIO19/20)枚举为
+  boot 协议键盘(8B report)。命令语义对齐 CH582:`AT+TAP=<key>[,<mods>][,<ms>]`(原子注入,
+  首选)、`AT+KEY=<mods>,<k0..k5>`(裸 report,须 `AT+KEY=0,0` 释放)、`AT+KEY_STR=<text>`、
+  `AT+KEY_SEQ=<ms>,<mods>,<k0..k5>,...`(≤8 条/命令,异步回放)、`AT+DEV=USB|BLE` / `AT+DEV?`;
+  HTTP `POST /at-node/cmd/keyboard/<tap|text|key>`;MQTT `keyboard/tap|text|key`(broker
+  方法名零改动)。路由层 `kb.rs` 持有全部时序,后端只发裸 report。
+
+## 编译期功能矩阵与变体(`Cargo.toml [features]` + `build.sh`)
+
+与 Arduino 变体(`features.h` + build.ps1/-sh)对齐的功能模型:**核心** =
+`kbd-usb` / `kbd-ble`(R6)/ `led-color` / `hws`(GPIO·ADC·I2C);**通信** = `mqtt` /
+`http` / `rathole`(WiFi 为底座不参与裁剪)。关掉的功能在三个通道统一报 `<x> disabled`,
+ability/catalog 同步隐藏。
+
+| Variant | cargo features | 用途 |
+|---|---|---|
+| `full`(默认) | 全开(kbd-ble 除外) | 完整节点 |
+| `remoter` | full − rathole | 键盘 + MQTT + HTTP,无隧道 |
+| `base` | full − rathole − http | 生产键盘,串口-only 配置 |
+| `rathole` | led-color + http + rathole | 隧道测试专用(无 kbd/mqtt/hws) |
+
+```bash
+cd esp32/rust
+./build.sh                 # full,仅编译
+./build.sh remoter --flash # 编译 remoter 并烧录(默认 /dev/ttyACM0)
+```
+- **rathole 隧道**(cargo feature `rathole`,默认开;单隧道,与 Arduino 一致):协议 v1
+  plain TCP/TCP-only(同 Arduino 裁剪),把**局域网主机**的 TCP 服务(如 LAN 另一台机器的
+  SSH)反向穿透到 rathole server。`tunnel.1.local` 必须是**其他 LAN 主机**,不能是本机
+  (smoltcp 无主机环回,127.0.0.1/本机 IP 均不可连;Arduino lwIP 无此限制)。
+  三通道:`AT+TUNNEL=status|connect|disconnect|clear|enable[,<0|1>]` 与
+  `AT+TUNNEL=server|token|service|local|auto|retry,<val>`;HTTP
+  `GET|POST /at-node/cmd/tunnel/<status|config|enable|connect|disconnect|clear>`;
+  MQTT `tunnel/*`。配置键 `rathole.enable` + `tunnel.1.*`(NVS 注册表)。
+  架构:manager task 独占控制通道+1 条待机池,转发任务池 2 槽;45s 心跳判死、
+  指数退避(retry 基线/30s 上限/100ms 切片)、12KB 堆守护;跨任务只翻转
+  want_run/reconfig 原子标志(Arduino R3 纪律)。**MQTT 与隧道可共存**(实测堆余 ~63KB)。
 
 ## 构建 / 烧录
 
@@ -208,6 +248,7 @@ src/at_serial.rs UART0 控制台(回显/退格/Ctrl-C/CRLF 吞咽,300B 行缓冲
 src/led.rs       WS2812 状态灯(预设 + 调色:共享 parse/current,AT/HTTP/MQTT 同语义)
 src/wifi.rs      WiFi STA + 15s 重连看门狗(embassy-net DHCP,同值免重配)
 src/mqttc.rs     MQTT v3.1.1 mini client + TLS + RPC cmd/resp + pub/sub API
+src/rathole.rs   rathole v1 隧道客户端(单隧道,plain TCP,转发 LAN 主机;不代理本机)
 src/hws.rs       GPIO/ADC/I2C(引脚黑名单,ADC 校准 mV,I2C 100kHz @8/9)
 src/api.rs       ability/services 目录/sys_info(Arduino API_CATALOG 子集)
 src/httpd.rs     HTTP 控制面(picoserve,acceptor+backlog+handler 模型)

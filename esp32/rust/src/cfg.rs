@@ -1,9 +1,8 @@
 //! AT-Node rust-s3 — persistent config registry.
 //!
 //! Semantics aligned with esp32/zephyr/src/cfg.c; key space aligned with
-//! esp32/arduino/arduino.ino CFG_TABLE (rathole/tunnel keys are out of
-//! scope, mqtt.ca is replaced by an embedded CA DER, device.hostname
-//! dropped together with the mDNS non-goal).
+//! esp32/arduino/arduino.ino CFG_TABLE (mqtt.ca is replaced by an embedded
+//! CA DER, device.hostname dropped together with the mDNS non-goal).
 //!
 //! Values are cached in RAM at load/set time so reads never touch flash.
 //! Secret keys (wifi.pass, mqtt.pass) are write-only through the AT-facing
@@ -33,6 +32,7 @@ const STORAGE_RANGE: Range<u32> = 0x7F_0000..0x80_0000;
 const F_WO: u8 = 1; // write-only secret (get -> WriteOnly, list masks value)
 const F_BOOL: u8 = 2; // persisted normalized to "1"/"0"
 const F_INT: u8 = 4; // mqtt.port: 1..=65535
+const F_INT60: u8 = 8; // tunnel retry backoff: 1..=60 seconds
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -69,7 +69,7 @@ impl Entry {
 /// Registry layout; index doubles as the sequential-storage map key.
 /// Registry layout; index doubles as the sequential-storage map key.
 /// Only ever APPEND — inserting shifts persisted values to the wrong key.
-const TABLE_DEF: [(&str, u8); 14] = [
+const TABLE_DEF: [(&str, u8); 22] = [
     ("device.name", 0),
     ("wifi.ssid", 0),
     ("wifi.pass", F_WO),
@@ -84,6 +84,14 @@ const TABLE_DEF: [(&str, u8); 14] = [
     ("ble.auto", F_BOOL),
     ("ble.enable", F_BOOL),
     ("device.hostname", 0),
+    ("rathole.enable", F_BOOL),
+    ("tunnel.1.server", 0),
+    ("tunnel.1.token", F_WO),
+    ("tunnel.1.service", 0),
+    ("tunnel.1.local", 0),
+    ("tunnel.1.auto", F_BOOL),
+    ("tunnel.1.retry", F_INT60),
+    ("tunnel.1.enable", F_BOOL),
 ];
 
 /// esp-storage implements the sync embedded-storage 0.3 traits while
@@ -156,6 +164,7 @@ fn default_for<'a>(cfg: &'a Cfg, key: &str) -> &'a str {
         "device.name" => cfg.def_name.as_str(),
         "device.hostname" => cfg.def_hostname.as_str(),
         "mqtt.port" => "8883",
+        "rathole.enable" | "tunnel.1.enable" | "tunnel.1.retry" => "1",
         _ => "",
     }
 }
@@ -175,6 +184,15 @@ fn validate(entry: &Entry, raw: &str, out: &mut String<VAL_MAX>) -> Result<(), E
     if entry.flags & F_INT != 0 {
         match raw.parse::<u32>() {
             Ok(v) if (1..=65535).contains(&v) => {
+                write!(out, "{v}").map_err(|_| Error::BadValue)?;
+                return Ok(());
+            }
+            _ => return Err(Error::BadValue),
+        }
+    }
+    if entry.flags & F_INT60 != 0 {
+        match raw.parse::<u32>() {
+            Ok(v) if (1..=60).contains(&v) => {
                 write!(out, "{v}").map_err(|_| Error::BadValue)?;
                 return Ok(());
             }

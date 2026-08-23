@@ -179,6 +179,8 @@ esp32/rust/
 | R6 | kbd/ble.rs(trouble HID + 配对窗口状态机 + bond 持久化）| 配对 → 打字 → 断连 → bonded-only 重连；清 bond |
 | R7 | hws.rs(GPIO/ADC/I2C)+ 对应 AT/HTTP 端点 | 命令与端点全过【✅ 2026-08-22 通过;I2C_SCAN 改 bit-bang;ADC ch7/8 移除(与 I2C 共脚)】 |
 | R8 | 收尾：README、REQUIREMENTS.md 状态、AGENTS.md、内存水位记录、已知问题清单 | 文档齐，clippy 零警告 |
+| R9 | rathole.rs(协议 v1 单隧道,plain TCP)+ AT/HTTP/MQTT 隧道面 + `tunnel.1.*` 注册表键 | 【✅ 2026-08-23 通过】本地 rathole server 端到端:echo 双访客、HTTP 64KB 逐字节一致;`tunnel.1.local` 限 LAN 主机(smoltcp 无环回);路由合并修复执行器栈溢出;MQTT 共存实测 |
+| R5 | kbd_usb.rs(usb-device + usbd-hid boot 键盘)+ kb.rs 路由/时序层 + AT/HTTP/MQTT 键盘面;编译期功能矩阵(6 features)+ build.sh 变体(full/remoter/base/rathole) | 【✅ 2026-08-24 通过】原生 USB 枚举 303A:8201;AT+TAP/KEY_STR/KEY_SEQ/HTTP/MQTT 注入 evdev 实测;4 变体 clippy 零警告 |
 
 依赖关系：R0→R1→R2 顺序；R3/R5/R7 互不依赖可并行；R4 依赖 R1;
 R6 依赖 R5（共享路由层）。

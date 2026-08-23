@@ -29,13 +29,18 @@ use picoserve::response::{IntoResponse, Response, StatusCode};
 use picoserve::routing::{PathRouter, get, post};
 use picoserve::{Config, Timeouts};
 
-use crate::{api, at, cfg, hws, led, mqttc, wifi};
+use crate::{api, at, cfg, hws, led, mqttc, rathole, wifi};
 
 const PORT: u16 = 80;
 
 static SPA_GZ: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/web_page.gz"));
 
 // ------------------------------------------------------------- runtime ---
+
+/// Compile-time capability flag (feature matrix in Cargo.toml).
+pub fn enabled() -> bool {
+    cfg!(feature = "http")
+}
 
 static STATE: critical_section::Mutex<RefCell<bool>> =
     critical_section::Mutex::new(RefCell::new(false));
@@ -227,6 +232,24 @@ pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
         .route("/at-node/cmd/http/config", post(h_http_config))
         .route("/at-node/cmd/http/clear", post(h_http_clear))
         .route("/at-node/cmd/nvs/clear", post(h_nvs_clear))
+        // ONE route for all tunnel ops: every picoserve route adds router
+        // type depth (and native-stack poll depth per request); six tunnel
+        // routes overflowed the executor stack on config POST.
+        .route(
+            (
+                "/at-node/cmd/tunnel",
+                picoserve::routing::parse_path_segment::<TunnelOp>(),
+            ),
+            get(h_tunnel_get).post(h_tunnel_post),
+        )
+        // Keyboard injection (same consolidation; broker method shapes).
+        .route(
+            (
+                "/at-node/cmd/keyboard",
+                picoserve::routing::parse_path_segment::<KbOp>(),
+            ),
+            picoserve::routing::post(h_keyboard_post),
+        )
 }
 
 // ----------------------------------------------------------- handlers ---
@@ -282,6 +305,9 @@ async fn h_at(body: String) -> impl IntoResponse {
 }
 
 async fn h_gpio_write(query: QueryString, body: String) -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let a = args(&query, body.as_str());
     match (a.to_u32("pin"), a.to_u32("level")) {
         (Some(pin), Some(level)) if pin <= 255 && hws::gpio_write(pin as u8, level != 0).is_ok() => {
@@ -297,6 +323,9 @@ async fn h_gpio_write(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_gpio_read(query: QueryString, body: String) -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let a = args(&query, body.as_str());
     match a.to_u32("pin") {
         Some(pin) if pin <= 255 => match hws::gpio_read(pin as u8) {
@@ -315,6 +344,9 @@ async fn h_gpio_read(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_adc_read(query: QueryString, body: String) -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let a = args(&query, body.as_str());
     match a.to_u32("ch") {
         Some(ch) if ch <= 255 => match hws::adc_read_mv(ch as u8) {
@@ -343,6 +375,9 @@ async fn h_led_status() -> impl IntoResponse {
 
 /// Set color: color=#RRGGBB | r,g,b | off | auto (AT+LED semantics).
 async fn h_led_set(query: QueryString, body: String) -> impl IntoResponse {
+    if !led::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("led disabled"));
+    }
     let a = args(&query, body.as_str());
     let mut buf = heapless::String::<256>::new();
     let color = a.get("color", &mut buf);
@@ -358,6 +393,9 @@ async fn h_led_set(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_i2c_scan() -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let mut scan: heapless::String<600> = heapless::String::new();
     hws::i2c_scan(&mut scan).await;
     // "+I2C: 0xXX 0xYY" / "+I2C: none" -> Arduino json device list
@@ -379,6 +417,9 @@ async fn h_i2c_scan() -> impl IntoResponse {
 }
 
 async fn h_i2c_read(query: QueryString, body: String) -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let a = args(&query, body.as_str());
     let len = a.to_u32("len").unwrap_or(1);
     if len == 0 || len > hws::I2C_IO_MAX as u32 {
@@ -410,6 +451,9 @@ async fn h_i2c_read(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_i2c_write(query: QueryString, body: String) -> impl IntoResponse {
+    if !hws::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
+    }
     let a = args(&query, body.as_str());
     let mut hexbuf = heapless::String::<256>::new();
     let hex: String = a
@@ -449,6 +493,9 @@ async fn h_i2c_write(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_mqtt_status() -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     let (connected, _) = mqttc::status();
     let broker = cfg::get_str("mqtt.broker").await;
     let port = cfg::get_str("mqtt.port").await;
@@ -465,6 +512,9 @@ async fn h_mqtt_status() -> impl IntoResponse {
 }
 
 async fn h_mqtt_config(query: QueryString, body: String) -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     let a = args(&query, body.as_str());
     for (arg, key) in [
         ("broker", "mqtt.broker"),
@@ -482,11 +532,17 @@ async fn h_mqtt_config(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_mqtt_connect() -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     let _ = mqttc::start().await;
     json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"mqtt/connect\",\"queued\":true}".into())
 }
 
 async fn h_mqtt_clear() -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     mqttc::stop();
     for key in ["mqtt.broker", "mqtt.user", "mqtt.pass", "mqtt.auto"] {
         let _ = cfg::set(key, "").await;
@@ -496,6 +552,9 @@ async fn h_mqtt_clear() -> impl IntoResponse {
 }
 
 async fn h_mqtt_publish(query: QueryString, body: String) -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     if !mqttc::status().0 {
         return json_response(StatusCode::CONFLICT, err_body("mqtt not connected"));
     }
@@ -514,6 +573,9 @@ async fn h_mqtt_publish(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 async fn h_mqtt_subscribe(query: QueryString, body: String) -> impl IntoResponse {
+    if !mqttc::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
+    }
     if !mqttc::status().0 {
         return json_response(StatusCode::CONFLICT, err_body("mqtt not connected"));
     }
@@ -634,6 +696,230 @@ async fn h_nvs_clear() -> impl IntoResponse {
         StatusCode::OK,
         "{\"ok\":true,\"cmd\":\"nvs/clear\",\"restarting\":true}".into(),
     )
+}
+
+// ------------------------------------------------------------- keyboard ---
+
+/// Keyboard op segment of /at-node/cmd/keyboard/<op> (broker method names).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KbOp {
+    Tap,
+    Text,
+    Key,
+}
+
+impl core::str::FromStr for KbOp {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "tap" => Ok(Self::Tap),
+            "text" => Ok(Self::Text),
+            "key" => Ok(Self::Key),
+            _ => Err(()),
+        }
+    }
+}
+
+/// POST /at-node/cmd/keyboard/<tap|text|key> (Arduino keyboard handlers;
+/// same params as the MQTT methods).
+async fn h_keyboard_post(op: KbOp, query: QueryString, body: String) -> impl IntoResponse {
+    if !crate::kb::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("kbd disabled"));
+    }
+    let a = args(&query, body.as_str());
+    let u = |key: &str, def: u32| {
+        let mut buf = heapless::String::<256>::new();
+        let v = a.get(key, &mut buf);
+        if v.is_empty() {
+            Some(def)
+        } else if let Some(h) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            u32::from_str_radix(h, 16).ok()
+        } else {
+            v.parse().ok()
+        }
+    };
+    let mut j = String::new();
+    match op {
+        KbOp::Tap => {
+            let (Some(k), Some(mods), Some(ms)) = (u("k", 0), u("mods", 0), u("ms", 50))
+            else {
+                return json_response(StatusCode::BAD_REQUEST, err_body("bad args"));
+            };
+            if k > 255 || mods > 255 || ms > 60_000 || !crate::kb::tap(mods as u8, k as u8, ms)
+            {
+                return json_response(StatusCode::BAD_REQUEST, err_body("bad args or busy"));
+            }
+            let _ = write!(j, "{{\"ok\":true,\"cmd\":\"keyboard/tap\"}}");
+        }
+        KbOp::Text => {
+            let mut buf = heapless::String::<256>::new();
+            let s = a.get("s", &mut buf);
+            if s.is_empty() {
+                return json_response(StatusCode::BAD_REQUEST, err_body("missing s"));
+            }
+            let (Some(ms), Some(gap)) = (u("ms", 40), u("gap", 40)) else {
+                return json_response(StatusCode::BAD_REQUEST, err_body("bad args"));
+            };
+            let mut text: heapless::String<192> = heapless::String::new();
+            if text.push_str(s).is_err() {
+                return json_response(StatusCode::BAD_REQUEST, err_body("too long"));
+            }
+            if !crate::kb::text(text, ms, gap) {
+                return json_response(StatusCode::CONFLICT, err_body("busy"));
+            }
+            let _ = write!(j, "{{\"ok\":true,\"cmd\":\"keyboard/text\"}}");
+        }
+        KbOp::Key => {
+            let Some(mods) = u("mods", 0) else {
+                return json_response(StatusCode::BAD_REQUEST, err_body("bad args"));
+            };
+            let mut r = crate::kb::Report {
+                mods: mods as u8,
+                ..Default::default()
+            };
+            for i in 0..6 {
+                let mut kn = heapless::String::<8>::new();
+                let _ = write!(kn, "k{i}");
+                let v = u(&kn, 0);
+                match v {
+                    Some(v) if v <= 255 => r.keys[i] = v as u8,
+                    Some(_) => {
+                        return json_response(StatusCode::BAD_REQUEST, err_body("bad args"));
+                    }
+                    None => {}
+                }
+            }
+            if !crate::kb::hold(r) {
+                return json_response(StatusCode::CONFLICT, err_body("busy"));
+            }
+            let _ = write!(j, "{{\"ok\":true,\"cmd\":\"keyboard/key\"}}");
+        }
+    }
+    json_response(StatusCode::OK, j)
+}
+
+// -------------------------------------------------------- rathole tunnel -
+
+/// Tunnel operation segment of /at-node/cmd/tunnel/<op> (single route —
+/// see the route table note).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TunnelOp {
+    Status,
+    Config,
+    Enable,
+    Connect,
+    Disconnect,
+    Clear,
+}
+
+impl core::str::FromStr for TunnelOp {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "status" => Ok(Self::Status),
+            "config" => Ok(Self::Config),
+            "enable" => Ok(Self::Enable),
+            "connect" => Ok(Self::Connect),
+            "disconnect" => Ok(Self::Disconnect),
+            "clear" => Ok(Self::Clear),
+            _ => Err(()),
+        }
+    }
+}
+
+/// GET /at-node/cmd/tunnel/status — everything else is POST-only.
+async fn h_tunnel_get(op: TunnelOp) -> impl IntoResponse {
+    if !rathole::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("tunnel disabled"));
+    }
+    if op != TunnelOp::Status {
+        return json_response(StatusCode::BAD_REQUEST, err_body("POST required"));
+    }
+    let t = rathole::status_json().await;
+    let mut j = String::new();
+    let _ = write!(j, "{{\"ok\":true,\"tunnels\":[{t}]}}");
+    json_response(StatusCode::OK, j)
+}
+
+/// POST /at-node/cmd/tunnel/<config|enable|connect|disconnect|clear>
+/// (Arduino handlers; config fields server,token,service,local,retry,auto,
+/// enable; empty token = unchanged).
+async fn h_tunnel_post(op: TunnelOp, query: QueryString, body: String) -> impl IntoResponse {
+    if !rathole::enabled() {
+        return json_response(StatusCode::BAD_REQUEST, err_body("tunnel disabled"));
+    }
+    let a = args(&query, body.as_str());
+    match op {
+        TunnelOp::Status => {
+            json_response(StatusCode::BAD_REQUEST, err_body("GET required"))
+        }
+        TunnelOp::Config => {
+            {
+                let mut buf = heapless::String::<256>::new();
+                let id = a.get("id", &mut buf);
+                if !id.is_empty() && id != "1" {
+                    return json_response(StatusCode::BAD_REQUEST, err_body("invalid id"));
+                }
+            }
+            for (arg, key) in [
+                ("server", "tunnel.1.server"),
+                ("token", "tunnel.1.token"),
+                ("service", "tunnel.1.service"),
+                ("local", "tunnel.1.local"),
+                ("retry", "tunnel.1.retry"),
+                ("auto", "tunnel.1.auto"),
+                ("enable", "tunnel.1.enable"),
+            ] {
+                let mut buf = heapless::String::<256>::new();
+                let v = a.get(arg, &mut buf);
+                if !v.is_empty() && cfg::set(key, v).await.is_err() {
+                    return json_response(StatusCode::BAD_REQUEST, err_body("bad value"));
+                }
+            }
+            let t = rathole::status_json().await;
+            let mut j = String::new();
+            let _ = write!(j, "{{\"ok\":true,\"cmd\":\"tunnel/config\",\"tunnel\":{t}}}");
+            json_response(StatusCode::OK, j)
+        }
+        TunnelOp::Enable => {
+            let mut buf = heapless::String::<256>::new();
+            let v = a.get("enable", &mut buf);
+            if cfg::set("rathole.enable", v).await.is_err() {
+                return json_response(StatusCode::BAD_REQUEST, err_body("bad value"));
+            }
+            let master = cfg::get_str("rathole.enable").await;
+            let mut j = String::new();
+            let _ = write!(
+                j,
+                "{{\"ok\":true,\"cmd\":\"tunnel/enable\",\"enabled\":{}}}",
+                master == "1"
+            );
+            json_response(StatusCode::OK, j)
+        }
+        TunnelOp::Connect => {
+            let t = rathole::status_json().await;
+            if rathole::connect().await {
+                let mut j = String::new();
+                let _ = write!(j, "{{\"ok\":true,\"cmd\":\"tunnel/connect\",\"tunnel\":{t}}}");
+                json_response(StatusCode::OK, j)
+            } else {
+                let mut j = String::new();
+                let _ = write!(
+                    j,
+                    "{{\"ok\":false,\"error\":\"start failed\",\"tunnel\":{t}}}"
+                );
+                json_response(StatusCode::BAD_REQUEST, j)
+            }
+        }
+        TunnelOp::Disconnect => {
+            rathole::disconnect();
+            json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"tunnel/disconnect\"}".into())
+        }
+        TunnelOp::Clear => {
+            rathole::clear().await;
+            json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"tunnel/clear\"}".into())
+        }
+    }
 }
 
 static RESTART: Signal<CriticalSectionRawMutex, ()> = Signal::new();

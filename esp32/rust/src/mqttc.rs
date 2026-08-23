@@ -20,6 +20,7 @@ use embassy_net::dns::DnsQueryType;
 use embassy_net::tcp::TcpSocket;
 use embassy_net::{Ipv4Address, Stack};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+#[cfg(feature = "http")]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Timer};
@@ -60,28 +61,37 @@ static STATE: critical_section::Mutex<RefCell<State>> =
 static KICK: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// External publish/subscribe requests (HTTP mqtt/publish|subscribe).
+/// The type stays visible so the no-http select branch can name it;
+/// the channels/API are http-gated below.
+#[allow(dead_code)]
 pub struct PubReq {
     topic: String<128>,
     payload: String<512>,
     subscribe: bool,
 }
 
+#[cfg(feature = "http")]
 static PUB_REQ: embassy_sync::channel::Channel<CriticalSectionRawMutex, PubReq, 2> =
     embassy_sync::channel::Channel::new();
+#[cfg(feature = "http")]
 static PUB_ACK: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+#[cfg(feature = "http")]
 static PUB_LOCK: Mutex<CriticalSectionRawMutex, ()> = Mutex::new(());
 
 /// Publish a message on the connected session (HTTP mqtt/publish).
 /// Returns false when not connected / queue full / timed out.
+#[cfg(feature = "http")]
 pub async fn publish(topic: &str, payload: &str) -> bool {
     pub_req(topic, payload, false).await
 }
 
 /// Subscribe to an extra topic on the live session (HTTP mqtt/subscribe).
+#[cfg(feature = "http")]
 pub async fn subscribe(topic: &str) -> bool {
     pub_req(topic, "", true).await
 }
 
+#[cfg(feature = "http")]
 async fn pub_req(topic: &str, payload: &str, subscribe: bool) -> bool {
     if !status().0 {
         return false;
@@ -262,7 +272,12 @@ where
 
 static TLS_RX: StaticCell<[u8; 16640]> = StaticCell::new();
 static TLS_TX: StaticCell<[u8; 8192]> = StaticCell::new();
-static MQTT_TX: StaticCell<[u8; 2048]> = StaticCell::new();
+/// Compile-time capability flag (feature matrix in Cargo.toml).
+pub fn enabled() -> bool {
+    cfg!(feature = "mqtt")
+}
+
+static MQTT_TX: StaticCell<[u8; 3072]> = StaticCell::new();
 static MQTT_RX: StaticCell<[u8; 2048]> = StaticCell::new();
 static TCP_RX: StaticCell<[u8; 4096]> = StaticCell::new();
 static TCP_TX: StaticCell<[u8; 2048]> = StaticCell::new();
@@ -270,7 +285,7 @@ static TCP_TX: StaticCell<[u8; 2048]> = StaticCell::new();
 pub struct Buffers<'a> {
     tls_rx: &'a mut [u8; 16640],
     tls_tx: &'a mut [u8; 8192],
-    mqtt_tx: &'a mut [u8; 2048],
+    mqtt_tx: &'a mut [u8; 3072],
     mqtt_rx: &'a mut [u8; 2048],
     tcp_rx: &'a mut [u8; 4096],
     tcp_tx: &'a mut [u8; 2048],
@@ -442,7 +457,7 @@ async fn run_session(
 )]
 async fn run_client<T>(
     transport: &mut T,
-    mqtt_tx: &mut [u8; 2048],
+    mqtt_tx: &mut [u8; 3072],
     mqtt_rx: &mut [u8; 2048],
     user: &str,
     pass: &str,
@@ -486,11 +501,21 @@ async fn run_client<T>(
         .await;
 
     let grace: Result<(), v3::Error> = loop {
+        let pub_recv = async {
+            #[cfg(feature = "http")]
+            {
+                PUB_REQ.receive().await
+            }
+            #[cfg(not(feature = "http"))]
+            {
+                core::future::pending::<PubReq>().await
+            }
+        };
         match embassy_futures::select::select4(
             client.recv(),
             Timer::after(Duration::from_secs(30)), // keep_alive 60 / 2
             select3_cfg(changed),
-            PUB_REQ.receive(),
+            pub_recv,
         )
         .await
         {
@@ -509,7 +534,7 @@ async fn run_client<T>(
                             None => (rest, ""),
                         };
                         let inner = mqtt_exec(method, query).await;
-                        let mut resp: String<1600> = String::new();
+                        let mut resp: String<2560> = String::new();
                         let _ = write!(resp, "{{\"id\":\"{reqid}\",{inner}}}");
                         if client
                             .publish(topics.resp.as_str(), resp.as_bytes(), false)
@@ -537,15 +562,20 @@ async fn run_client<T>(
             }
             embassy_futures::select::Either4::Third(Ctl::None) => continue,
             embassy_futures::select::Either4::Fourth(req) => {
-                let ok = if req.subscribe {
-                    client.subscribe(req.topic.as_str()).await.is_ok()
-                } else {
-                    client
-                        .publish(req.topic.as_str(), req.payload.as_bytes(), false)
-                        .await
-                        .is_ok()
-                };
-                PUB_ACK.signal(ok);
+                #[cfg(feature = "http")]
+                {
+                    let ok = if req.subscribe {
+                        client.subscribe(req.topic.as_str()).await.is_ok()
+                    } else {
+                        client
+                            .publish(req.topic.as_str(), req.payload.as_bytes(), false)
+                            .await
+                            .is_ok()
+                    };
+                    PUB_ACK.signal(ok);
+                }
+                #[cfg(not(feature = "http"))]
+                let _ = req;
             }
         }
         if !status().1 {
@@ -564,13 +594,107 @@ async fn run_client<T>(
     info!("mqtt: internal heap free {} bytes", esp_alloc::HEAP.free());
 }
 
+/// keyboard/tap, keyboard/text, keyboard/key — broker-documented method
+/// shapes. Params: tap=k,mods,ms; text=s,ms,gap; key=mods,k0..k5.
+#[cfg(feature = "mqtt")]
+fn keyboard_exec(method: &str, query: &str) -> String<2560> {
+    let mut out: String<2560> = String::new();
+    let num = |key: &str, def: u32| -> Option<u32> {
+        let mut buf: String<256> = String::new();
+        let v = crate::api::query_get(query, key, &mut buf);
+        if v.is_empty() {
+            Some(def)
+        } else if let Some(h) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+            u32::from_str_radix(h, 16).ok()
+        } else {
+            v.parse().ok()
+        }
+    };
+    match method {
+        "keyboard/tap" => {
+            match (num("k", 0), num("mods", 0), num("ms", 50)) {
+                (Some(k), Some(m), Some(ms))
+                    if k <= 255 && m <= 255 && ms <= 60_000
+                        && crate::kb::tap(m as u8, k as u8, ms) =>
+                {
+                    let _ = out.push_str("\"ok\":true");
+                }
+                _ => {
+                    let _ = out.push_str("\"ok\":false,\"error\":\"bad args or busy\"");
+                }
+            }
+        }
+        "keyboard/text" => {
+            let mut sbuf: String<256> = String::new();
+            let s = crate::api::query_get(query, "s", &mut sbuf);
+            if s.is_empty() {
+                let _ = out.push_str("\"ok\":false,\"error\":\"missing s\"");
+            } else {
+                let mut text: heapless::String<192> = heapless::String::new();
+                let (Some(ms), Some(gap)) = (num("ms", 40), num("gap", 40)) else {
+                    let _ = out.push_str("\"ok\":false,\"error\":\"bad args\"");
+                    return out;
+                };
+                if text.push_str(s).is_err() {
+                    let _ = out.push_str("\"ok\":false,\"error\":\"too long\"");
+                } else if crate::kb::text(text, ms, gap) {
+                    let _ = out.push_str("\"ok\":true");
+                } else {
+                    let _ = out.push_str("\"ok\":false,\"error\":\"busy\"");
+                }
+            }
+        }
+        "keyboard/key" => {
+            let Some(mods) = num("mods", 0).filter(|m| *m <= 255) else {
+                let _ = out.push_str("\"ok\":false,\"error\":\"bad args\"");
+                return out;
+            };
+            let mut r = crate::kb::Report {
+                mods: mods as u8,
+                ..Default::default()
+            };
+            let mut bad = false;
+            for i in 0..6 {
+                let mut kn: heapless::String<8> = heapless::String::new();
+                let _ = write!(kn, "k{i}");
+                match num(&kn, 0) {
+                    Some(v) if v <= 255 => r.keys[i] = v as u8,
+                    Some(_) => bad = true,
+                    None => {}
+                }
+            }
+            if bad || !crate::kb::hold(r) {
+                let _ = out.push_str("\"ok\":false,\"error\":\"bad args or busy\"");
+            } else {
+                let _ = out.push_str("\"ok\":true");
+            }
+        }
+        _ => {
+            let _ = out.push_str("\"ok\":false,\"error\":\"unknown method\"");
+        }
+    }
+    out
+}
+
 /// Arduino mqtt_exec(): RPC methods over the cmd channel. Returns the
 /// inner JSON fragment of the resp object (without {"id":..} wrapper).
 /// Method set follows the implemented stages; keyboard/* and ble/* join
 /// in R5/R6.
-async fn mqtt_exec(method: &str, query: &str) -> String<1600> {
-    let mut out: String<1600> = String::new();
+async fn mqtt_exec(method: &str, query: &str) -> String<2560> {
+    let mut out: String<2560> = String::new();
     let mut scratch: String<256> = String::new();
+
+    if matches!(method, "gpio/write" | "gpio/read" | "adc/read") && !crate::hws::enabled() {
+        let _ = out.push_str("\"ok\":false,\"error\":\"hws disabled\"");
+        return out;
+    }
+    if method.starts_with("keyboard/") && !crate::kb::enabled() {
+        let _ = out.push_str("\"ok\":false,\"error\":\"kbd disabled\"");
+        return out;
+    }
+    if method.starts_with("keyboard/") {
+        return keyboard_exec(method, query);
+    }
 
     match method {
         "gpio/write" => {
@@ -613,6 +737,8 @@ async fn mqtt_exec(method: &str, query: &str) -> String<1600> {
             if color.is_empty() {
                 let (r, g, b, mode) = crate::led::current();
                 let _ = write!(out, "\"ok\":true,\"r\":{r},\"g\":{g},\"b\":{b},\"mode\":\"{mode}\"");
+            } else if !crate::led::enabled() {
+                let _ = out.push_str("\"ok\":false,\"error\":\"led disabled\"");
             } else {
                 match crate::led::parse(color) {
                     Some(act) => {
@@ -641,6 +767,83 @@ async fn mqtt_exec(method: &str, query: &str) -> String<1600> {
         "sys/info" => {
             let info = crate::api::sys_info_json().await;
             let _ = write!(out, "\"ok\":true,\"info\":{info}");
+        }
+        "tunnel/status" => {
+            if !crate::rathole::enabled() {
+                let _ = out.push_str("\"ok\":false,\"error\":\"tunnel disabled\"");
+            } else {
+                let t = crate::rathole::status_json().await;
+                let _ = write!(out, "\"ok\":true,\"tunnels\":[{t}]");
+            }
+        }
+        "tunnel/enable" => {
+            let v: String<256> = crate::api::query_get(query, "enable", &mut scratch)
+                .try_into()
+                .unwrap_or_default();
+            if !crate::rathole::enabled() {
+                let _ = out.push_str("\"ok\":false,\"error\":\"tunnel disabled\"");
+            } else if crate::cfg::set("rathole.enable", v.as_str()).await.is_ok() {
+                let _ = out.push_str("\"ok\":true");
+            } else {
+                let _ = out.push_str("\"ok\":false,\"error\":\"bad value\"");
+            }
+        }
+        m if m.starts_with("tunnel/") && crate::rathole::enabled() => {
+            // id is always 1 on this firmware (single tunnel).
+            let id = crate::api::query_get(query, "id", &mut scratch);
+            if !id.is_empty() && id != "1" {
+                let _ = out.push_str("\"ok\":false,\"error\":\"invalid id\"");
+            } else {
+                match m {
+                    "tunnel/connect" => {
+                        if crate::rathole::connect().await {
+                            let _ = out.push_str("\"ok\":true");
+                        } else {
+                            let _ = out.push_str("\"ok\":false,\"error\":\"start failed\"");
+                        }
+                    }
+                    "tunnel/disconnect" => {
+                        crate::rathole::disconnect();
+                        let _ = out.push_str("\"ok\":true");
+                    }
+                    "tunnel/clear" => {
+                        crate::rathole::clear().await;
+                        let _ = out.push_str("\"ok\":true");
+                    }
+                    "tunnel/config" => {
+                        let mut bad = false;
+                        for (arg, key) in [
+                            ("server", "tunnel.1.server"),
+                            ("token", "tunnel.1.token"),
+                            ("service", "tunnel.1.service"),
+                            ("local", "tunnel.1.local"),
+                            ("retry", "tunnel.1.retry"),
+                            ("auto", "tunnel.1.auto"),
+                            ("enable", "tunnel.1.enable"),
+                        ] {
+                            let v: String<256> =
+                                crate::api::query_get(query, arg, &mut scratch)
+                                    .try_into()
+                                    .unwrap_or_default();
+                            if !v.is_empty() && crate::cfg::set(key, v.as_str()).await.is_err() {
+                                bad = true;
+                            }
+                        }
+                        if bad {
+                            let _ = out.push_str("\"ok\":false,\"error\":\"bad value\"");
+                        } else {
+                            let t = crate::rathole::status_json().await;
+                            let _ = write!(out, "\"ok\":true,\"tunnel\":{t}");
+                        }
+                    }
+                    _ => {
+                        let _ = out.push_str("\"ok\":false,\"error\":\"unknown method\"");
+                    }
+                }
+            }
+        }
+        m if m.starts_with("tunnel/") => {
+            let _ = out.push_str("\"ok\":false,\"error\":\"tunnel disabled\"");
         }
         "ability" => {
             let ab = crate::api::ability_json();
@@ -708,14 +911,14 @@ mod v3 {
 
     pub struct Client<'a, T> {
         t: &'a mut T,
-        tx: &'a mut [u8; 2048],
+        tx: &'a mut [u8; 3072],
         rx: &'a mut [u8; 2048],
         topic_len: usize,
         payload_len: usize,
     }
 
     impl<'a, T> Client<'a, T> {
-        pub fn new(t: &'a mut T, tx: &'a mut [u8; 2048], rx: &'a mut [u8; 2048]) -> Self {
+        pub fn new(t: &'a mut T, tx: &'a mut [u8; 3072], rx: &'a mut [u8; 2048]) -> Self {
             Self {
                 t,
                 tx,

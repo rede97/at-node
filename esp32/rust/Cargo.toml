@@ -4,6 +4,28 @@ name         = "atnode-s3"
 rust-version = "1.88"
 version      = "0.1.0"
 
+[features]
+# Compile-time feature matrix (mirror of esp32/arduino/features.h):
+#   core: kbd-usb / kbd-ble (R6) / led-color / hws (GPIO·ADC·I2C)
+#   comm: mqtt / http / rathole        (WiFi is the base, always on)
+# Disabled features report "<x> disabled" on every channel and drop out
+# of the ability JSON; led-color additionally removes the RMT driver and
+# frees GPIO48.
+#
+# Variants (build.sh maps names to these sets):
+#   full    = everything except kbd-ble (R6)
+#   remoter = full - rathole
+#   base    = full - rathole - http   (production kbd, serial-only config)
+#   rathole = led-color + http + rathole (tunnel test unit; no kbd/mqtt/hws)
+default   = ["led-color", "rathole", "mqtt", "http", "hws", "kbd-usb"]
+led-color = []
+rathole   = []
+mqtt      = []
+http      = []
+hws       = []
+kbd-usb   = ["dep:usb-device", "dep:usbd-hid", "esp-hal/__usb_otg"]
+kbd-ble   = []   # R6 stub: compiles but reports disabled
+
 [dependencies]
 esp-hal = { version = "~1.1.0", features = ["esp32s3", "log-04", "unstable"] }
 
@@ -35,6 +57,9 @@ sequential-storage      = "8.0.1"
 embedded-storage        = "0.3.1"
 embedded-storage-async  = "0.4.1"
 heapless                = "0.9.3"
+sha2 = { version = "0.10", default-features = false }
+usb-device = { version = "0.3", optional = true }
+usbd-hid   = { version = "0.8", optional = true }
 
 esp-radio = { version = "0.18.0", features = ["esp32s3", "wifi", "unstable", "esp-alloc", "log-04"] }
 embassy-net = { version = "0.9.1", features = ["dhcpv4", "medium-ethernet", "dns", "tcp"] }

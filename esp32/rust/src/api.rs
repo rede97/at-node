@@ -12,12 +12,28 @@ use heapless::String;
 
 use crate::{cfg, mqttc, wifi};
 
-/// Arduino build_ability_json(). ble flips true in R6, http in R4.
-pub fn ability_json() -> String<96> {
-    let mut j: String<96> = String::new();
-    let _ = j.push_str(
-        "{\"ble\":false,\"mqtt\":true,\"rathole\":false,\"i2c\":true,\
-\"http\":true,\"breath_led\":false,\"led\":true}",
+/// Arduino build_ability_json(), driven by the cargo feature matrix
+/// (Cargo.toml [features]). led mirrors the Arduino ATNODE_LED model:
+/// "none" | "breath" | "color" (S3 is color-only). ble flips true in R6.
+pub fn ability_json() -> String<128> {
+    #[cfg(feature = "led-color")]
+    const LED_CAP: &str = "color";
+    #[cfg(not(feature = "led-color"))]
+    const LED_CAP: &str = "none";
+    #[cfg(feature = "kbd-usb")]
+    const KBD_CAP: &str = "usb";
+    #[cfg(not(feature = "kbd-usb"))]
+    const KBD_CAP: &str = "none";
+
+    let mut j: String<128> = String::new();
+    let _ = write!(
+        j,
+        "{{\"ble\":false,\"kbd\":\"{KBD_CAP}\",\"mqtt\":{},\"rathole\":{},\"i2c\":{},\
+\"http\":{},\"led\":\"{LED_CAP}\"}}",
+        crate::mqttc::enabled(),
+        crate::rathole::enabled(),
+        crate::hws::enabled(),
+        crate::httpd::enabled(),
     );
     j
 }
@@ -54,6 +70,32 @@ const P_LED: &[ApiParam] = &[ApiParam(
     "color",
     "#RRGGBB | r,g,b | off | auto (empty = status)",
 )];
+const P_TUNCFG: &[ApiParam] = &[
+    ApiParam("id", "tunnel id (always 1)"),
+    ApiParam("server", "rathole server host:port"),
+    ApiParam("token", "service token"),
+    ApiParam("service", "service name (must match server)"),
+    ApiParam("local", "LAN host:port to forward to (NOT the device itself)"),
+    ApiParam("retry", "reconnect backoff base s (1-60)"),
+    ApiParam("auto", "1|0 auto-connect at boot"),
+    ApiParam("enable", "1|0 per-tunnel switch"),
+];
+const P_TUNID: &[ApiParam] = &[ApiParam("id", "tunnel id (always 1)")];
+const P_TUNEN: &[ApiParam] = &[ApiParam("enable", "1|0 rathole master switch (NVS)")];
+const P_KBTAP: &[ApiParam] = &[
+    ApiParam("k", "HID keycode (hex ok)"),
+    ApiParam("mods", "modifier bitmask, default 0"),
+    ApiParam("ms", "hold time ms, default 50"),
+];
+const P_KBTEXT: &[ApiParam] = &[
+    ApiParam("s", "ASCII text"),
+    ApiParam("ms", "press time ms, default 40"),
+    ApiParam("gap", "gap between chars ms, default 40"),
+];
+const P_KBKEY: &[ApiParam] = &[
+    ApiParam("mods", "modifier bitmask"),
+    ApiParam("k0..k5", "keycodes (hold; all-zero = release)"),
+];
 
 /// Arduino API_CATALOG restricted to what this firmware implements.
 const CATALOG: &[ApiEntry] = &[
@@ -93,6 +135,51 @@ const CATALOG: &[ApiEntry] = &[
         desc: "WS2812 color (AT+LED semantics)",
     },
     ApiEntry {
+        method: "tunnel/status",
+        params: &[],
+        desc: "rathole tunnel states",
+    },
+    ApiEntry {
+        method: "tunnel/config",
+        params: P_TUNCFG,
+        desc: "configure rathole tunnel (NVS)",
+    },
+    ApiEntry {
+        method: "tunnel/connect",
+        params: P_TUNID,
+        desc: "start tunnel control channel",
+    },
+    ApiEntry {
+        method: "tunnel/disconnect",
+        params: P_TUNID,
+        desc: "stop tunnel",
+    },
+    ApiEntry {
+        method: "tunnel/clear",
+        params: P_TUNID,
+        desc: "wipe tunnel config (NVS)",
+    },
+    ApiEntry {
+        method: "tunnel/enable",
+        params: P_TUNEN,
+        desc: "rathole master switch (NVS)",
+    },
+    ApiEntry {
+        method: "keyboard/tap",
+        params: P_KBTAP,
+        desc: "atomic key press+release",
+    },
+    ApiEntry {
+        method: "keyboard/text",
+        params: P_KBTEXT,
+        desc: "type ASCII text",
+    },
+    ApiEntry {
+        method: "keyboard/key",
+        params: P_KBKEY,
+        desc: "raw 8-byte boot report (hold)",
+    },
+    ApiEntry {
         method: "ability",
         params: &[],
         desc: "compile-time feature flags",
@@ -119,14 +206,28 @@ const CATALOG: &[ApiEntry] = &[
     },
 ];
 
-/// Arduino build_services_json().
-pub fn services_json() -> String<1600> {
-    let mut s: String<1600> = String::new();
+/// Arduino build_services_json(). The led entry is reported only when the
+/// led-color feature is compiled in (ability "led":"none" otherwise).
+pub fn services_json() -> String<2560> {
+    let mut s: String<2560> = String::new();
     let _ = s.push('{');
-    for (i, e) in CATALOG.iter().enumerate() {
-        if i > 0 {
+    let mut first = true;
+    for e in CATALOG.iter() {
+        let hws_method = matches!(
+            e.method,
+            "gpio/write" | "gpio/read" | "adc/read" | "i2c/scan" | "i2c/read" | "i2c/write"
+        );
+        if (e.method == "led" && !crate::led::enabled())
+            || (e.method.starts_with("tunnel/") && !crate::rathole::enabled())
+            || (e.method.starts_with("keyboard/") && !crate::kb::enabled())
+            || (hws_method && !crate::hws::enabled())
+        {
+            continue;
+        }
+        if !first {
             let _ = s.push(',');
         }
+        first = false;
         let _ = write!(s, "\"{}\":{{\"d\":\"{}\",\"p\":{{", e.method, e.desc);
         for (j, p) in e.params.iter().enumerate() {
             if j > 0 {
@@ -142,7 +243,8 @@ pub fn services_json() -> String<1600> {
 
 /// Arduino build_sys_info_json(): retained MQTT info manifest, also the
 /// sys/info RPC result. ble fields stay false/empty until R6.
-pub async fn sys_info_json() -> String<1600> {
+#[cfg_attr(not(feature = "mqtt"), allow(dead_code))]
+pub async fn sys_info_json() -> String<2560> {
     let name = cfg::get_str("device.name").await;
     let hostname = cfg::get_str("device.hostname").await;
     let mut ip_s: String<16> = String::new();
@@ -152,7 +254,7 @@ pub async fn sys_info_json() -> String<1600> {
     let (_, mqtt_connected) = mqttc::status();
     let services = services_json();
 
-    let mut j: String<1600> = String::new();
+    let mut j: String<2560> = String::new();
     let _ = write!(
         j,
         "{{\"device\":\"{name}\",\"hostname\":\"{hostname}\",\"ip\":\"{ip_s}\",\

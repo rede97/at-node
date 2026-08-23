@@ -1,33 +1,37 @@
-//! AT-Node rust-s3 — WS2812 status LED (GPIO48, RMT channel 0).
+//! AT-Node rust-s3 — WS2812 status/palette LED (GPIO48, RMT channel 0).
 //!
 //! Semantics aligned with esp32/zephyr/src/led.c: tracked status presets
 //! (boot yellow / wifi-connecting slow-blink blue / online green / error
 //! red) vs a free custom color that holds until the next status call.
 //! All updates run inside this async task; other modules only post
 //! commands to the channel (no RMT traffic outside task context).
-
-use core::sync::atomic::{AtomicU32, Ordering};
+//!
+//! Cargo feature `led-color` (default on): the S3 LED is independent of
+//! every other feature (unlike C3, where the onboard LED shares GPIO8
+//! with I2C — see esp32/arduino/features.h). Built with
+//! `--no-default-features` the whole driver drops out (no RMT setup, no
+//! led task), GPIO48 rejoins the hws safe-GPIO pool, enabled() is false
+//! and the set paths on every channel answer "led disabled".
 
 use embassy_executor::Spawner;
-use embassy_futures::select::{Either, select};
-use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
-use embassy_sync::channel::Channel;
-use embassy_time::{Duration, Timer};
-use esp_hal::Async;
-use esp_hal::gpio::Level;
 use esp_hal::peripherals::{GPIO48, RMT};
-use esp_hal::rmt::{PulseCode, Rmt, Tx, TxChannelConfig, TxChannelCreator};
-use esp_hal::time::Rate;
+#[cfg(feature = "led-color")]
+use {
+    core::sync::atomic::{AtomicU32, Ordering},
+    embassy_futures::select::{Either, select},
+    embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex,
+    embassy_sync::channel::Channel,
+    embassy_time::{Duration, Timer},
+    esp_hal::Async,
+    esp_hal::gpio::Level,
+    esp_hal::rmt::{PulseCode, Rmt, Tx, TxChannelConfig, TxChannelCreator},
+    esp_hal::time::Rate,
+};
 
-/// Preset brightness for status colors (Zephyr BRIGHTNESS 0x20).
-const BRIGHT: u8 = 0x20;
-
-/// Blink half-period for LED_WIFI_CONNECTING (Zephyr 500 ms timer).
-const BLINK_MS: u64 = 500;
-
-// WS2812B pulse widths in 80 MHz RMT ticks (12.5 ns).
-const PULSE_0: PulseCode = PulseCode::new(Level::High, 32, Level::Low, 68);
-const PULSE_1: PulseCode = PulseCode::new(Level::High, 64, Level::Low, 56);
+/// Compile-time capability flag for the AT/HTTP/MQTT front ends.
+pub fn enabled() -> bool {
+    cfg!(feature = "led-color")
+}
 
 /// Tracked status presets (led_status enum in the Zephyr variant).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -37,35 +41,6 @@ pub enum Status {
     WifiConnecting,
     Online,
     Error,
-}
-
-enum Cmd {
-    Status(Status),
-    Rgb(u8, u8, u8),
-    Off,
-    /// Re-apply the current tracked status (AT+LED=auto).
-    Auto,
-}
-
-static CMD: Channel<CriticalSectionRawMutex, Cmd, 4> = Channel::new();
-
-/// Switch to a tracked preset (clears any custom color).
-pub fn status(s: Status) {
-    let _ = CMD.try_send(Cmd::Status(s));
-}
-
-/// Free custom color; holds until the next status()/auto() call.
-pub fn set_rgb(r: u8, g: u8, b: u8) {
-    let _ = CMD.try_send(Cmd::Rgb(r, g, b));
-}
-
-pub fn off() {
-    let _ = CMD.try_send(Cmd::Off);
-}
-
-/// Restore the current tracked status (AT+LED=auto).
-pub fn auto() {
-    let _ = CMD.try_send(Cmd::Auto);
 }
 
 // -------------------------------------------------- color spec parsing ---
@@ -123,24 +98,10 @@ pub fn apply_action(a: Action) {
 
 // --------------------------------------------------------- state query ---
 
-const MODE_AUTO: u32 = 0;
-const MODE_CUSTOM: u32 = 1;
-const MODE_OFF: u32 = 2;
-
-/// Last commanded state: mode in bits 25..24, RGB in bits 23..0. Written
-/// only by led_task on command transitions — the wifi-connecting blink
-/// never touches it, so queries report the user's logical color.
-static CUR: AtomicU32 = AtomicU32::new(MODE_AUTO << 24);
-
-fn record(mode: u32, r: u8, g: u8, b: u8) {
-    CUR.store(
-        (mode << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
-        Ordering::Relaxed,
-    );
-}
-
 /// Current state for status queries (AT+LED?, GET /at-node/cmd/led, MQTT
-/// "led"): (r, g, b, mode) with mode "auto" | "custom" | "off".
+/// "led"): (r, g, b, mode) with mode "auto" | "custom" | "off", or
+/// all-zero "none" when the LED is not compiled in.
+#[cfg(feature = "led-color")]
 pub fn current() -> (u8, u8, u8, &'static str) {
     let v = CUR.load(Ordering::Relaxed);
     let mode = match v >> 24 {
@@ -151,95 +112,185 @@ pub fn current() -> (u8, u8, u8, &'static str) {
     ((v >> 16) as u8, (v >> 8) as u8, v as u8, mode)
 }
 
-/// Bring up the RMT channel and spawn the LED task. Call once from main.
-pub fn init(spawner: Spawner, rmt: RMT<'static>, pin: GPIO48<'static>) {
-    let rmt = Rmt::new(rmt, Rate::from_mhz(80))
-        .expect("rmt init")
-        .into_async();
-    let tx = rmt
-        .channel0
-        .configure_tx(
-            &TxChannelConfig::default()
-                .with_clk_divider(1)
-                .with_idle_output(true)
-                .with_idle_output_level(Level::Low),
-        )
-        .expect("rmt channel")
-        .with_pin(pin);
-    spawner.spawn(led_task(tx).expect("spawn led task"));
+#[cfg(not(feature = "led-color"))]
+pub fn current() -> (u8, u8, u8, &'static str) {
+    (0, 0, 0, "none")
 }
 
-fn preset(s: Status, blink_on: bool) -> (u8, u8, u8) {
-    match s {
-        Status::Boot => (BRIGHT, BRIGHT, 0),
-        Status::WifiConnecting => (0, 0, if blink_on { BRIGHT } else { 0 }),
-        Status::Online => (0, BRIGHT, 0),
-        Status::Error => (BRIGHT, 0, 0),
+// ----------------------------------------------------- driver (gated) ---
+
+#[cfg(feature = "led-color")]
+pub use driver::{auto, init, off, set_rgb, status};
+
+#[cfg(not(feature = "led-color"))]
+mod driver_stub {
+    use super::{GPIO48, RMT, Spawner, Status};
+
+    pub fn status(_s: Status) {}
+    pub fn set_rgb(_r: u8, _g: u8, _b: u8) {}
+    pub fn off() {}
+    pub fn auto() {}
+    pub fn init(_spawner: Spawner, _rmt: RMT<'static>, _pin: GPIO48<'static>) {}
+}
+
+#[cfg(not(feature = "led-color"))]
+pub use driver_stub::{auto, init, off, set_rgb, status};
+
+// impl block continues in the gated section below; CUR/MODE_* live here
+// because current() (feature-on) reads them.
+#[cfg(feature = "led-color")]
+const MODE_AUTO: u32 = 0;
+#[cfg(feature = "led-color")]
+const MODE_CUSTOM: u32 = 1;
+#[cfg(feature = "led-color")]
+const MODE_OFF: u32 = 2;
+
+/// Last commanded state: mode in bits 25..24, RGB in bits 23..0. Written
+/// only by led_task on command transitions — the wifi-connecting blink
+/// never touches it, so queries report the user's logical color.
+#[cfg(feature = "led-color")]
+static CUR: AtomicU32 = AtomicU32::new(MODE_AUTO << 24);
+
+#[cfg(feature = "led-color")]
+mod driver {
+    use super::*;
+
+    /// Preset brightness for status colors (Zephyr BRIGHTNESS 0x20).
+    const BRIGHT: u8 = 0x20;
+
+    /// Blink half-period for LED_WIFI_CONNECTING (Zephyr 500 ms timer).
+    const BLINK_MS: u64 = 500;
+
+    // WS2812B pulse widths in 80 MHz RMT ticks (12.5 ns).
+    const PULSE_0: PulseCode = PulseCode::new(Level::High, 32, Level::Low, 68);
+    const PULSE_1: PulseCode = PulseCode::new(Level::High, 64, Level::Low, 56);
+
+    enum Cmd {
+        Status(Status),
+        Rgb(u8, u8, u8),
+        Off,
+        /// Re-apply the current tracked status (AT+LED=auto).
+        Auto,
     }
-}
 
-async fn apply(tx: &mut esp_hal::rmt::Channel<'_, Async, Tx>, r: u8, g: u8, b: u8) {
-    let mut data = [PulseCode::end_marker(); 25];
-    // WS2812B wire order is GRB.
-    for (i, byte) in [g, r, b].iter().enumerate() {
-        for bit in 0..8 {
-            data[i * 8 + bit] = if byte & (0x80 >> bit) != 0 {
-                PULSE_1
-            } else {
-                PULSE_0
-            };
+    static CMD: Channel<CriticalSectionRawMutex, Cmd, 4> = Channel::new();
+
+    /// Switch to a tracked preset (clears any custom color).
+    pub fn status(s: Status) {
+        let _ = CMD.try_send(Cmd::Status(s));
+    }
+
+    /// Free custom color; holds until the next status()/auto() call.
+    pub fn set_rgb(r: u8, g: u8, b: u8) {
+        let _ = CMD.try_send(Cmd::Rgb(r, g, b));
+    }
+
+    pub fn off() {
+        let _ = CMD.try_send(Cmd::Off);
+    }
+
+    /// Restore the current tracked status (AT+LED=auto).
+    pub fn auto() {
+        let _ = CMD.try_send(Cmd::Auto);
+    }
+
+    fn record(mode: u32, r: u8, g: u8, b: u8) {
+        CUR.store(
+            (mode << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+            Ordering::Relaxed,
+        );
+    }
+
+    /// Bring up the RMT channel and spawn the LED task. Call once from main.
+    pub fn init(spawner: Spawner, rmt: RMT<'static>, pin: GPIO48<'static>) {
+        let rmt = Rmt::new(rmt, Rate::from_mhz(80))
+            .expect("rmt init")
+            .into_async();
+        let tx = rmt
+            .channel0
+            .configure_tx(
+                &TxChannelConfig::default()
+                    .with_clk_divider(1)
+                    .with_idle_output(true)
+                    .with_idle_output_level(Level::Low),
+            )
+            .expect("rmt channel")
+            .with_pin(pin);
+        spawner.spawn(led_task(tx).expect("spawn led task"));
+    }
+
+    fn preset(s: Status, blink_on: bool) -> (u8, u8, u8) {
+        match s {
+            Status::Boot => (BRIGHT, BRIGHT, 0),
+            Status::WifiConnecting => (0, 0, if blink_on { BRIGHT } else { 0 }),
+            Status::Online => (0, BRIGHT, 0),
+            Status::Error => (BRIGHT, 0, 0),
         }
     }
-    let _ = tx.transmit(&data).await;
-}
 
-#[embassy_executor::task]
-async fn led_task(mut tx: esp_hal::rmt::Channel<'static, Async, Tx>) {
-    let mut cur = Status::Boot;
-    let mut custom = false;
-    let mut blink_on = false;
-    apply(&mut tx, BRIGHT, BRIGHT, 0).await;
-    record(MODE_AUTO, BRIGHT, BRIGHT, 0);
+    async fn apply(tx: &mut esp_hal::rmt::Channel<'_, Async, Tx>, r: u8, g: u8, b: u8) {
+        let mut data = [PulseCode::end_marker(); 25];
+        // WS2812B wire order is GRB.
+        for (i, byte) in [g, r, b].iter().enumerate() {
+            for bit in 0..8 {
+                data[i * 8 + bit] = if byte & (0x80 >> bit) != 0 {
+                    PULSE_1
+                } else {
+                    PULSE_0
+                };
+            }
+        }
+        let _ = tx.transmit(&data).await;
+    }
 
-    loop {
-        let cmd = if !custom && cur == Status::WifiConnecting {
-            match select(CMD.receive(), Timer::after(Duration::from_millis(BLINK_MS))).await {
-                Either::First(c) => c,
-                Either::Second(()) => {
-                    blink_on = !blink_on;
-                    let (r, g, b) = preset(cur, blink_on);
-                    apply(&mut tx, r, g, b).await;
-                    continue;
+    #[embassy_executor::task]
+    async fn led_task(mut tx: esp_hal::rmt::Channel<'static, Async, Tx>) {
+        let mut cur = Status::Boot;
+        let mut custom = false;
+        let mut blink_on = false;
+        apply(&mut tx, BRIGHT, BRIGHT, 0).await;
+        record(MODE_AUTO, BRIGHT, BRIGHT, 0);
+
+        loop {
+            let cmd = if !custom && cur == Status::WifiConnecting {
+                match select(CMD.receive(), Timer::after(Duration::from_millis(BLINK_MS))).await {
+                    Either::First(c) => c,
+                    Either::Second(()) => {
+                        blink_on = !blink_on;
+                        let (r, g, b) = preset(cur, blink_on);
+                        apply(&mut tx, r, g, b).await;
+                        continue;
+                    }
                 }
-            }
-        } else {
-            CMD.receive().await
-        };
+            } else {
+                CMD.receive().await
+            };
 
-        match cmd {
-            Cmd::Status(s) => {
-                cur = s;
-                custom = false;
-                blink_on = false;
-                let (r, g, b) = preset(cur, true);
-                apply(&mut tx, r, g, b).await;
-                record(MODE_AUTO, r, g, b);
-            }
-            Cmd::Auto => {
-                custom = false;
-                let (r, g, b) = preset(cur, true);
-                apply(&mut tx, r, g, b).await;
-                record(MODE_AUTO, r, g, b);
-            }
-            Cmd::Rgb(r, g, b) => {
-                custom = true;
-                apply(&mut tx, r, g, b).await;
-                record(MODE_CUSTOM, r, g, b);
-            }
-            Cmd::Off => {
-                custom = true;
-                apply(&mut tx, 0, 0, 0).await;
-                record(MODE_OFF, 0, 0, 0);
+            match cmd {
+                Cmd::Status(s) => {
+                    cur = s;
+                    custom = false;
+                    blink_on = false;
+                    let (r, g, b) = preset(cur, true);
+                    apply(&mut tx, r, g, b).await;
+                    record(MODE_AUTO, r, g, b);
+                }
+                Cmd::Auto => {
+                    custom = false;
+                    let (r, g, b) = preset(cur, true);
+                    apply(&mut tx, r, g, b).await;
+                    record(MODE_AUTO, r, g, b);
+                }
+                Cmd::Rgb(r, g, b) => {
+                    custom = true;
+                    apply(&mut tx, r, g, b).await;
+                    record(MODE_CUSTOM, r, g, b);
+                }
+                Cmd::Off => {
+                    custom = true;
+                    apply(&mut tx, 0, 0, 0).await;
+                    record(MODE_OFF, 0, 0, 0);
+                }
             }
         }
     }

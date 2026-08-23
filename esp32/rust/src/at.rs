@@ -47,7 +47,11 @@ const HELP: &[&str] = &[
     "  AT+GPIO_W=<pin>,<level> / AT+GPIO_R=<pin>",
     "  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R=<addr>,<reg>,<len>",
     "  AT+I2C_W=<addr>,<reg>,<d0>,<d1>,...",
+    "  AT+TAP=<key>[,<mods>][,<ms>] / AT+KEY=<mods>,<k0>[,<k1..k5>]",
+    "  AT+KEY_STR=<text> / AT+KEY_SEQ=<ms>,<mods>,<k0..k5>,... / AT+DEV=USB|BLE",
     "  AT+LED=<r>,<g>,<b>|#RRGGBB|off|auto / AT+LED?",
+    "  AT+TUNNEL=status|connect|disconnect|clear|enable[,<0|1>]",
+    "  AT+TUNNEL=server|token|service|local|auto|retry,<val>",
     "  AT+NVS=clear / AT+RST",
 ];
 
@@ -113,6 +117,42 @@ pub async fn handle_line<S: AtSink>(line: &str, out: &mut S) {
         out.emit("OK").await;
     } else if let Some(args) = line.strip_prefix("AT+LED=") {
         cmd_led(args, out).await;
+    } else if line == "AT+DEV?" {
+        if !crate::kb::enabled() {
+            out.emit("ERROR kbd disabled").await;
+            return;
+        }
+        scratch.buf.clear();
+        let _ = write!(scratch.buf, "+DEV:{}", crate::kb::target_str());
+        out.emit(scratch.buf.as_str()).await;
+        out.emit("OK").await;
+    } else if let Some(args) = line.strip_prefix("AT+DEV=") {
+        if !crate::kb::enabled() {
+            out.emit("ERROR kbd disabled").await;
+            return;
+        }
+        let t = match args {
+            "USB" => crate::kb::Target::Usb,
+            "BLE" => crate::kb::Target::Ble,
+            _ => {
+                out.emit("ERROR bad args").await;
+                return;
+            }
+        };
+        match crate::kb::set_target(t) {
+            Ok(()) => out.emit("OK").await,
+            Err(()) => out.emit("ERROR bad target").await,
+        }
+    } else if let Some(args) = line.strip_prefix("AT+TAP=") {
+        cmd_tap(args, out).await;
+    } else if let Some(args) = line.strip_prefix("AT+KEY_STR=") {
+        cmd_key_str(args, out).await;
+    } else if let Some(args) = line.strip_prefix("AT+KEY_SEQ=") {
+        cmd_key_seq(args, out).await;
+    } else if let Some(args) = line.strip_prefix("AT+KEY=") {
+        cmd_key(args, out).await;
+    } else if let Some(args) = line.strip_prefix("AT+TUNNEL=") {
+        cmd_tunnel(args, &mut scratch, out).await;
     } else if let Some(sub) = line.strip_prefix("AT+NVS=") {
         if sub == "clear" {
             match cfg::erase_all().await {
@@ -132,6 +172,10 @@ pub async fn handle_line<S: AtSink>(line: &str, out: &mut S) {
     } else if let Some(args) = line.strip_prefix("AT+ADC=") {
         cmd_adc(args, &mut scratch, out).await;
     } else if line == "AT+I2C_SCAN" {
+        if !crate::hws::enabled() {
+            out.emit("ERROR hws disabled").await;
+            return;
+        }
         let mut buf: String<600> = String::new();
         crate::hws::i2c_scan(&mut buf).await;
         out.emit(buf.as_str()).await;
@@ -174,6 +218,10 @@ fn split<'a, const N: usize>(args: &'a str, fields: &mut [&'a str; N]) -> usize 
 
 /// AT+GPIO_W=<pin>,<level> (Zephyr cmd_gpio_w).
 async fn cmd_gpio_w<S: AtSink>(args: &str, out: &mut S) {
+    if !crate::hws::enabled() {
+        out.emit("ERROR hws disabled").await;
+        return;
+    }
     let mut f = [""; 2];
     if split(args, &mut f) != 2 {
         out.emit("ERROR bad args").await;
@@ -193,6 +241,10 @@ async fn cmd_gpio_w<S: AtSink>(args: &str, out: &mut S) {
 
 /// AT+GPIO_R=<pin> (Zephyr cmd_gpio_r; arduino.ino:2772 format).
 async fn cmd_gpio_r<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
+    if !crate::hws::enabled() {
+        out.emit("ERROR hws disabled").await;
+        return;
+    }
     match to_u32(args) {
         Some(pin) if pin <= 255 => match crate::hws::gpio_read(pin as u8) {
             Ok(level) => {
@@ -209,6 +261,10 @@ async fn cmd_gpio_r<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
 
 /// AT+ADC=<ch> (Zephyr cmd_adc; arduino.ino:2779 format, millivolts).
 async fn cmd_adc<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
+    if !crate::hws::enabled() {
+        out.emit("ERROR hws disabled").await;
+        return;
+    }
     match to_u32(args) {
         Some(ch) if ch <= 255 => match crate::hws::adc_read_mv(ch as u8) {
             Ok(mv) => {
@@ -225,6 +281,10 @@ async fn cmd_adc<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
 
 /// AT+I2C_R=<addr>,<reg>,<len> (Zephyr cmd_i2c_r).
 async fn cmd_i2c_r<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
+    if !crate::hws::enabled() {
+        out.emit("ERROR hws disabled").await;
+        return;
+    }
     let mut f = [""; 3];
     if split(args, &mut f) != 3 {
         out.emit("ERROR bad args").await;
@@ -317,6 +377,10 @@ async fn cmd_wifi<S: AtSink>(args: &str, out: &mut S) {
 /// (Zephyr cmd_mqtt; enable/auto are cfg aliases so the change pubsub
 /// reaches the mqtt task).
 async fn cmd_mqtt<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
+    if !crate::mqttc::enabled() {
+        out.emit("ERROR mqtt disabled").await;
+        return;
+    }
     let mut f = [""; 2];
     let n = split(args, &mut f);
     let (sub, val) = (f[0], if n == 2 { f[1] } else { "" });
@@ -381,6 +445,10 @@ async fn cmd_http<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
         out.emit(scratch.buf.as_str()).await;
         out.emit("OK").await;
     } else if n == 2 && (sub == "enable" || sub == "auto") {
+        if !crate::httpd::enabled() {
+            out.emit("ERROR http disabled").await;
+            return;
+        }
         let key = if sub == "enable" {
             "http.enable"
         } else {
@@ -450,11 +518,223 @@ async fn cmd_status<S: AtSink>(scratch: &mut Scratch, out: &mut S) {
 
 /// AT+LED=<r>,<g>,<b>|#RRGGBB|off|auto — parse shared with HTTP/MQTT.
 async fn cmd_led<S: AtSink>(args: &str, out: &mut S) {
+    if !led::enabled() {
+        out.emit("ERROR led disabled").await;
+        return;
+    }
     match led::parse(args) {
         Some(a) => {
             led::apply_action(a);
             out.emit("OK").await;
         }
         None => out.emit("ERROR bad args").await,
+    }
+}
+
+/// AT+TAP=<key>[,<mods>][,<ms>] — atomic press+release (F18 discipline).
+async fn cmd_tap<S: AtSink>(args: &str, out: &mut S) {
+    if !crate::kb::enabled() {
+        out.emit("ERROR kbd disabled").await;
+        return;
+    }
+    let mut f = [""; 3];
+    let n = split(args, &mut f);
+    if n == 0 {
+        out.emit("ERROR bad args").await;
+        return;
+    }
+    let key = to_u32(f[0]);
+    let mods = if n > 1 { to_u32(f[1]) } else { Some(0) };
+    let ms = if n > 2 { to_u32(f[2]) } else { Some(50) };
+    match (key, mods, ms) {
+        (Some(k), Some(m), Some(ms)) if k <= 255 && m <= 255 && ms <= 60_000 => {
+            if crate::kb::tap(m as u8, k as u8, ms) {
+                out.emit("OK").await;
+            } else {
+                out.emit("ERROR busy").await;
+            }
+        }
+        _ => out.emit("ERROR bad args").await,
+    }
+}
+
+/// AT+KEY=<mods>,<k0>[,<k1>..<k5>] — bare report; holds until AT+KEY=0,0.
+async fn cmd_key<S: AtSink>(args: &str, out: &mut S) {
+    if !crate::kb::enabled() {
+        out.emit("ERROR kbd disabled").await;
+        return;
+    }
+    let mut f = [""; 7];
+    let n = split(args, &mut f);
+    if n < 2 {
+        out.emit("ERROR bad args").await;
+        return;
+    }
+    let Some(mods) = to_u32(f[0]) else {
+        out.emit("ERROR bad args").await;
+        return;
+    };
+    let mut r = crate::kb::Report {
+        mods: mods as u8,
+        ..Default::default()
+    };
+    for (i, k) in f[1..n].iter().enumerate() {
+        match to_u32(k) {
+            Some(v) if v <= 255 => r.keys[i] = v as u8,
+            _ => {
+                out.emit("ERROR bad args").await;
+                return;
+            }
+        }
+    }
+    if crate::kb::hold(r) {
+        out.emit("OK").await;
+    } else {
+        out.emit("ERROR busy").await;
+    }
+}
+
+/// AT+KEY_STR=<text> — ASCII playback, auto-paired press/release.
+async fn cmd_key_str<S: AtSink>(args: &str, out: &mut S) {
+    if !crate::kb::enabled() {
+        out.emit("ERROR kbd disabled").await;
+        return;
+    }
+    if args.is_empty() {
+        out.emit("ERROR bad args").await;
+        return;
+    }
+    let mut s: heapless::String<192> = heapless::String::new();
+    if s.push_str(args).is_err() {
+        out.emit("ERROR too long").await;
+        return;
+    }
+    if crate::kb::text(s, 40, 40) {
+        out.emit("OK").await;
+    } else {
+        out.emit("ERROR busy").await;
+    }
+}
+
+/// AT+KEY_SEQ=<ms>,<mods>,<k0..k5>,... — batch playback, <=8 reports.
+async fn cmd_key_seq<S: AtSink>(args: &str, out: &mut S) {
+    if !crate::kb::enabled() {
+        out.emit("ERROR kbd disabled").await;
+        return;
+    }
+    // >8 reports must error, not silently truncate (CH582 SEQ_MAX_REPORTS).
+    if args.matches(',').count() + 1 > 57 {
+        out.emit("ERROR too many reports").await;
+        return;
+    }
+    let mut f = [""; 57];
+    let n = split(args, &mut f);
+    if n < 8 || (n - 1) % 7 != 0 {
+        out.emit("ERROR bad args").await;
+        return;
+    }
+    let Some(delay) = to_u32(f[0]) else {
+        out.emit("ERROR bad args").await;
+        return;
+    };
+    let mut reports: heapless::Vec<crate::kb::Report, { crate::kb::SEQ_MAX_REPORTS }> =
+        heapless::Vec::new();
+    for chunk in f[1..n].chunks_exact(7) {
+        let Some(mods) = to_u32(chunk[0]).filter(|m| *m <= 255) else {
+            out.emit("ERROR bad args").await;
+            return;
+        };
+        let mut r = crate::kb::Report {
+            mods: mods as u8,
+            ..Default::default()
+        };
+        for (i, k) in chunk[1..].iter().enumerate() {
+            match to_u32(k) {
+                Some(v) if v <= 255 => r.keys[i] = v as u8,
+                _ => {
+                    out.emit("ERROR bad args").await;
+                    return;
+                }
+            }
+        }
+        if reports.push(r).is_err() {
+            out.emit("ERROR bad args").await;
+            return;
+        }
+    }
+    if crate::kb::seq(reports, delay) {
+        out.emit("OK").await;
+    } else {
+        out.emit("ERROR busy").await;
+    }
+}
+
+/// AT+TUNNEL=status|enable[,<0|1>]|<field>,<val>|connect|disconnect|clear
+/// (Arduino AT+TUNNEL semantics; fields alias the tunnel.1.* registry keys,
+/// enable,<v> is the rathole master switch).
+async fn cmd_tunnel<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
+    if !crate::rathole::enabled() {
+        out.emit("ERROR tunnel disabled").await;
+        return;
+    }
+    if args == "status" || args == "enable" {
+        let master = crate::cfg::get_str("rathole.enable").await;
+        scratch.buf.clear();
+        let _ = write!(scratch.buf, "+TUNNEL_EN:{master}");
+        out.emit(scratch.buf.as_str()).await;
+        if args == "status" {
+            let j = crate::rathole::status_json().await;
+            scratch.buf.clear();
+            let _ = write!(scratch.buf, "+TUNNEL:{j}");
+            out.emit(scratch.buf.as_str()).await;
+        }
+        out.emit("OK").await;
+        return;
+    }
+    if let Some(v) = args.strip_prefix("enable,") {
+        match crate::cfg::set("rathole.enable", v).await {
+            Ok(()) => out.emit("OK").await,
+            Err(_) => out.emit("ERROR bad value").await,
+        }
+        return;
+    }
+    let (sub, val) = args.split_once(',').unwrap_or((args, ""));
+    let key = match sub {
+        "server" => "tunnel.1.server",
+        "token" => "tunnel.1.token",
+        "service" => "tunnel.1.service",
+        "local" => "tunnel.1.local",
+        "auto" => "tunnel.1.auto",
+        "retry" => "tunnel.1.retry",
+        _ => "",
+    };
+    if !key.is_empty() {
+        if val.is_empty() {
+            out.emit("ERROR bad args").await;
+            return;
+        }
+        match crate::cfg::set(key, val).await {
+            Ok(()) => out.emit("OK").await,
+            Err(_) => out.emit("ERROR bad value").await,
+        }
+        return;
+    }
+    match sub {
+        "connect" => {
+            if crate::rathole::connect().await {
+                out.emit("OK").await;
+            } else {
+                out.emit("ERROR start failed").await;
+            }
+        }
+        "disconnect" => {
+            crate::rathole::disconnect();
+            out.emit("OK").await;
+        }
+        "clear" => {
+            crate::rathole::clear().await;
+            out.emit("OK").await;
+        }
+        _ => out.emit("ERROR bad args").await,
     }
 }

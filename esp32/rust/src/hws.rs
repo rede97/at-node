@@ -26,6 +26,11 @@ use esp_hal::i2c::master::I2c;
 use esp_hal::peripherals;
 use heapless::String;
 
+/// Compile-time capability flag (feature matrix in Cargo.toml).
+pub fn enabled() -> bool {
+    cfg!(feature = "hws")
+}
+
 const I2C_SCAN_FIRST: u8 = 0x08;
 const I2C_SCAN_LAST: u8 = 0x77;
 
@@ -34,7 +39,8 @@ pub const I2C_IO_MAX: usize = 32;
 
 /// Pins that must never be touched by user AT commands:
 /// 0,3,45,46 strapping; 19,20 native USB; 26..32 SPI flash; 33..37 octal
-/// PSRAM; 43,44 UART0 console. 48 is the WS2812 (RMT) on this firmware.
+/// PSRAM; 43,44 UART0 console. 48 is the WS2812 (RMT) — but only while
+/// the led-color feature owns it; without that feature it is a free pin.
 fn pin_forbidden(pin: u8) -> bool {
     if pin > 48 {
         return true;
@@ -42,7 +48,10 @@ fn pin_forbidden(pin: u8) -> bool {
     if (26..=37).contains(&pin) {
         return true;
     }
-    matches!(pin, 0 | 3 | 19 | 20 | 43 | 44 | 45 | 46 | 48)
+    if cfg!(feature = "led-color") && pin == 48 {
+        return true;
+    }
+    matches!(pin, 0 | 3 | 19 | 20 | 43 | 44 | 45 | 46)
 }
 
 // ---------------------------------------------------------------- GPIO ---
