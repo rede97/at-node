@@ -606,6 +606,25 @@ async fn mqtt_exec(method: &str, query: &str) -> String<1600> {
                 }
             }
         }
+        "led" => {
+            // Empty query = status; color=#RRGGBB|r,g,b|off|auto = set
+            // (same spec as AT+LED and POST /at-node/cmd/led).
+            let color = crate::api::query_get(query, "color", &mut scratch);
+            if color.is_empty() {
+                let (r, g, b, mode) = crate::led::current();
+                let _ = write!(out, "\"ok\":true,\"r\":{r},\"g\":{g},\"b\":{b},\"mode\":\"{mode}\"");
+            } else {
+                match crate::led::parse(color) {
+                    Some(act) => {
+                        crate::led::apply_action(act);
+                        let _ = out.push_str("\"ok\":true");
+                    }
+                    None => {
+                        let _ = out.push_str("\"ok\":false,\"error\":\"bad color\"");
+                    }
+                }
+            }
+        }
         "adc/read" => {
             let ch = crate::api::query_get(query, "ch", &mut scratch);
             match ch.parse::<u32>().ok().and_then(|c| {

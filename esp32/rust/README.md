@@ -6,6 +6,9 @@ Zephyr 版的 Rust 重实现（后者已归档 commit `e759a2a`)。约束文档�
 - **板子**:MuseLab nanoESP32-S3(ESP32-S3-WROOM-1-N8R8,8MB flash + 8MB octal PSRAM)
 - **控制台**:UART0 115200,经 ESPLink 口(`/dev/ttyACMx`),原生 USB 口留给 OTG(R5)
 - **状态灯**:WS2812 @ GPIO48(RMT ch0),预设 = boot 黄 / wifi 连接中蓝闪 / online 绿 / error 红
+- **调色**:任意 RGB 色,三通道同一颜色语义(`#RRGGBB` | `r,g,b` | `off` | `auto`):
+  `AT+LED=<spec>` / `AT+LED?`;HTTP `GET|POST /at-node/cmd/led?color=<spec>`;
+  MQTT RPC `led`(`color=<spec>`,空 = 查询);Web UI「LED」页调色板(ability `led:true` 时显示)
 
 ## 构建 / 烧录
 
@@ -202,7 +205,7 @@ src/main.rs      启动:时钟/堆/esp-rtos/cfg/LED/WiFi/HWS/MQTT/HTTP/AT 串口
 src/cfg.rs       NVS 配置注册表(14 键,write-only 密钥,RAM 缓存,变更 pubsub)
 src/at.rs        AT 解析/分发(通道无关,AtSink trait)
 src/at_serial.rs UART0 控制台(回显/退格/Ctrl-C/CRLF 吞咽,300B 行缓冲)
-src/led.rs       WS2812 状态灯(预设 + 自由色)
+src/led.rs       WS2812 状态灯(预设 + 调色:共享 parse/current,AT/HTTP/MQTT 同语义)
 src/wifi.rs      WiFi STA + 15s 重连看门狗(embassy-net DHCP,同值免重配)
 src/mqttc.rs     MQTT v3.1.1 mini client + TLS + RPC cmd/resp + pub/sub API
 src/hws.rs       GPIO/ADC/I2C(引脚黑名单,ADC 校准 mV,I2C 100kHz @8/9)

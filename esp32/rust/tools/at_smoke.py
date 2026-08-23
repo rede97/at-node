@@ -166,8 +166,19 @@ def main() -> int:
 
     expect("LED rgb", c.cmd("AT+LED=255,0,0"), ["OK"])
     expect("LED hex", c.cmd("AT+LED=0x00,0xff,0"), ["OK"])
+    expect("LED css hex", c.cmd("AT+LED=#0000FF"), ["OK"])
+    expect("LED query custom", c.cmd("AT+LED?"), ["+LED:0,0,255,custom", "OK"])
     expect("LED off", c.cmd("AT+LED=off"), ["OK"])
+    expect("LED query off", c.cmd("AT+LED?"), ["+LED:0,0,0,off", "OK"])
     expect("LED auto", c.cmd("AT+LED=auto"), ["OK"])
+    resp = c.cmd("AT+LED?")
+    check(
+        "LED query auto",
+        len(resp) == 2 and resp[0].startswith("+LED:") and resp[0].endswith(",auto")
+        and resp[1] == "OK",
+        repr(resp),
+    )
+    expect("LED bad hex", c.cmd("AT+LED=#FFF"), ["ERROR bad args"])
     expect("LED too few", c.cmd("AT+LED=1,2"), ["ERROR bad args"])
     expect("LED too many", c.cmd("AT+LED=1,2,3,4"), ["ERROR bad args"])
     expect("LED range", c.cmd("AT+LED=300,0,0"), ["ERROR bad args"])

@@ -15,6 +15,7 @@
     <button data-tab="mqtt">MQTT</button>
     <button data-tab="tunnel">Tunnel</button>
     <button data-tab="wifi">WiFi</button>
+    <button data-tab="led">LED</button>
     <button data-tab="config">Config</button>
     <button data-tab="help">API</button>
   </nav>
@@ -120,6 +121,23 @@
   <button onclick="wifiSave()">Save &amp; Reconnect</button>
   <p><small>Saved to NVS; the device re-associates immediately. If it drops off the
   network, use the serial console (<code>AT+WIFI=</code>) or AP provisioning mode.</small></p>
+</section>
+
+<section id="tab-led" hidden>
+  <h2>WS2812 LED</h2>
+  <table>
+    <tr><th>Mode</th><td id="l-mode">-</td></tr>
+    <tr><th>Current</th><td><span id="l-swatch" class="swatch"></span> <code id="l-hex">-</code></td></tr>
+  </table>
+  <p>
+    <input type="color" id="l-color" value="#00c800">
+    <button onclick="ledSet()">Set Color</button>
+    <button class="ghost" onclick="ledMode('off')">Off</button>
+    <button class="ghost" onclick="ledMode('auto')">Auto (status)</button>
+  </p>
+  <p><small>Set Color switches the LED to a fixed custom color (any RGB);
+  Auto returns to status indication (boot/wifi/online/error presets).
+  Same color spec as <code>AT+LED</code>: <code>#RRGGBB</code>, <code>r,g,b</code>, off, auto.</small></p>
 </section>
 
 <section id="tab-config" hidden>

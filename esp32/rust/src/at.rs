@@ -47,7 +47,7 @@ const HELP: &[&str] = &[
     "  AT+GPIO_W=<pin>,<level> / AT+GPIO_R=<pin>",
     "  AT+ADC=<ch> / AT+I2C_SCAN / AT+I2C_R=<addr>,<reg>,<len>",
     "  AT+I2C_W=<addr>,<reg>,<d0>,<d1>,...",
-    "  AT+LED=<r>,<g>,<b>|off|auto",
+    "  AT+LED=<r>,<g>,<b>|#RRGGBB|off|auto / AT+LED?",
     "  AT+NVS=clear / AT+RST",
 ];
 
@@ -103,6 +103,12 @@ pub async fn handle_line<S: AtSink>(line: &str, out: &mut S) {
     } else if line == "AT+KEYS" {
         cfg::list_json(&mut scratch.buf).await;
         scratch.buf.insert_str(0, "+KEYS:").ok();
+        out.emit(scratch.buf.as_str()).await;
+        out.emit("OK").await;
+    } else if line == "AT+LED?" {
+        let (r, g, b, mode) = led::current();
+        scratch.buf.clear();
+        let _ = write!(scratch.buf, "+LED:{r},{g},{b},{mode}");
         out.emit(scratch.buf.as_str()).await;
         out.emit("OK").await;
     } else if let Some(args) = line.strip_prefix("AT+LED=") {
@@ -442,28 +448,13 @@ async fn cmd_status<S: AtSink>(scratch: &mut Scratch, out: &mut S) {
     out.emit("OK").await;
 }
 
-/// AT+LED=<r>,<g>,<b>|off|auto (Zephyr cmd_led).
+/// AT+LED=<r>,<g>,<b>|#RRGGBB|off|auto — parse shared with HTTP/MQTT.
 async fn cmd_led<S: AtSink>(args: &str, out: &mut S) {
-    if args == "off" {
-        led::off();
-        out.emit("OK").await;
-        return;
-    }
-    if args == "auto" {
-        led::auto();
-        out.emit("OK").await;
-        return;
-    }
-    let mut it = args.split(',');
-    let (Some(r), Some(g), Some(b), None) = (it.next(), it.next(), it.next(), it.next()) else {
-        out.emit("ERROR bad args").await;
-        return;
-    };
-    match (to_u32(r), to_u32(g), to_u32(b)) {
-        (Some(r), Some(g), Some(b)) if r <= 255 && g <= 255 && b <= 255 => {
-            led::set_rgb(r as u8, g as u8, b as u8);
+    match led::parse(args) {
+        Some(a) => {
+            led::apply_action(a);
             out.emit("OK").await;
         }
-        _ => out.emit("ERROR bad args").await,
+        None => out.emit("ERROR bad args").await,
     }
 }

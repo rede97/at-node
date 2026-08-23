@@ -17,7 +17,7 @@ pub fn ability_json() -> String<96> {
     let mut j: String<96> = String::new();
     let _ = j.push_str(
         "{\"ble\":false,\"mqtt\":true,\"rathole\":false,\"i2c\":true,\
-\"http\":true,\"breath_led\":false}",
+\"http\":true,\"breath_led\":false,\"led\":true}",
     );
     j
 }
@@ -50,6 +50,10 @@ const P_CFGSET: &[ApiParam] = &[
     ApiParam("val", "value"),
 ];
 const P_CFGGET: &[ApiParam] = &[ApiParam("key", "config key")];
+const P_LED: &[ApiParam] = &[ApiParam(
+    "color",
+    "#RRGGBB | r,g,b | off | auto (empty = status)",
+)];
 
 /// Arduino API_CATALOG restricted to what this firmware implements.
 const CATALOG: &[ApiEntry] = &[
@@ -82,6 +86,11 @@ const CATALOG: &[ApiEntry] = &[
         method: "i2c/write",
         params: P_I2CW,
         desc: "write I2C register",
+    },
+    ApiEntry {
+        method: "led",
+        params: P_LED,
+        desc: "WS2812 color (AT+LED semantics)",
     },
     ApiEntry {
         method: "ability",

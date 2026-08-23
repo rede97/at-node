@@ -29,7 +29,7 @@ use picoserve::response::{IntoResponse, Response, StatusCode};
 use picoserve::routing::{PathRouter, get, post};
 use picoserve::{Config, Timeouts};
 
-use crate::{api, at, cfg, hws, mqttc, wifi};
+use crate::{api, at, cfg, hws, led, mqttc, wifi};
 
 const PORT: u16 = 80;
 
@@ -213,6 +213,7 @@ pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
         .route("/at-node/cmd/i2c/scan", post(h_i2c_scan))
         .route("/at-node/cmd/i2c/read", post(h_i2c_read))
         .route("/at-node/cmd/i2c/write", post(h_i2c_write))
+        .route("/at-node/cmd/led", get(h_led_status).post(h_led_set))
         .route("/at-node/cmd/mqtt/status", get(h_mqtt_status))
         .route("/at-node/cmd/mqtt/config", post(h_mqtt_config))
         .route("/at-node/cmd/mqtt/connect", post(h_mqtt_connect))
@@ -325,6 +326,34 @@ async fn h_adc_read(query: QueryString, body: String) -> impl IntoResponse {
             Err(()) => json_response(StatusCode::BAD_REQUEST, err_body("invalid adc ch")),
         },
         _ => json_response(StatusCode::BAD_REQUEST, err_body("invalid adc ch")),
+    }
+}
+
+/// Current LED state for the web picker / status polls.
+async fn h_led_status() -> impl IntoResponse {
+    let (r, g, b, mode) = led::current();
+    let mut j = String::new();
+    let _ = write!(
+        j,
+        "{{\"ok\":true,\"r\":{r},\"g\":{g},\"b\":{b},\"mode\":\"{mode}\",\
+\"hex\":\"#{r:02x}{g:02x}{b:02x}\"}}"
+    );
+    json_response(StatusCode::OK, j)
+}
+
+/// Set color: color=#RRGGBB | r,g,b | off | auto (AT+LED semantics).
+async fn h_led_set(query: QueryString, body: String) -> impl IntoResponse {
+    let a = args(&query, body.as_str());
+    let mut buf = heapless::String::<256>::new();
+    let color = a.get("color", &mut buf);
+    match led::parse(color) {
+        Some(act) => {
+            led::apply_action(act);
+            let mut j = String::new();
+            let _ = write!(j, "{{\"ok\":true,\"cmd\":\"led\",\"color\":\"{color}\"}}");
+            json_response(StatusCode::OK, j)
+        }
+        None => json_response(StatusCode::BAD_REQUEST, err_body("bad color")),
     }
 }
 

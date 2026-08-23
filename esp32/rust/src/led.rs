@@ -6,6 +6,8 @@
 //! All updates run inside this async task; other modules only post
 //! commands to the channel (no RMT traffic outside task context).
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use embassy_executor::Spawner;
 use embassy_futures::select::{Either, select};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -66,6 +68,89 @@ pub fn auto() {
     let _ = CMD.try_send(Cmd::Auto);
 }
 
+// -------------------------------------------------- color spec parsing ---
+
+/// One parsed color command, shared by the AT / HTTP / MQTT front ends so
+/// all three channels accept exactly the same color spec.
+pub enum Action {
+    Rgb(u8, u8, u8),
+    Off,
+    Auto,
+}
+
+/// Base-0 byte parse ("255" or "0xff").
+fn to_u8(s: &str) -> Option<u8> {
+    match s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        Some(h) => u8::from_str_radix(h, 16).ok(),
+        None => s.parse().ok(),
+    }
+}
+
+/// Parse a color spec: "off" | "auto" | "#RRGGBB" | "r,g,b" (each
+/// component decimal or 0x..). None = bad args.
+pub fn parse(s: &str) -> Option<Action> {
+    if s.eq_ignore_ascii_case("off") {
+        return Some(Action::Off);
+    }
+    if s.eq_ignore_ascii_case("auto") {
+        return Some(Action::Auto);
+    }
+    if let Some(h) = s.strip_prefix('#') {
+        if h.len() != 6 {
+            return None;
+        }
+        let v = u32::from_str_radix(h, 16).ok()?;
+        return Some(Action::Rgb((v >> 16) as u8, (v >> 8) as u8, v as u8));
+    }
+    let mut it = s.split(',');
+    let (Some(r), Some(g), Some(b), None) = (it.next(), it.next(), it.next(), it.next()) else {
+        return None;
+    };
+    match (to_u8(r), to_u8(g), to_u8(b)) {
+        (Some(r), Some(g), Some(b)) => Some(Action::Rgb(r, g, b)),
+        _ => None,
+    }
+}
+
+/// Apply a parsed action — the exact AT+LED semantics on every channel.
+pub fn apply_action(a: Action) {
+    match a {
+        Action::Rgb(r, g, b) => set_rgb(r, g, b),
+        Action::Off => off(),
+        Action::Auto => auto(),
+    }
+}
+
+// --------------------------------------------------------- state query ---
+
+const MODE_AUTO: u32 = 0;
+const MODE_CUSTOM: u32 = 1;
+const MODE_OFF: u32 = 2;
+
+/// Last commanded state: mode in bits 25..24, RGB in bits 23..0. Written
+/// only by led_task on command transitions — the wifi-connecting blink
+/// never touches it, so queries report the user's logical color.
+static CUR: AtomicU32 = AtomicU32::new(MODE_AUTO << 24);
+
+fn record(mode: u32, r: u8, g: u8, b: u8) {
+    CUR.store(
+        (mode << 24) | ((r as u32) << 16) | ((g as u32) << 8) | b as u32,
+        Ordering::Relaxed,
+    );
+}
+
+/// Current state for status queries (AT+LED?, GET /at-node/cmd/led, MQTT
+/// "led"): (r, g, b, mode) with mode "auto" | "custom" | "off".
+pub fn current() -> (u8, u8, u8, &'static str) {
+    let v = CUR.load(Ordering::Relaxed);
+    let mode = match v >> 24 {
+        MODE_CUSTOM => "custom",
+        MODE_OFF => "off",
+        _ => "auto",
+    };
+    ((v >> 16) as u8, (v >> 8) as u8, v as u8, mode)
+}
+
 /// Bring up the RMT channel and spawn the LED task. Call once from main.
 pub fn init(spawner: Spawner, rmt: RMT<'static>, pin: GPIO48<'static>) {
     let rmt = Rmt::new(rmt, Rate::from_mhz(80))
@@ -114,6 +199,7 @@ async fn led_task(mut tx: esp_hal::rmt::Channel<'static, Async, Tx>) {
     let mut custom = false;
     let mut blink_on = false;
     apply(&mut tx, BRIGHT, BRIGHT, 0).await;
+    record(MODE_AUTO, BRIGHT, BRIGHT, 0);
 
     loop {
         let cmd = if !custom && cur == Status::WifiConnecting {
@@ -137,19 +223,23 @@ async fn led_task(mut tx: esp_hal::rmt::Channel<'static, Async, Tx>) {
                 blink_on = false;
                 let (r, g, b) = preset(cur, true);
                 apply(&mut tx, r, g, b).await;
+                record(MODE_AUTO, r, g, b);
             }
             Cmd::Auto => {
                 custom = false;
                 let (r, g, b) = preset(cur, true);
                 apply(&mut tx, r, g, b).await;
+                record(MODE_AUTO, r, g, b);
             }
             Cmd::Rgb(r, g, b) => {
                 custom = true;
                 apply(&mut tx, r, g, b).await;
+                record(MODE_CUSTOM, r, g, b);
             }
             Cmd::Off => {
                 custom = true;
                 apply(&mut tx, 0, 0, 0).await;
+                record(MODE_OFF, 0, 0, 0);
             }
         }
     }

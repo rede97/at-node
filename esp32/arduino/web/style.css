@@ -18,3 +18,7 @@ code{background:#f5f5f5;padding:0 3px;}
 .note{background:#fff3cd;border-left:4px solid #ffc107;padding:8px 12px;margin:8px 0;font-size:13px;}
 #msg{margin-top:10px;color:#555;min-height:1.2em;}
 .api-m{font-weight:bold;}
+.swatch{display:inline-block;width:1.4em;height:1.4em;border:1px solid #999;
+        border-radius:3px;vertical-align:middle;background:#000;}
+input[type=color]{width:64px;height:32px;padding:0;border:1px solid #999;
+        border-radius:6px;background:#fff;vertical-align:middle;cursor:pointer;}

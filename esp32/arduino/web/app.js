@@ -18,6 +18,7 @@ document.querySelectorAll('nav button').forEach(b => b.addEventListener('click',
   document.querySelectorAll('section').forEach(s => { s.hidden = s.id !== 'tab-' + activeTab; });
   if (activeTab === 'mqtt' && !mqttLoaded) mqttRefresh(true);
   if (activeTab === 'tunnel' && !tunLoaded) tunRefresh(true);
+  if (activeTab === 'led') ledRefresh(true);
   if (activeTab === 'help' && !helpLoaded) helpLoad();
 }));
 
@@ -29,10 +30,10 @@ function applyAbility(a) {
     (on ? '&#10003;' : '&#10007;') + label + '</span>';
   $('s-feat').innerHTML = [
     badge(a.ble, 'BLE'), badge(a.mqtt, 'MQTT'), badge(a.rathole, 'rathole'),
-    badge(a.i2c, 'I2C'), badge(a.breath_led, 'breathLED'),
+    badge(a.i2c, 'I2C'), badge(a.breath_led, 'breathLED'), badge(a.led, 'LED'),
   ].join(' ');
   // hide tabs whose feature is not compiled in
-  const tabFeat = { ble: a.ble, mqtt: a.mqtt, tunnel: a.rathole };
+  const tabFeat = { ble: a.ble, mqtt: a.mqtt, tunnel: a.rathole, led: !!a.led };
   document.querySelectorAll('nav button').forEach(b => {
     const f = tabFeat[b.dataset.tab];
     if (f === false) b.hidden = true;
@@ -246,6 +247,31 @@ function wifiSave() {
   }).catch(() => msg('device re-associating — reconnect to its new network state'));
 }
 
+/* --- WS2812 LED ------------------------------------------------------------ */
+/* fill=true only on tab enter / after a set: adopts the device color into the
+ * picker. Polls pass false so an open color chooser is never clobbered. */
+function ledRefresh(fill) {
+  get('/at-node/cmd/led').then(d => {
+    $('l-mode').textContent = d.mode;
+    $('l-hex').textContent = d.hex;
+    $('l-swatch').style.background = d.hex;
+    if (fill && /^#[0-9a-fA-F]{6}$/.test(d.hex)) $('l-color').value = d.hex;
+  }).catch(() => {});
+}
+function ledSet() {
+  const hex = $('l-color').value;
+  post('/at-node/cmd/led?color=' + encodeURIComponent(hex)).then(d => {
+    msg(d.ok ? 'led set ' + hex : 'set failed: ' + (d.error || ''));
+    ledRefresh(false);
+  });
+}
+function ledMode(m) {
+  post('/at-node/cmd/led?color=' + m).then(d => {
+    msg(d.ok ? 'led ' + m : 'failed: ' + (d.error || ''));
+    ledRefresh(true);
+  });
+}
+
 /* --- config export/import ------------------------------------------------ */
 /* Pure client-side: parse/build JSON in the browser and drive the existing
  * config endpoints; no JSON library on the Arduino side. */
@@ -317,4 +343,5 @@ setInterval(() => {
   if (activeTab === 'ble') bleRefresh();
   else if (activeTab === 'mqtt' && mqttLoaded) mqttRefresh(false);
   else if (activeTab === 'tunnel' && tunLoaded) tunRefresh(false);
+  else if (activeTab === 'led') ledRefresh(false);
 }, 3000);
