@@ -105,6 +105,17 @@
                                 * is independent and stays available. */
 #endif
 
+/* SSDP/UPnP discovery (ssdp.cpp): Windows Explorer "Network" shows the
+ * device and "View device webpage" opens the SPA. Requires the HTTP
+ * service (serves /description.xml); at runtime it follows the HTTP
+ * enable switch. Defaults on whenever HTTP is compiled in. */
+#ifndef FEATURE_SSDP
+#define FEATURE_SSDP       FEATURE_HTTP
+#endif
+#if FEATURE_SSDP && !FEATURE_HTTP
+#error "FEATURE_SSDP requires FEATURE_HTTP (serves /description.xml)"
+#endif
+
 /* ------------------------------------------------------------ LED ------ */
 
 /* Unified LED model (same vocabulary as the rust-s3 variant):

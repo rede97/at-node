@@ -21,6 +21,7 @@
  */
 
 #include "features.h"   /* FEATURE_BLE / FEATURE_MQTT / FEATURE_RATHOLE / FEATURE_I2C */
+#include "ssdp.h"       /* FEATURE_SSDP: UPnP discovery, follows HTTP enable */
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
@@ -397,7 +398,13 @@ static void set_http_enabled(bool enable)
     if (enable) {
         g_http.begin();
         Serial.println("HTTP server started (trusted local NAT only; AT+HTTP=0 to disable)");
+#if FEATURE_SSDP
+        ssdp_begin(&g_http);
+#endif
     } else {
+#if FEATURE_SSDP
+        ssdp_stop();
+#endif
         g_http.stop();
         Serial.println("HTTP server stopped");
     }
@@ -1016,6 +1023,7 @@ static String build_ability_json(void)
 #else
     j += ",\"led\":\"none\"";
 #endif
+    j += ",\"ssdp\":" + String(FEATURE_SSDP ? "true" : "false");
     j += "}";
     return j;
 }
@@ -3168,6 +3176,9 @@ static void wifi_services_up(void)
     if (g_http_enabled) {
         g_http.begin();
         Serial.println("HTTP server on port 80 (trusted local NAT only; AT+HTTP=0 to disable)");
+#if FEATURE_SSDP
+        ssdp_begin(&g_http);
+#endif
     } else {
         Serial.println("HTTP server disabled");
     }
@@ -3290,6 +3301,9 @@ void loop(void)
     }
 #if FEATURE_HTTP
     if (g_wifi_ready && g_http_enabled) g_http.handleClient();
+#endif
+#if FEATURE_SSDP
+    ssdp_loop();
 #endif
     handle_serial();
 #if FEATURE_BLE
