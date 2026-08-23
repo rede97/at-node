@@ -90,6 +90,24 @@ fn json_escape(input: &str, out: &mut String) {
 /// text/plain first, and strict fetch() callers then skip JSON parsing).
 struct JsonStr(String);
 
+/// Content with a text/xml type (UPnP device description; heapless body —
+/// ssdp::description_xml is a heapless String<768>).
+struct XmlStr(heapless::String<768>);
+
+impl picoserve::response::Content for XmlStr {
+    fn content_type(&self) -> &'static str {
+        "text/xml"
+    }
+
+    fn content_length(&self) -> usize {
+        self.0.len()
+    }
+
+    async fn write_content<W: picoserve::io::Write>(self, mut writer: W) -> Result<(), W::Error> {
+        writer.write_all(self.0.as_bytes()).await
+    }
+}
+
 impl picoserve::response::Content for JsonStr {
     fn content_type(&self) -> &'static str {
         "application/json"
@@ -104,10 +122,29 @@ impl picoserve::response::Content for JsonStr {
     }
 }
 
+/// Named response type for all JSON handlers: op-dispatchers match arms
+/// calling different handlers, so the response type must be nameable
+/// (with_header's HeadersChain is private — a TAIT alias cycles on
+/// json_response itself).
+struct JsonResp(StatusCode, String);
+
+impl picoserve::response::IntoResponse for JsonResp {
+    async fn write_to<R: picoserve::io::Read, W: picoserve::response::ResponseWriter<Error = R::Error>>(
+        self,
+        connection: picoserve::response::Connection<'_, R>,
+        response_writer: W,
+    ) -> Result<picoserve::ResponseSent, W::Error> {
+        Response::new(self.0, JsonStr(self.1))
+            .with_header("Access-Control-Allow-Origin", "*")
+            .write_to(connection, response_writer)
+            .await
+    }
+}
+
 /// JSON response with CORS (Arduino send_json). Single constructor so
 /// every handler branch yields the same concrete response type.
-fn json_response(code: StatusCode, body: String) -> impl IntoResponse {
-    Response::new(code, JsonStr(body)).with_header("Access-Control-Allow-Origin", "*")
+fn json_response(code: StatusCode, body: String) -> JsonResp {
+    JsonResp(code, body)
 }
 
 fn err_body(msg: &str) -> String {
@@ -178,14 +215,257 @@ fn args<'a>(query: &'a QueryString, body: &'a str) -> Args<'a> {
     }
 }
 
+// -------------------------------------------------------- op dispatchers -
+// Parameterized routes (/at-node/cmd/<group>/<op>) keep the picoserve
+// route table short; dispatch here instead.
+
+macro_rules! op_enum {
+    ($name:ident { $($variant:ident => $s:literal),+ $(,)? }) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        enum $name {
+            $($variant),+
+        }
+        impl core::str::FromStr for $name {
+            type Err = ();
+            fn from_str(s: &str) -> Result<Self, ()> {
+                match s {
+                    $($s => Ok(Self::$variant),)+
+                    _ => Err(()),
+                }
+            }
+        }
+    };
+}
+
+op_enum!(MqttOp {
+    Status => "status",
+    Config => "config",
+    Connect => "connect",
+    Clear => "clear",
+    Publish => "publish",
+    Subscribe => "subscribe",
+});
+
+op_enum!(HttpOp {
+    Status => "status",
+    Config => "config",
+    Clear => "clear",
+});
+
+op_enum!(GpioOp {
+    Write => "write",
+    Read => "read",
+});
+
+op_enum!(I2cOp {
+    Scan => "scan",
+    Read => "read",
+    Write => "write",
+});
+
+async fn h_mqtt_route(op: MqttOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        MqttOp::Status => h_mqtt_status_inner().await,
+        MqttOp::Config => h_mqtt_config_inner(query, body).await,
+        MqttOp::Connect => h_mqtt_connect_inner().await,
+        MqttOp::Clear => h_mqtt_clear_inner().await,
+        MqttOp::Publish => h_mqtt_publish_inner(query, body).await,
+        MqttOp::Subscribe => h_mqtt_subscribe_inner(query, body).await,
+    }
+}
+
+async fn h_http_route(op: HttpOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        HttpOp::Status => h_http_status_inner().await,
+        HttpOp::Config => h_http_config_inner(query, body).await,
+        HttpOp::Clear => h_http_clear_inner().await,
+    }
+}
+
+async fn h_gpio_route(op: GpioOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        GpioOp::Write => h_gpio_write_inner(query, body).await,
+        GpioOp::Read => h_gpio_read_inner(query, body).await,
+    }
+}
+
+async fn h_i2c_route(op: I2cOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        I2cOp::Scan => h_i2c_scan_inner().await,
+        I2cOp::Read => h_i2c_read_inner(query, body).await,
+        I2cOp::Write => h_i2c_write_inner(query, body).await,
+    }
+}
+
 // -------------------------------------------------------------- router ---
 
+
+/// One path segment captured for the flat command routes. picoserve's
+/// per-route dispatch recursion is native-stack-hungry, so the whole
+/// /at-node/cmd/* surface is served by TWO routes (see build_app) and
+/// dispatched here on plain strings.
+struct Seg(heapless::String<32>);
+
+impl core::str::FromStr for Seg {
+    type Err = ();
+    fn from_str(s: &str) -> Result<Self, ()> {
+        let mut out = heapless::String::new();
+        out.push_str(s).map_err(|_| ())?;
+        Ok(Seg(out))
+    }
+}
+
+/// GET /at-node/cmd/<op> — single-segment read endpoints.
+async fn h_cmd1_get(a: Seg, query: QueryString) -> JsonResp {
+    match a.0.as_str() {
+        "status" => h_cmd_status().await,
+        "ability" => h_ability().await,
+        "led" => h_led_status().await,
+        "config" => h_config_get(query).await,
+        _ => json_response(StatusCode::BAD_REQUEST, err_body("unknown cmd")),
+    }
+}
+
+/// POST /at-node/cmd/<op> — single-segment write endpoints.
+async fn h_cmd1_post(a: Seg, query: QueryString, body: String) -> JsonResp {
+    match a.0.as_str() {
+        "led" => h_led_set(query, body).await,
+        "config" => h_config_set(query, body).await,
+        _ => json_response(StatusCode::BAD_REQUEST, err_body("unknown cmd")),
+    }
+}
+
+
+op_enum!(AdcOp {
+    Read => "read",
+});
+
+op_enum!(WifiOp {
+    Config => "config",
+});
+
+op_enum!(NvsOp {
+    Clear => "clear",
+});
+
+op_enum!(CfgOp {
+    List => "list",
+});
+
+async fn h_adc_route(op: AdcOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        AdcOp::Read => h_adc_read_inner(query, body).await,
+    }
+}
+
+async fn h_wifi_route(op: WifiOp, query: QueryString, body: String) -> JsonResp {
+    match op {
+        WifiOp::Config => h_wifi_config(query, body).await,
+    }
+}
+
+async fn h_nvs_route(op: NvsOp) -> JsonResp {
+    match op {
+        NvsOp::Clear => h_nvs_clear().await,
+    }
+}
+
+async fn h_cfg_get(op: CfgOp, _query: QueryString) -> JsonResp {
+    match op {
+        CfgOp::List => h_config_list().await,
+    }
+}
+
+async fn h_cfg_post(op: CfgOp) -> JsonResp {
+    match op {
+        CfgOp::List => json_response(StatusCode::BAD_REQUEST, err_body("GET required")),
+    }
+}
+
 pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
+    // picoserve dispatch tries the LAST-registered route first; every
+    // route costs ~1.5 KiB of serve-future arena AND native stack per
+    // fallback level (both measured). Hot paths register last.
     picoserve::Router::new()
+        .route("/at-node/help.json", get(h_help_json))
+        .route("/at-node/at", post(h_at))
+        .route("/description.xml", get(h_description_xml))
+        .route(
+            (
+                "/at-node/cmd/adc",
+                picoserve::routing::parse_path_segment::<AdcOp>(),
+            ),
+            picoserve::routing::post(h_adc_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/nvs",
+                picoserve::routing::parse_path_segment::<NvsOp>(),
+            ),
+            picoserve::routing::post(h_nvs_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/wifi",
+                picoserve::routing::parse_path_segment::<WifiOp>(),
+            ),
+            picoserve::routing::post(h_wifi_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/i2c",
+                picoserve::routing::parse_path_segment::<I2cOp>(),
+            ),
+            picoserve::routing::post(h_i2c_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/gpio",
+                picoserve::routing::parse_path_segment::<GpioOp>(),
+            ),
+            picoserve::routing::post(h_gpio_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/config",
+                picoserve::routing::parse_path_segment::<CfgOp>(),
+            ),
+            get(h_cfg_get).post(h_cfg_post),
+        )
+        .route(
+            (
+                "/at-node/cmd/http",
+                picoserve::routing::parse_path_segment::<HttpOp>(),
+            ),
+            get(h_http_route).post(h_http_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/mqtt",
+                picoserve::routing::parse_path_segment::<MqttOp>(),
+            ),
+            get(h_mqtt_route).post(h_mqtt_route),
+        )
+        .route(
+            (
+                "/at-node/cmd/keyboard",
+                picoserve::routing::parse_path_segment::<KbOp>(),
+            ),
+            picoserve::routing::post(h_keyboard_post),
+        )
+        .route(
+            (
+                "/at-node/cmd/tunnel",
+                picoserve::routing::parse_path_segment::<TunnelOp>(),
+            ),
+            get(h_tunnel_get).post(h_tunnel_post),
+        )
+        .route(
+            ("/at-node/cmd", picoserve::routing::parse_path_segment::<Seg>()),
+            get(h_cmd1_get).post(h_cmd1_post),
+        )
         .route(
             "/",
-            // File keeps ONE Content-Type (Content for &[u8] would add
-            // application/octet-stream alongside ours).
             picoserve::routing::get_service(
                 picoserve::response::File::with_content_type_and_headers(
                     "text/html",
@@ -198,63 +478,11 @@ pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
                 ),
             ),
         )
-        .route("/at-node/status", get(|| async { Response::new(StatusCode::FOUND, "")
-                    .with_header("Location", "/") }))
-        .route("/at-node/help", get(|| async { Response::new(StatusCode::FOUND, "")
-                    .with_header("Location", "/") }))
-        .route("/at-node/pair", get(|| async { Response::new(StatusCode::FOUND, "")
-                    .with_header("Location", "/") }))
-        .route("/at-node/tunnel", get(|| async { Response::new(StatusCode::FOUND, "")
-                    .with_header("Location", "/") }))
-        .route("/at-node/mqtt", get(|| async { Response::new(StatusCode::FOUND, "")
-                    .with_header("Location", "/") }))
-        .route("/at-node/cmd/status", get(h_cmd_status))
-        .route("/at-node/cmd/ability", get(h_ability))
-        .route("/at-node/help.json", get(h_help_json))
-        .route("/at-node/at", post(h_at))
-        .route("/at-node/cmd/gpio/write", post(h_gpio_write))
-        .route("/at-node/cmd/gpio/read", post(h_gpio_read))
-        .route("/at-node/cmd/adc/read", post(h_adc_read))
-        .route("/at-node/cmd/i2c/scan", post(h_i2c_scan))
-        .route("/at-node/cmd/i2c/read", post(h_i2c_read))
-        .route("/at-node/cmd/i2c/write", post(h_i2c_write))
-        .route("/at-node/cmd/led", get(h_led_status).post(h_led_set))
-        .route("/at-node/cmd/mqtt/status", get(h_mqtt_status))
-        .route("/at-node/cmd/mqtt/config", post(h_mqtt_config))
-        .route("/at-node/cmd/mqtt/connect", post(h_mqtt_connect))
-        .route("/at-node/cmd/mqtt/clear", post(h_mqtt_clear))
-        .route("/at-node/cmd/mqtt/publish", post(h_mqtt_publish))
-        .route("/at-node/cmd/mqtt/subscribe", post(h_mqtt_subscribe))
-        .route("/at-node/cmd/config", get(h_config_get).post(h_config_set))
-        .route("/at-node/cmd/config/list", get(h_config_list))
-        .route("/at-node/cmd/wifi/config", post(h_wifi_config))
-        .route("/at-node/cmd/http/status", get(h_http_status))
-        .route("/at-node/cmd/http/config", post(h_http_config))
-        .route("/at-node/cmd/http/clear", post(h_http_clear))
-        .route("/at-node/cmd/nvs/clear", post(h_nvs_clear))
-        // ONE route for all tunnel ops: every picoserve route adds router
-        // type depth (and native-stack poll depth per request); six tunnel
-        // routes overflowed the executor stack on config POST.
-        .route(
-            (
-                "/at-node/cmd/tunnel",
-                picoserve::routing::parse_path_segment::<TunnelOp>(),
-            ),
-            get(h_tunnel_get).post(h_tunnel_post),
-        )
-        // Keyboard injection (same consolidation; broker method shapes).
-        .route(
-            (
-                "/at-node/cmd/keyboard",
-                picoserve::routing::parse_path_segment::<KbOp>(),
-            ),
-            picoserve::routing::post(h_keyboard_post),
-        )
 }
 
 // ----------------------------------------------------------- handlers ---
 
-async fn h_cmd_status() -> impl IntoResponse {
+async fn h_cmd_status() -> JsonResp {
     let name = cfg::get_str("device.name").await;
     let hostname = cfg::get_str("device.hostname").await;
     let mut ip_s: heapless::String<16> = heapless::String::new();
@@ -278,19 +506,32 @@ async fn h_cmd_status() -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_ability() -> impl IntoResponse {
+/// UPnP device description for SSDP discovery (Windows "View device
+/// webpage" opens the presentationURL — the SPA at /).
+async fn h_description_xml() -> impl IntoResponse {
+    if !crate::ssdp::enabled() {
+        let mut x = heapless::String::<768>::new();
+        let _ = write!(x, "ssdp disabled");
+        return Response::new(StatusCode::BAD_REQUEST, XmlStr(x))
+            .with_header("Access-Control-Allow-Origin", "*");
+    }
+    let x = crate::ssdp::description_xml().await;
+    Response::new(StatusCode::OK, XmlStr(x)).with_header("Access-Control-Allow-Origin", "*")
+}
+
+async fn h_ability() -> JsonResp {
     let mut j = String::new();
     let _ = write!(j, "{{\"ok\":true,\"ability\":{}}}", api::ability_json());
     json_response(StatusCode::OK, j)
 }
 
-async fn h_help_json() -> impl IntoResponse {
+async fn h_help_json() -> JsonResp {
     let mut j = String::new();
     let _ = write!(j, "{{\"ok\":true,\"services\":{}}}", api::services_json());
     json_response(StatusCode::OK, j)
 }
 
-async fn h_at(body: String) -> impl IntoResponse {
+async fn h_at(body: String) -> JsonResp {
     let line = body.trim();
     if line.is_empty() {
         return json_response(StatusCode::BAD_REQUEST, err_body("empty command"));
@@ -304,7 +545,7 @@ async fn h_at(body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_gpio_write(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_gpio_write_inner(query: QueryString, body: String) -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -322,7 +563,7 @@ async fn h_gpio_write(query: QueryString, body: String) -> impl IntoResponse {
     }
 }
 
-async fn h_gpio_read(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_gpio_read_inner(query: QueryString, body: String) -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -343,7 +584,7 @@ async fn h_gpio_read(query: QueryString, body: String) -> impl IntoResponse {
     }
 }
 
-async fn h_adc_read(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_adc_read_inner(query: QueryString, body: String) -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -362,7 +603,7 @@ async fn h_adc_read(query: QueryString, body: String) -> impl IntoResponse {
 }
 
 /// Current LED state for the web picker / status polls.
-async fn h_led_status() -> impl IntoResponse {
+async fn h_led_status() -> JsonResp {
     let (r, g, b, mode) = led::current();
     let mut j = String::new();
     let _ = write!(
@@ -374,7 +615,7 @@ async fn h_led_status() -> impl IntoResponse {
 }
 
 /// Set color: color=#RRGGBB | r,g,b | off | auto (AT+LED semantics).
-async fn h_led_set(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_led_set(query: QueryString, body: String) -> JsonResp {
     if !led::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("led disabled"));
     }
@@ -392,7 +633,7 @@ async fn h_led_set(query: QueryString, body: String) -> impl IntoResponse {
     }
 }
 
-async fn h_i2c_scan() -> impl IntoResponse {
+async fn h_i2c_scan_inner() -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -416,7 +657,7 @@ async fn h_i2c_scan() -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_i2c_read(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_i2c_read_inner(query: QueryString, body: String) -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -450,7 +691,7 @@ async fn h_i2c_read(query: QueryString, body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_i2c_write(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_i2c_write_inner(query: QueryString, body: String) -> JsonResp {
     if !hws::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("hws disabled"));
     }
@@ -492,7 +733,7 @@ async fn h_i2c_write(query: QueryString, body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_mqtt_status() -> impl IntoResponse {
+async fn h_mqtt_status_inner() -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -511,7 +752,7 @@ async fn h_mqtt_status() -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_mqtt_config(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_mqtt_config_inner(query: QueryString, body: String) -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -531,7 +772,7 @@ async fn h_mqtt_config(query: QueryString, body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"mqtt/config\"}".into())
 }
 
-async fn h_mqtt_connect() -> impl IntoResponse {
+async fn h_mqtt_connect_inner() -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -539,7 +780,7 @@ async fn h_mqtt_connect() -> impl IntoResponse {
     json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"mqtt/connect\",\"queued\":true}".into())
 }
 
-async fn h_mqtt_clear() -> impl IntoResponse {
+async fn h_mqtt_clear_inner() -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -551,7 +792,7 @@ async fn h_mqtt_clear() -> impl IntoResponse {
     json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"mqtt/clear\"}".into())
 }
 
-async fn h_mqtt_publish(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_mqtt_publish_inner(query: QueryString, body: String) -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -572,7 +813,7 @@ async fn h_mqtt_publish(query: QueryString, body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_mqtt_subscribe(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_mqtt_subscribe_inner(query: QueryString, body: String) -> JsonResp {
     if !mqttc::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("mqtt disabled"));
     }
@@ -591,7 +832,7 @@ async fn h_mqtt_subscribe(query: QueryString, body: String) -> impl IntoResponse
     json_response(StatusCode::OK, j)
 }
 
-async fn h_config_get(query: QueryString) -> impl IntoResponse {
+async fn h_config_get(query: QueryString) -> JsonResp {
     let mut kbuf = heapless::String::<256>::new();
     let key = api::query_get(query.0.as_str(), "key", &mut kbuf);
     match cfg::get(key).await {
@@ -604,7 +845,7 @@ async fn h_config_get(query: QueryString) -> impl IntoResponse {
     }
 }
 
-async fn h_config_set(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_config_set(query: QueryString, body: String) -> JsonResp {
     let a = args(&query, body.as_str());
     if !a.has("key") {
         return json_response(StatusCode::BAD_REQUEST, err_body("missing key"));
@@ -627,7 +868,7 @@ async fn h_config_set(query: QueryString, body: String) -> impl IntoResponse {
     }
 }
 
-async fn h_config_list() -> impl IntoResponse {
+async fn h_config_list() -> JsonResp {
     let mut keys: heapless::String<1600> = heapless::String::new();
     cfg::list_json(&mut keys).await;
     let mut j = String::new();
@@ -635,7 +876,7 @@ async fn h_config_list() -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_wifi_config(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_wifi_config(query: QueryString, body: String) -> JsonResp {
     let a = args(&query, body.as_str());
     if a.has("ssid") {
         let mut buf = heapless::String::<256>::new();
@@ -651,7 +892,7 @@ async fn h_wifi_config(query: QueryString, body: String) -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_http_status() -> impl IntoResponse {
+async fn h_http_status_inner() -> JsonResp {
     let mut j = String::new();
     let _ = write!(
         j,
@@ -661,7 +902,7 @@ async fn h_http_status() -> impl IntoResponse {
     json_response(StatusCode::OK, j)
 }
 
-async fn h_http_config(query: QueryString, body: String) -> impl IntoResponse {
+async fn h_http_config_inner(query: QueryString, body: String) -> JsonResp {
     let a = args(&query, body.as_str());
     let mut vbuf = heapless::String::<256>::new();
     let mut val = a.get("enable", &mut vbuf);
@@ -682,14 +923,14 @@ async fn h_http_config(query: QueryString, body: String) -> impl IntoResponse {
     }
 }
 
-async fn h_http_clear() -> impl IntoResponse {
+async fn h_http_clear_inner() -> JsonResp {
     // Arduino: force http on, drop http_auto.
     let _ = cfg::set("http.enable", "1").await;
     let _ = cfg::set("http.auto", "0").await;
     json_response(StatusCode::OK, "{\"ok\":true,\"cmd\":\"http/clear\"}".into())
 }
 
-async fn h_nvs_clear() -> impl IntoResponse {
+async fn h_nvs_clear() -> JsonResp {
     let _ = cfg::erase_all().await;
     RESTART.signal(()); // detached task reboots after the response lands
     json_response(
@@ -722,7 +963,7 @@ impl core::str::FromStr for KbOp {
 
 /// POST /at-node/cmd/keyboard/<tap|text|key> (Arduino keyboard handlers;
 /// same params as the MQTT methods).
-async fn h_keyboard_post(op: KbOp, query: QueryString, body: String) -> impl IntoResponse {
+async fn h_keyboard_post(op: KbOp, query: QueryString, body: String) -> JsonResp {
     if !crate::kb::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("kbd disabled"));
     }
@@ -828,7 +1069,7 @@ impl core::str::FromStr for TunnelOp {
 }
 
 /// GET /at-node/cmd/tunnel/status — everything else is POST-only.
-async fn h_tunnel_get(op: TunnelOp) -> impl IntoResponse {
+async fn h_tunnel_get(op: TunnelOp) -> JsonResp {
     if !rathole::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("tunnel disabled"));
     }
@@ -844,7 +1085,7 @@ async fn h_tunnel_get(op: TunnelOp) -> impl IntoResponse {
 /// POST /at-node/cmd/tunnel/<config|enable|connect|disconnect|clear>
 /// (Arduino handlers; config fields server,token,service,local,retry,auto,
 /// enable; empty token = unchanged).
-async fn h_tunnel_post(op: TunnelOp, query: QueryString, body: String) -> impl IntoResponse {
+async fn h_tunnel_post(op: TunnelOp, query: QueryString, body: String) -> JsonResp {
     if !rathole::enabled() {
         return json_response(StatusCode::BAD_REQUEST, err_body("tunnel disabled"));
     }
@@ -940,13 +1181,16 @@ pub async fn restart_task() {
 /// fires ~10 parallel fetches on load) are queued, never refused.
 /// With per-port listener tasks (= workers), every busy worker means
 /// refused connections (observed: SPA load -> 6x ERR_CONNECTION_REFUSED).
-pub const HANDLERS: usize = 3;
+pub const HANDLERS: usize = 1;
 pub const ACCEPTORS: usize = 3;
 /// Accepted-but-unserved connection queue depth. Also the tcp buffer
 /// pool size: the acceptor only stalls when more than BACKLOG
 /// connections are in flight at once (a much wider window than the
 /// handler count, which is what actually matters for burst latency).
-const BACKLOG: usize = 10;
+/// 10 was the SPA-burst luxury; 6 covers the ~4 parallel fetches the
+/// SPA actually fires and frees 10 KiB of DRAM statics (SSDP put the
+/// linker stack region back over the edge).
+const BACKLOG: usize = 6;
 
 /// One tcp rx+tx buffer pair per handler slot. Buffers are recycled
 /// through FREE_IDX: an index leaves the pool before the socket is
@@ -978,8 +1222,8 @@ fn http_config() -> Config {
     })
 }
 
-/// Boot-time init: running flag from http.auto && http.enable, and fill
-/// the buffer pool. Call once from main before spawning tasks.
+/// Boot-time init: running flag from http.auto && http.enable, allocate
+/// the PSRAM buffer pool. Call once from main before spawning tasks.
 pub async fn init() {
     let auto = cfg::get_str("http.auto").await == "1";
     let enable = cfg::get_str("http.enable").await == "1";
@@ -1030,7 +1274,7 @@ pub async fn acceptor_task(stack: Stack<'static>) -> ! {
         let accept_one = async {
             let idx = FREE_IDX.receive().await;
             // SAFETY: idx is unique in the pool (see FREE_IDX invariant
-            // above); no other reference to TCP_BUFS[idx] exists while
+            // above); no other reference to the slot's buffer exists while
             // this socket lives.
             let bufs = unsafe { TCP_BUFS[idx].as_mut() };
             let (rx, tx) = bufs.split_at_mut(1536);

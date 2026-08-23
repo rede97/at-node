@@ -23,6 +23,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(feature = "http")]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
+use static_cell::StaticCell;
 use embassy_time::{Duration, Timer};
 use embedded_tls::pki::CertVerifier;
 use embedded_tls::{
@@ -31,7 +32,6 @@ use embedded_tls::{
 };
 use heapless::String;
 use log::{info, warn};
-use static_cell::StaticCell;
 
 use crate::{cfg, wifi};
 
@@ -270,17 +270,19 @@ where
 
 // ------------------------------------------------------------- buffers ---
 
-static TLS_RX: StaticCell<[u8; 16640]> = StaticCell::new();
-static TLS_TX: StaticCell<[u8; 8192]> = StaticCell::new();
 /// Compile-time capability flag (feature matrix in Cargo.toml).
 pub fn enabled() -> bool {
     cfg!(feature = "mqtt")
 }
 
+static TLS_RX: StaticCell<[u8; 16640]> = StaticCell::new();
+static TLS_TX: StaticCell<[u8; 8192]> = StaticCell::new();
 static MQTT_TX: StaticCell<[u8; 3072]> = StaticCell::new();
 static MQTT_RX: StaticCell<[u8; 2048]> = StaticCell::new();
 static TCP_RX: StaticCell<[u8; 4096]> = StaticCell::new();
 static TCP_TX: StaticCell<[u8; 2048]> = StaticCell::new();
+
+
 
 pub struct Buffers<'a> {
     tls_rx: &'a mut [u8; 16640],
@@ -291,7 +293,7 @@ pub struct Buffers<'a> {
     tcp_tx: &'a mut [u8; 2048],
 }
 
-/// One-time static buffer carve-out (mqtt init). Zeroes in place via raw
+/// One-time buffer carve-out (mqtt init). Zeroes in place via raw
 /// pointer: `init([0; N])` would materialize ~35 KB of arrays on the main
 /// task stack (hit the stack guard, boot panic).
 pub fn take_buffers() -> Buffers<'static> {

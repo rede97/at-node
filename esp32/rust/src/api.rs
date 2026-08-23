@@ -29,11 +29,12 @@ pub fn ability_json() -> String<128> {
     let _ = write!(
         j,
         "{{\"ble\":false,\"kbd\":\"{KBD_CAP}\",\"mqtt\":{},\"rathole\":{},\"i2c\":{},\
-\"http\":{},\"led\":\"{LED_CAP}\"}}",
+\"http\":{},\"ssdp\":{},\"led\":\"{LED_CAP}\"}}",
         crate::mqttc::enabled(),
         crate::rathole::enabled(),
         crate::hws::enabled(),
         crate::httpd::enabled(),
+        crate::ssdp::enabled(),
     );
     j
 }

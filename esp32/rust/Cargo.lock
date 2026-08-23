@@ -68,6 +68,7 @@ checksum = "c583acf993cf4245c4acb0a2cc2ab1f9cc097de73411bb6d3647ff6af2b1013d"
 name = "atnode-s3"
 version = "0.1.0"
 dependencies = [
+ "allocator-api2",
  "critical-section",
  "embassy-executor",
  "embassy-futures",

@@ -38,6 +38,10 @@ cd esp32/rust
 ./build.sh                 # full,仅编译
 ./build.sh remoter --flash # 编译 remoter 并烧录(默认 /dev/ttyACM0)
 ```
+- **SSDP/UPnP 发现**(cargo feature `ssdp`,默认开,依赖 http):WiFi 起来且 HTTP 启用时
+  加入 239.255.255.250:1900,应答 M-SEARCH 并周期广播 ssdp:alive;`/description.xml` 的
+  `presentationURL` 指向 SPA——Windows「网络」里双击设备即可打开主页。HTTP 关闭即停。
+  无独立运行时开关(随 HTTP)。
 - **rathole 隧道**(cargo feature `rathole`,默认开;单隧道,与 Arduino 一致):协议 v1
   plain TCP/TCP-only(同 Arduino 裁剪),把**局域网主机**的 TCP 服务(如 LAN 另一台机器的
   SSH)反向穿透到 rathole server。`tunnel.1.local` 必须是**其他 LAN 主机**,不能是本机

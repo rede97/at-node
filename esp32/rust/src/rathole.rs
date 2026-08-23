@@ -245,7 +245,7 @@ mod driver {
     const MIN_FREE_HEAP: usize = 12000;
     const MAX_FWD: usize = 2;
     const PUMP_BUF: usize = 1460;
-    const SOCK_BUF: usize = 1536;
+    const SOCK_BUF: usize = 1280;
 
     // ------------------------------------------------------ protocol -----
 

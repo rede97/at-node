@@ -15,9 +15,9 @@ version      = "0.1.0"
 # Variants (build.sh maps names to these sets):
 #   full    = everything except kbd-ble (R6)
 #   remoter = full - rathole
-#   base    = full - rathole - http   (production kbd, serial-only config)
-#   rathole = led-color + http + rathole (tunnel test unit; no kbd/mqtt/hws)
-default   = ["led-color", "rathole", "mqtt", "http", "hws", "kbd-usb"]
+#   base    = full - rathole - http - ssdp (production kbd, serial-only config)
+#   rathole = led-color + http + rathole + ssdp (tunnel test unit)
+default   = ["led-color", "rathole", "mqtt", "http", "hws", "kbd-usb", "ssdp"]
 led-color = []
 rathole   = []
 mqtt      = []
@@ -25,6 +25,10 @@ http      = []
 hws       = []
 kbd-usb   = ["dep:usb-device", "dep:usbd-hid", "esp-hal/__usb_otg"]
 kbd-ble   = []   # R6 stub: compiles but reports disabled
+# SSDP/UPnP discovery (Windows "Network" shows the device, "View device
+# webpage" opens the SPA). Requires http (serves /description.xml);
+# runs only while the HTTP service is enabled at runtime.
+ssdp      = ["http", "embassy-net/udp", "embassy-net/multicast"]
 
 [dependencies]
 esp-hal = { version = "~1.1.0", features = ["esp32s3", "log-04", "unstable"] }
@@ -45,6 +49,7 @@ embassy-time     = { version = "0.5.0", features = ["log"] }
 embassy-futures  = "0.1.2"
 embassy-sync     = "0.8.0"
 esp-alloc        = "0.10.0"
+allocator-api2   = { version = "0.3", default-features = false, features = ["alloc"] }
 esp-backtrace = { version = "0.19.0", features = [
   "esp32s3",
   "panic-handler",

@@ -6,11 +6,11 @@
 # Cargo.toml [features]):
 #
 #   full    - everything except kbd-ble (R6): LED + rathole + MQTT + HTTP
-#             + HWS + USB HID keyboard
+#             + HWS + USB HID keyboard + SSDP discovery
 #   remoter - full minus rathole (saves RAM for BLE/MQTT)
-#   base    - full minus rathole and http (production keyboard: MQTT +
+#   base    - full minus rathole and http/ssdp (production keyboard: MQTT +
 #             HWS + USB HID, serial-only configuration)
-#   rathole - tunnel test unit: LED + HTTP + rathole only (no kbd/mqtt/hws)
+#   rathole - tunnel test unit: LED + HTTP + rathole + SSDP (no kbd/mqtt/hws)
 #
 # Usage:
 #   ./build.sh [full|remoter|base|rathole] [--flash [/dev/ttyACMx]]
@@ -28,9 +28,9 @@ fi
 
 case "$VARIANT" in
     full)    FLAGS="" ;;
-    remoter) FLAGS="--no-default-features --features led-color,mqtt,http,hws,kbd-usb" ;;
+    remoter) FLAGS="--no-default-features --features led-color,mqtt,http,hws,kbd-usb,ssdp" ;;
     base)    FLAGS="--no-default-features --features led-color,mqtt,hws,kbd-usb" ;;
-    rathole) FLAGS="--no-default-features --features led-color,http,rathole" ;;
+    rathole) FLAGS="--no-default-features --features led-color,http,rathole,ssdp" ;;
     *) echo "usage: $0 [full|remoter|base|rathole] [--flash [PORT]]" >&2; exit 2 ;;
 esac
 

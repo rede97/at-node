@@ -6,6 +6,7 @@
 
 #![no_std]
 #![feature(type_alias_impl_trait)]
+#![feature(asm_experimental_arch)]
 #![recursion_limit = "512"]
 #![no_main]
 #![deny(
@@ -28,6 +29,7 @@ mod kb;
 mod kbd_usb;
 mod led;
 mod rathole;
+mod ssdp;
 mod wifi;
 
 #[cfg(feature = "http")]
@@ -108,6 +110,9 @@ use esp_hal::timer::timg::TimerGroup;
 
 extern crate alloc;
 
+/// Dedicated PSRAM heap (initialized in main before use).
+pub static PSRAM_HEAP: esp_alloc::EspHeap = esp_alloc::EspHeap::empty();
+
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -123,14 +128,36 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
-    // Main heap: 36 KiB static region in internal RAM + the 73 KiB region
-    // reclaimed from the 2nd-stage bootloader. Heap and the executor stack
-    // share dram_seg (stack gets what statics leave); 200 KiB here starved
-    // the stack to 5.5 KiB and the TLS handshake (RSA bignum) blew the
-    // stack guard. The tunnel routes (+6 picoserve route types) then needed
-    // ~10 KiB more poll depth than 48 KiB left — 36 KiB keeps the stack
-    // comfortably above the guard with the full route table.
-    esp_alloc::heap_allocator!(size: 36 * 1024);
+    // PSRAM (8 MiB octal on N8R8) as a DEDICATED heap — deliberately NOT
+    // in the global heap: the precompiled WiFi blob allocates from the
+    // global heap via plain malloc and silently lands in PSRAM when
+    // internal regions fill, which crashes it on the TX path (blob DMA
+    // cannot touch external RAM; observed as LoadProhibited in ppTask).
+    // Big CPU-side buffers (TLS/HTTP/MQTT socket bufs) allocate from
+    // PSRAM_HEAP explicitly, freeing ~50 KiB of internal DRAM for the
+    // executor stack; DMA buffers (USB EP, WiFi internals) stay internal.
+    // PSRAM (8 MiB octal on N8R8) as a DEDICATED heap — deliberately NOT
+    // in the global heap: the precompiled WiFi blob allocates from the
+    // global heap via plain malloc and silently lands in PSRAM when
+    // internal regions fill, which crashes it on the TX path (blob DMA
+    // cannot touch external RAM; observed as LoadProhibited in ppTask).
+    // Big CPU-side buffers (TLS/MQTT) allocate from PSRAM_HEAP explicitly.
+    let psram = esp_hal::psram::Psram::new(peripherals.PSRAM, Default::default());
+    let (psram_start, psram_size) = psram.raw_parts();
+    unsafe {
+        PSRAM_HEAP.add_region(esp_alloc::HeapRegion::new(
+            psram_start,
+            psram_size,
+            esp_alloc::MemoryCapability::External.into(),
+        ));
+    }
+
+    // Internal heap: 48 KiB static region + the 73 KiB reclaimed region.
+    // Executor stack = dram_seg leftovers after statics; JTAG showed
+    // picoserve serve() polling needs ~20 KiB of it and the WiFi blob
+    // needs its internal-heap headroom, so big CPU-side buffers live in
+    // PSRAM instead (see psram_allocator above).
+    esp_alloc::heap_allocator!(size: 4 * 1024);
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -170,6 +197,8 @@ async fn main(spawner: Spawner) -> ! {
         }
         spawner.spawn(httpd::restart_task().expect("spawn restart task"));
     }
+    #[cfg(feature = "ssdp")]
+    spawner.spawn(ssdp_task(stack).expect("spawn ssdp task"));
     #[cfg(feature = "hws")]
     hws::init(
         peripherals.I2C0,
@@ -239,7 +268,7 @@ async fn http_acceptor(stack: embassy_net::Stack<'static>) -> ! {
 }
 
 #[cfg(feature = "http")]
-#[embassy_executor::task(pool_size = 3)]
+#[embassy_executor::task(pool_size = 1)]
 async fn http_handler() -> ! {
     httpd::handler_task().await
 }
@@ -260,6 +289,12 @@ async fn rathole_watch() -> ! {
 #[embassy_executor::task(pool_size = 2)]
 async fn rathole_fwd(stack: embassy_net::Stack<'static>) -> ! {
     rathole::forward_loop(stack).await
+}
+
+#[cfg(feature = "ssdp")]
+#[embassy_executor::task]
+async fn ssdp_task(stack: embassy_net::Stack<'static>) -> ! {
+    ssdp::task(stack).await
 }
 
 #[cfg(any(feature = "kbd-usb", feature = "kbd-ble"))]
