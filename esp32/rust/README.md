@@ -51,7 +51,7 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
            │  mqtt_task future           19.0 KB
            │  rathole_fwd future ×2      10.4 KB
            │  wifi StackResources<16>     7.4 KB
-           │  rathole DCH+CTL bufs        7.6 KB
+           │  (rathole CTL+DCH → PSRAM)   —
            │  kbd_usb EP_MEMORY           4.0 KB (DMA,必须内部 RAM)
            │  at_serial/embassy_main      7.1 KB
            │  cfg/AT scratch, LED, blob   ~90 KB (esp-radio/esp-hal 静态)
@@ -69,10 +69,13 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
 PSRAM 8 MB (Octal,0x3C000000+ 映射)
   独立 EspHeap(main.rs PSRAM_HEAP),刻意【不并入全局堆】:
   WiFi blob 经普通 malloc 分配,落进 PSRAM 会在 TX 路径崩(blob DMA 只认内部 RAM)。
-  当前分配 ~51.6 KB:
+  当前分配 ~59.3 KB:
     mqttc TLS_RX/TX     24.8 KB  (embedded-tls 软件栈,纯 CPU 访问)
     mqttc MQTT+TCP bufs 11.2 KB  (smoltcp memcpy,纯 CPU 访问)
     httpd TCP_BUFS ×10  15.4 KB  (socket 缓冲,纯 CPU 访问)
+    rathole CTL+DCH      7.7 KB  (控制通道近零流量;转发泵每包多 ~10-40µs,
+                                  SSH 击键预算内无感——实测隧道 RTT 与内
+                                  部 SRAM 版无差异)
   实时性:octal PSRAM 走 cache,控制面流量(KB/s 级)延迟无感;
   唯一禁区是 DMA 缓冲(USB EP_MEMORY、WiFi blob 内部)必须留内部 SRAM。
 ```

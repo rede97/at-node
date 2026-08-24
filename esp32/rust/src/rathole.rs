@@ -127,6 +127,7 @@ async fn configured() -> bool {
 /// manager task evaluates changes itself. Call once from main.
 #[cfg(feature = "rathole")]
 pub async fn init() {
+    driver::init_bufs();
     let run = master_on().await
         && tunnel_enabled().await
         && cfg::get_str("tunnel.1.auto").await.as_str() == "1"
@@ -220,7 +221,6 @@ pub use driver::{forward_loop, task};
 mod driver {
     use super::*;
     use core::future::pending;
-    use core::ptr::addr_of_mut;
     use core::sync::atomic::AtomicUsize;
 
     use embassy_futures::select::{Either, Either4, select, select4};
@@ -316,8 +316,46 @@ mod driver {
     // buffers are statics recycled through a slot bitmask (httpd FREE_IDX
     // pattern). One live socket per slot, ever.
 
-    static mut DCH_RX: [[u8; SOCK_BUF]; MAX_FWD] = [[0; SOCK_BUF]; MAX_FWD];
-    static mut DCH_TX: [[u8; SOCK_BUF]; MAX_FWD] = [[0; SOCK_BUF]; MAX_FWD];
+    /// Socket buffers live in the dedicated PSRAM heap (main.rs
+    /// PSRAM_HEAP). All of these are CPU-accessed only (smoltcp memcpy);
+    /// the control channel is near-zero traffic and the forwarding pump
+    /// pays ~10-40 µs per 1460 B packet in PSRAM cache refills — noise
+    /// against the SSH keystroke budget (<20 ms). DMA is never involved.
+    struct SockBufs {
+        dch_rx: [[u8; SOCK_BUF]; MAX_FWD],
+        dch_tx: [[u8; SOCK_BUF]; MAX_FWD],
+        ctl_rx: [u8; SOCK_BUF],
+        ctl_tx: [u8; SOCK_BUF],
+    }
+
+    static mut BUFS: Option<
+        allocator_api2::boxed::Box<SockBufs, &'static esp_alloc::EspHeap>,
+    > = None;
+
+    /// Allocate the PSRAM buffer block. Called once from init() before
+    /// any task runs (Box is OWNED by the static cell).
+    pub fn init_bufs() {
+        unsafe {
+            (*core::ptr::addr_of_mut!(BUFS)).get_or_insert_with(|| {
+                allocator_api2::boxed::Box::new_in(
+                    SockBufs {
+                        dch_rx: [[0; SOCK_BUF]; MAX_FWD],
+                        dch_tx: [[0; SOCK_BUF]; MAX_FWD],
+                        ctl_rx: [0; SOCK_BUF],
+                        ctl_tx: [0; SOCK_BUF],
+                    },
+                    &crate::PSRAM_HEAP,
+                )
+            });
+        }
+    }
+
+    fn bufs() -> &'static mut SockBufs {
+        // addr_of_mut! + raw deref: no reference to the static itself is
+        // created (2024 static_mut_refs); single cooperative executor.
+        unsafe { (*core::ptr::addr_of_mut!(BUFS)).as_mut().expect("rathole bufs init") }
+    }
+
     static SLOTS: AtomicUsize = AtomicUsize::new(0);
 
     fn slot_alloc() -> Option<usize> {
@@ -389,8 +427,10 @@ mod driver {
         };
         // Control-socket buffers live in the manager future; the socket
         // never leaves the manager task.
-        let rx = unsafe { &mut *addr_of_mut!(CTL_RX) };
-        let tx = unsafe { &mut *addr_of_mut!(CTL_TX) };
+        let (rx, tx) = {
+            let b = bufs();
+            (&mut b.ctl_rx, &mut b.ctl_tx)
+        };
         let mut sock = TcpSocket::new(stack, rx, tx);
         sock.set_timeout(Some(HANDSHAKE_TIMEOUT));
         if sock
@@ -453,9 +493,6 @@ mod driver {
         }
     }
 
-    static mut CTL_RX: [u8; SOCK_BUF] = [0; SOCK_BUF];
-    static mut CTL_TX: [u8; SOCK_BUF] = [0; SOCK_BUF];
-
     /// Connect one standby data channel (DataChannelHello(session_key)).
     /// The socket takes a static slot so it can move to a forward task.
     async fn pool_fill_one(
@@ -470,8 +507,10 @@ mod driver {
         let mut host: String<64> = String::new();
         let port = split_host_port(server, &mut host)?;
         let ip = resolve(stack, &host).await?;
-        let rx = unsafe { &mut *addr_of_mut!(DCH_RX[slot]) };
-        let tx = unsafe { &mut *addr_of_mut!(DCH_TX[slot]) };
+        let (rx, tx) = {
+            let b = bufs();
+            (&mut b.dch_rx[slot], &mut b.dch_tx[slot])
+        };
         let mut sock = TcpSocket::new(stack, rx, tx);
         sock.set_timeout(Some(HANDSHAKE_TIMEOUT));
         if sock
