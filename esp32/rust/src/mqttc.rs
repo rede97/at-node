@@ -23,7 +23,6 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 #[cfg(feature = "http")]
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
-use static_cell::StaticCell;
 use embassy_time::{Duration, Timer};
 use embedded_tls::pki::CertVerifier;
 use embedded_tls::{
@@ -275,14 +274,39 @@ pub fn enabled() -> bool {
     cfg!(feature = "mqtt")
 }
 
-static TLS_RX: StaticCell<[u8; 16640]> = StaticCell::new();
-static TLS_TX: StaticCell<[u8; 8192]> = StaticCell::new();
-static MQTT_TX: StaticCell<[u8; 3072]> = StaticCell::new();
-static MQTT_RX: StaticCell<[u8; 2048]> = StaticCell::new();
-static TCP_RX: StaticCell<[u8; 4096]> = StaticCell::new();
-static TCP_TX: StaticCell<[u8; 2048]> = StaticCell::new();
+/// All session buffers live in the dedicated PSRAM heap (main.rs
+/// PSRAM_HEAP): CPU-only access (embedded-tls / smoltcp memcpy), never
+/// DMA, and the control plane does not care about the extra latency.
+/// Each Box is OWNED by its static cell (lives for the whole program).
+macro_rules! psram_cell {
+    ($name:ident, $n:expr) => {
+        static mut $name: Option<
+            allocator_api2::boxed::Box<[u8; $n], &'static esp_alloc::EspHeap>,
+        > = None;
+    };
+}
 
+psram_cell!(TLS_RX, 16640);
+psram_cell!(TLS_TX, 8192);
+psram_cell!(MQTT_TX, 3072);
+psram_cell!(MQTT_RX, 2048);
+psram_cell!(TCP_RX, 4096);
+psram_cell!(TCP_TX, 2048);
 
+/// One-time buffer carve-out (mqtt init). addr_of_mut! + raw deref: no
+/// reference to the static itself is created (2024 static_mut_refs);
+/// single cooperative executor, single call site.
+macro_rules! take {
+    ($cell:ident) => {
+        unsafe {
+            (*core::ptr::addr_of_mut!($cell))
+                .get_or_insert_with(|| {
+                    allocator_api2::boxed::Box::new_in([0u8; _], &crate::PSRAM_HEAP)
+                })
+                .as_mut()
+        }
+    };
+}
 
 pub struct Buffers<'a> {
     tls_rx: &'a mut [u8; 16640],
@@ -293,31 +317,15 @@ pub struct Buffers<'a> {
     tcp_tx: &'a mut [u8; 2048],
 }
 
-/// One-time buffer carve-out (mqtt init). Zeroes in place via raw
-/// pointer: `init([0; N])` would materialize ~35 KB of arrays on the main
-/// task stack (hit the stack guard, boot panic).
+/// One-time buffer carve-out (mqtt init).
 pub fn take_buffers() -> Buffers<'static> {
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "StaticCell::uninit guarantees exclusive one-time access by design"
-    )]
-    fn zeroed<T>(cell: &'static static_cell::StaticCell<T>) -> &'static mut T {
-        let u = cell.uninit();
-        let p = u.as_mut_ptr();
-        // SAFETY: zero is a valid bit pattern for [u8; N]; exclusive access
-        // is guaranteed by StaticCell::uninit (single take).
-        unsafe {
-            core::ptr::write_bytes(p as *mut u8, 0, core::mem::size_of::<T>());
-            &mut *p
-        }
-    }
     Buffers {
-        tls_rx: zeroed(&TLS_RX),
-        tls_tx: zeroed(&TLS_TX),
-        mqtt_tx: zeroed(&MQTT_TX),
-        mqtt_rx: zeroed(&MQTT_RX),
-        tcp_rx: zeroed(&TCP_RX),
-        tcp_tx: zeroed(&TCP_TX),
+        tls_rx: take!(TLS_RX),
+        tls_tx: take!(TLS_TX),
+        mqtt_tx: take!(MQTT_TX),
+        mqtt_rx: take!(MQTT_RX),
+        tcp_rx: take!(TCP_RX),
+        tcp_tx: take!(TCP_TX),
     }
 }
 

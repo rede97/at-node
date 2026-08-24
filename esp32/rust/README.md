@@ -46,13 +46,10 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
 
 ```
 0x3FC88000 ┌──────────────────────────────┐
-           │ 静态区(.data/.bss)  ~233 KB  │
+           │ 静态区(.data/.bss)  ~181 KB  │
            │  http_handler serve future  32.6 KB (picoserve 全路由表)
            │  mqtt_task future           19.0 KB
            │  rathole_fwd future ×2      10.4 KB
-           │  mqttc TLS_RX/TX            24.8 KB
-           │  mqttc MQTT+TCP bufs        11.2 KB
-           │  httpd TCP_BUFS ×6          15.4 KB
            │  wifi StackResources<16>     7.4 KB
            │  rathole DCH+CTL bufs        7.6 KB
            │  kbd_usb EP_MEMORY           4.0 KB (DMA,必须内部 RAM)
@@ -60,7 +57,7 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
            │  cfg/AT scratch, LED, blob   ~90 KB (esp-radio/esp-hal 静态)
            │  堆数组 heap_allocator!       4 KB
            ├──────────────────────────────┤
-           │ 执行器/主任务栈     ~101 KB  │ ← dram_seg 余量,决定 picoserve 可服务深度
+           │ 执行器/主任务栈     ~152 KB  │ ← dram_seg 余量,决定 picoserve 可服务深度
 0x3FCDB700 ├──────────────────────────────┤  dram_seg 共 341,760 B (334 KB)
            │ heap_allocator!(reclaimed)   │ ← 二级引导回收区,主堆
 0x3FCED710 └──────────────────────────────┘  dram2_seg 共 73,744 B (72 KB)
@@ -72,7 +69,12 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
 PSRAM 8 MB (Octal,0x3C000000+ 映射)
   独立 EspHeap(main.rs PSRAM_HEAP),刻意【不并入全局堆】:
   WiFi blob 经普通 malloc 分配,落进 PSRAM 会在 TX 路径崩(blob DMA 只认内部 RAM)。
-  当前分配 0 B —— 全部预留给 R6 BLE(host buffer pool)或后续大缓冲需求。
+  当前分配 ~51.6 KB:
+    mqttc TLS_RX/TX     24.8 KB  (embedded-tls 软件栈,纯 CPU 访问)
+    mqttc MQTT+TCP bufs 11.2 KB  (smoltcp memcpy,纯 CPU 访问)
+    httpd TCP_BUFS ×10  15.4 KB  (socket 缓冲,纯 CPU 访问)
+  实时性:octal PSRAM 走 cache,控制面流量(KB/s 级)延迟无感;
+  唯一禁区是 DMA 缓冲(USB EP_MEMORY、WiFi blob 内部)必须留内部 SRAM。
 ```
 
 **预算纪律**(踩坑换来的,JTAG/nm 实测):

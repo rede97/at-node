@@ -1187,16 +1187,19 @@ pub const ACCEPTORS: usize = 3;
 /// pool size: the acceptor only stalls when more than BACKLOG
 /// connections are in flight at once (a much wider window than the
 /// handler count, which is what actually matters for burst latency).
-/// 10 was the SPA-burst luxury; 6 covers the ~4 parallel fetches the
-/// SPA actually fires and frees 10 KiB of DRAM statics (SSDP put the
-/// linker stack region back over the edge).
-const BACKLOG: usize = 6;
+/// 10 covers SPA load bursts; the buffers live in the dedicated PSRAM
+/// heap (CPU-only socket buffers, never DMA), so the backlog no longer
+/// costs internal DRAM.
+const BACKLOG: usize = 10;
 
 /// One tcp rx+tx buffer pair per handler slot. Buffers are recycled
 /// through FREE_IDX: an index leaves the pool before the socket is
 /// created and returns only after serve() completes (socket dropped),
-/// so no two live sockets can ever share a buffer.
-static mut TCP_BUFS: [[u8; 2560]; BACKLOG] = [[0; 2560]; BACKLOG];
+/// so no two live sockets can ever share a buffer. The Box is OWNED by
+/// this static cell.
+static mut TCP_BUFS: Option<
+    allocator_api2::boxed::Box<[[u8; 2560]; BACKLOG], &'static esp_alloc::EspHeap>,
+> = None;
 
 /// embassy-net sockets are !Send (smoltcp keeps per-socket state in the
 /// stack), but every task here runs on ONE cooperative executor on core 0
@@ -1225,6 +1228,11 @@ fn http_config() -> Config {
 /// Boot-time init: running flag from http.auto && http.enable, allocate
 /// the PSRAM buffer pool. Call once from main before spawning tasks.
 pub async fn init() {
+    unsafe {
+        (*core::ptr::addr_of_mut!(TCP_BUFS)).get_or_insert_with(|| {
+            allocator_api2::boxed::Box::new_in([[0u8; 2560]; BACKLOG], &crate::PSRAM_HEAP)
+        });
+    }
     let auto = cfg::get_str("http.auto").await == "1";
     let enable = cfg::get_str("http.enable").await == "1";
     set_running(auto && enable);
@@ -1276,7 +1284,11 @@ pub async fn acceptor_task(stack: Stack<'static>) -> ! {
             // SAFETY: idx is unique in the pool (see FREE_IDX invariant
             // above); no other reference to the slot's buffer exists while
             // this socket lives.
-            let bufs = unsafe { TCP_BUFS[idx].as_mut() };
+            let bufs = unsafe {
+                &mut (*core::ptr::addr_of_mut!(TCP_BUFS))
+                    .as_mut()
+                    .expect("httpd init")[idx]
+            };
             let (rx, tx) = bufs.split_at_mut(1536);
             let mut socket = embassy_net::tcp::TcpSocket::new(stack, rx, tx);
             socket.set_keep_alive(Some(Duration::from_secs(30)));
