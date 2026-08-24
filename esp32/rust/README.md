@@ -38,6 +38,52 @@ cd esp32/rust
 ./build.sh                 # full,仅编译
 ./build.sh remoter --flash # 编译 remoter 并烧录(默认 /dev/ttyACM0)
 ```
+
+## 内存布局(SRAM / PSRAM,实测 2026-08-24 full 构建)
+
+ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(328KB,
+可执行 RAM)与启动加载器占用,应用可写的数据区只有两块:
+
+```
+0x3FC88000 ┌──────────────────────────────┐
+           │ 静态区(.data/.bss)  ~233 KB  │
+           │  http_handler serve future  32.6 KB (picoserve 全路由表)
+           │  mqtt_task future           19.0 KB
+           │  rathole_fwd future ×2      10.4 KB
+           │  mqttc TLS_RX/TX            24.8 KB
+           │  mqttc MQTT+TCP bufs        11.2 KB
+           │  httpd TCP_BUFS ×6          15.4 KB
+           │  wifi StackResources<16>     7.4 KB
+           │  rathole DCH+CTL bufs        7.6 KB
+           │  kbd_usb EP_MEMORY           4.0 KB (DMA,必须内部 RAM)
+           │  at_serial/embassy_main      7.1 KB
+           │  cfg/AT scratch, LED, blob   ~90 KB (esp-radio/esp-hal 静态)
+           │  堆数组 heap_allocator!       4 KB
+           ├──────────────────────────────┤
+           │ 执行器/主任务栈     ~101 KB  │ ← dram_seg 余量,决定 picoserve 可服务深度
+0x3FCDB700 ├──────────────────────────────┤  dram_seg 共 341,760 B (334 KB)
+           │ heap_allocator!(reclaimed)   │ ← 二级引导回收区,主堆
+0x3FCED710 └──────────────────────────────┘  dram2_seg 共 73,744 B (72 KB)
+
+堆总计 ≈ 77.7 KB(4KB 数组 + 72KB 回收区)
+  启动后 free 77,840 B → 全服务在线 free ~30 KB
+  (WiFi 驱动 + http socket + ssdp 吃掉 ~47 KB;MQTT TLS 握手需 ~25KB 连续块,够用)
+
+PSRAM 8 MB (Octal,0x3C000000+ 映射)
+  独立 EspHeap(main.rs PSRAM_HEAP),刻意【不并入全局堆】:
+  WiFi blob 经普通 malloc 分配,落进 PSRAM 会在 TX 路径崩(blob DMA 只认内部 RAM)。
+  当前分配 0 B —— 全部预留给 R6 BLE(host buffer pool)或后续大缓冲需求。
+```
+
+**预算纪律**(踩坑换来的,JTAG/nm 实测):
+
+- picoserve 每条路由在 serve future 里占 **~1.5 KB arena**;serve future 全表 ~32 KB。
+  3 个 HTTP handler 曾是 98 KB——一度把栈挤到 4 KB 引发连环崩溃。
+  现纪律:**handler = 1**、backlog = 6、路由按组参数化(mqtt/http/gpio/i2c/…单段 op 路由)。
+- 栈 = dram_seg 静态区之后**剩余多少算多少**;serve() 轮询最深路径需要 ~20 KB 余量。
+- DMA 缓冲(USB EP、WiFi blob 内部)必须留在内部 SRAM,永不进 PSRAM。
+- 评估新功能的内存成本先看 arena:executor 任务 future 全部在静态区,`nm -S` 可查
+  (`_RNvNv...<task>4POOL`)。
 - **SSDP/UPnP 发现**(cargo feature `ssdp`,默认开,依赖 http):WiFi 起来且 HTTP 启用时
   加入 239.255.255.250:1900,应答 M-SEARCH 并周期广播 ssdp:alive;`/description.xml` 的
   `presentationURL` 指向 SPA——Windows「网络」里双击设备即可打开主页。HTTP 关闭即停。
