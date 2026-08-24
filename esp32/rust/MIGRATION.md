@@ -190,7 +190,7 @@ R6 依赖 R5（共享路由层）。
 | 风险 | 影响 | 对策 |
 |---|---|---|
 | trouble 的 HID over GATT 在 S3 上不成熟 | R6 延期 | 先跑 trouble 官方 HID 样例验证；不行退到 esp-radio 裸 GATT 手写（参考 Zephyr 版 GATT 表） |
-| esp-radio WiFi+BLE 共存内存压力 | R6 不稳定 | R2 起记录堆水位；必要时 BLE 与 WiFi 分时（Zephyr 版已证明共存可行，esp-rs 官方支持共存） |
+| ~~esp-radio WiFi+BLE 共存内存压力~~ | ~~R6 不稳定~~ | 【已解 2026-08-24】堆 77.7K→129.7K + `ble_max_act≥2`(max_connections=3）即共存；初判"内存不足"实为 ble_max_act=1 引发的 HCI 0x07，详见 BLE-HID.md §8 |
 | embedded-tls 与自签 CA 的 IP SAN 校验 | R3 阻塞 | 提前用 R0 骨架做 TLS 握手探针实验（复用 gen_certs.sh 证书） |
 | picoserve 路由/中间件能力与 Zephyr httpd 不等价 | R4 返工 | 先实现 3 个代表端点（status/at/config）验证可行性再铺全量 |
 | USB OTG + WiFi 同开的电源/中断问题 | R5 不稳定 | 参考 Zephyr 版：枚举正常、打字未测；出问题先查供电与 PHY 冲突（H1/H2) |

@@ -58,16 +58,17 @@ ESP32-S3 有 512KB 内部 SRAM,但绝大部分被 WiFi/BT blob、ESP-IDF、IRAM(
            │  kbd_usb EP_MEMORY           4.0 KB (DMA,必须内部 RAM)
            │  at_serial/embassy_main      7.1 KB
            │  cfg/AT scratch, LED, blob   ~90 KB (esp-radio/esp-hal 静态)
-           │  堆数组 heap_allocator!       4 KB
+           │  堆数组 heap_allocator!      56 KB (R6 起:WiFi+BLE 共存预算)
            ├──────────────────────────────┤
-           │ 执行器/主任务栈     ~152 KB  │ ← dram_seg 余量,决定 picoserve 可服务深度
+           │ 执行器/主任务栈     ~100 KB  │ ← dram_seg 余量,决定 picoserve 可服务深度
 0x3FCDB700 ├──────────────────────────────┤  dram_seg 共 341,760 B (334 KB)
            │ heap_allocator!(reclaimed)   │ ← 二级引导回收区,主堆
 0x3FCED710 └──────────────────────────────┘  dram2_seg 共 73,744 B (72 KB)
 
-堆总计 ≈ 77.7 KB(4KB 数组 + 72KB 回收区)
-  启动后 free 77,840 B → 全服务在线 free ~30 KB
-  (WiFi 驱动 + http socket + ssdp 吃掉 ~47 KB;MQTT TLS 握手需 ~25KB 连续块,够用)
+堆总计 ≈ 129.7 KB(56KB 数组 + 72KB 回收区;对齐 esp-hal embassy_coex 样例 128K)
+  启动后 free 131,088 B → WiFi+BLE 全在线 free ~50 KB
+  (WiFi 驱动 ~46K + BLE 控制器 ~33K;MQTT TLS 握手在 ~100K 栈下实测无碍。
+  纯 `ble` 变体同布局,WiFi 不起 → free 更宽裕)
 
 PSRAM 8 MB (Octal,0x3C000000+ 映射)
   独立 EspHeap(main.rs PSRAM_HEAP),刻意【不并入全局堆】:

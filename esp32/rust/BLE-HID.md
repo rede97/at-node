@@ -113,9 +113,23 @@ AT/HTTP/MQTT → kb.rs(时序引擎)
 
 ## 8. 实测坑录(R6 实施过程)
 
-| 坑 | 现象 | 决定 |
-|---|---|---|
-| trouble-host 0.4 vs esp-radio 0.18 | bt-hci 0.6/0.8 trait 不互通,编译即败 | 升级 trouble-host 0.6.0 |
+| WiFi+BLE 内部堆不足 | `BLE assert emi.c 164` panic(31.4KB free vs ~30.7KB 需求) | ~~WiFi 降级~~ 初判误诊;终局:堆 77.7K→129.7K(对齐官方 coex 样例 128K),共存验证通过。`wifi` 仍保留为 cargo feature(纯 BLE 变体用) |
+| **ble_max_act 被误砍** | 共存排查时把 `max_connections` 设为 1 省内存,advertise 全部 `HCI 0x07 Memory Capacity Exceeded` | esp-radio os_adapter 以 `max_connections` 充当 `ble_max_act`(连接+广播+扫描共享额度),=1 连 advertiser 都不够;设 3(1 conn + 1 adv + 余量)。ESP-IDF 官方公式:MAX_ACT ≥ conn + adv + scan + psync |
+| HCI 0x07 排查弯路 | 依次排除堆(129K 仍败)、初始化顺序(BLE 先行仍败)、coex feature(无关)——真凶是 max_act | 教训:**HCI 0x07 是控制器 activity/资源额度,不是系统堆**;变量隔离时一次只改一个(本次 max_connections 改动与 WiFi-on 同步引入,造成归因混淆) |
+| esp-radio `coex` 依赖 wifi 模块 | coex 挂 kbd-ble 时 ble 变体(无 wifi)编译报 `crate::wifi` 不存在 | coex 只能与 `esp-radio/wifi` 同开;最终未启用(实测无 coex 仲裁也稳定,官方样例配置留作后备) |
+| 控制器无可靠 public 地址 | 广播不上空气,扫描零结果 | efuse MAC 派生静态随机地址(raw[5]\|=0xC0) |
+| embassy-sync 0.8 vs 0.7 | gatt_server 宏类型跨版本不匹配 | 项目降 embassy-sync 0.7.2 |
+| trouble 默认不可 bond | 主机配对即 PairingFailed 断连 | 连接后按窗口 `set_bondable` |
+| bond 仅 RAM | reflash 后 LTK Authentication Failure 死循环 | `ble.bond` NVS 持久化(R6.3 核心) |
+| Report Reference id=1 | HoG 剥首字节,evdev 零事件 | id=0(report map 无 Report ID) |
+| reboot 后 target 复位 USB | ble-only 构建吞键无报错 | kb.rs 默认 target 按 feature |
+| Stack 非 Sync | 全局引用方案编译失败 | stack 作任务参数;AT 清 bond 走 Signal |
+| BlueZ list-attributes 残缺 | 只显示 0x1801 | BlueZ 缓存/显示问题;gatttool plain-ATT 验证表完整,HoG 实测正常 |
+| BlueZ 侧陈旧 bond | S3 清 bond 后主机仍持旧 LTK → Authentication Failure 循环 | 测试纪律:设备端 `AT+BLE=clear`/reflash 后,主机侧必须 `bluetoothctl remove` 对齐 |
+| BlueZ agent 拦截 Just Works | 脚本化配对停在 "Accept pairing (yes/no)" 超时 | 管道里补 `yes`(NoInputNoOutput agent 在 bluetoothctl 下仍提示) |
+| VAL_MAX 64→96 连锁 | rathole/wifi 的 `String<64>` 消费方编译错 | 消费方统一改 `String<{cfg::VAL_MAX}>` |
+| btmon 抓不到 ACL 层 | 只见 mgmt/HCI 命令事件与扫描报告 | 留证改用串口 SMP/ATT 日志 + HCI 加密事件(nRF52840 hci_usb 固件限制) |
+| 测试脚本轮次虚报 | 快连快断脚本 20 轮实际只成 10(trusted auto-connect 竞争) | 每轮以 `Connection successful` 计数,失败重跑补足 |
 | WiFi+BLE 内部堆不足 | `BLE assert emi.c 164` panic(31.4KB free vs ~30.7KB 需求) | `wifi` 降级为 cargo feature;`ble` 变体 WiFi OFF |
 | 控制器无可靠 public 地址 | 广播不上空气,扫描零结果 | efuse MAC 派生静态随机地址(raw[5]\|=0xC0) |
 | embassy-sync 0.8 vs 0.7 | gatt_server 宏类型跨版本不匹配 | 项目降 embassy-sync 0.7.2 |
