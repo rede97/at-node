@@ -24,9 +24,20 @@ pub fn enabled() -> bool {
 const MCAST: embassy_net::Ipv4Address = embassy_net::Ipv4Address::new(239, 255, 255, 250);
 #[cfg(feature = "ssdp")]
 const PORT: u16 = 1900;
-/// max-age=1800; alive renewal at half that (reference sketch: 900 s).
+/// max-age=1800. Periodic renewal: 300 s (Arduino sketch uses 900 s, but
+/// that makes Windows discovery feel sluggish — after the boot burst the
+/// device goes silent for 15 min, and a missed boot burst means a
+/// 15-minute wait for the next appearance).
 #[cfg(feature = "ssdp")]
-const ALIVE_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(900);
+const ALIVE_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(300);
+
+/// Boot announce window: mainline UPnP stacks announce aggressively at
+/// startup before dropping to the slow cadence (the ×3 burst alone is
+/// too easy to miss while the link/multicast state settles).
+#[cfg(feature = "ssdp")]
+const BOOT_BURST_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(2);
+#[cfg(feature = "ssdp")]
+const BOOT_BURST_COUNT: u32 = 15;
 
 /// Multicast group re-join cadence. smoltcp sends exactly one IGMP
 /// membership report at join; snooping APs expire the membership
@@ -184,16 +195,26 @@ USN: {uuid}::upnp:rootdevice\r\n\
                 continue;
             }
             info!("ssdp: up, uuid={uuid}");
+            // Boot burst: ×3 at 100ms, then every 2s for 30s (BOOT_BURST).
             for _ in 0..3 {
                 notify_alive(&mut sock, &ip_s, &uuid).await;
                 Timer::after(Duration::from_millis(100)).await;
             }
+            let burst_start = Instant::now();
 
             let mut buf = [0u8; 512];
             let mut last_alive = Instant::now();
             let mut last_rejoin = Instant::now();
             loop {
-                let remaining = ALIVE_INTERVAL
+                // Faster cadence during the boot burst window.
+                let in_burst = burst_start.elapsed()
+                    < BOOT_BURST_INTERVAL * BOOT_BURST_COUNT;
+                let interval = if in_burst {
+                    BOOT_BURST_INTERVAL
+                } else {
+                    ALIVE_INTERVAL
+                };
+                let remaining = interval
                     .checked_sub(last_alive.elapsed())
                     .unwrap_or(Duration::from_ticks(0));
                 match select3(
