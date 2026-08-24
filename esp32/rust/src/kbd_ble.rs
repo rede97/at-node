@@ -358,8 +358,15 @@ pub fn init(spawner: Spawner, bt: BT<'static>) {
         esp_alloc::HEAP.free()
     );
 
-    let connector = BleConnector::new(bt, esp_radio::ble::Config::default())
-        .expect("ble connector init");
+    // ble_max_act == max_connections in esp-radio's os_adapter, and the
+    // controller counts EVERY BLE activity (connection + advertiser +
+    // scanner) against it: 1 starved the advertiser itself (HCI Memory
+    // Capacity Exceeded). 3 = 1 conn + 1 adv + slack (ESP-IDF guidance).
+    let connector = BleConnector::new(
+        bt,
+        esp_radio::ble::Config::default().with_max_connections(3),
+    )
+    .expect("ble connector init");
     let controller: Controller = ExternalController::new(connector);
     // Static random address derived from the efuse base MAC (top two bits
     // of the MSB = 0b11 per spec). The S3 controller's public BD_ADDR is

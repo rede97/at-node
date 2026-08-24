@@ -11,8 +11,9 @@
 #   base    - full minus rathole and http/ssdp (production keyboard: MQTT +
 #             HWS + USB HID, serial-only configuration)
 #   rathole - tunnel test unit: LED + HTTP + rathole + SSDP (no kbd/mqtt/hws)
-#   ble     - R6 bring-up unit: kbd-ble + LED only, WiFi OFF (frees ~46 KB
-#             of internal heap for the BLE controller)
+#   ble     - pure BLE node: kbd-ble + LED only, WiFi OFF (WiFi+BLE works
+#             on full since the 130K heap; this variant is the low-power
+#             single-radio production form)
 #
 # Usage:
 #   ./build.sh [full|remoter|base|rathole|ble] [--flash [/dev/ttyACMx]]

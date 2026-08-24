@@ -17,8 +17,8 @@ version      = "0.1.0"
 #   remoter = full - rathole
 #   base    = full - rathole - http - ssdp (production kbd, serial-only config)
 #   rathole = led-color + http + rathole + ssdp (tunnel test unit)
-#   ble     = kbd-ble + led-color only (R6 bring-up: WiFi OFF to free the
-#             ~46 KB internal-heap blob for the BLE controller)
+#   ble     = kbd-ble + led-color only (pure-BLE production node, WiFi OFF;
+#             WiFi+BLE coexistence works since the 130K heap — see BLE-HID.md)
 default   = ["wifi", "led-color", "rathole", "mqtt", "http", "hws", "kbd-usb", "ssdp"]
 # WiFi is the base of every networked variant; kbd-ble-only builds drop it
 # because the WiFi blob's internal-heap appetite starves the BLE controller.

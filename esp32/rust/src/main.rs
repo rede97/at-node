@@ -177,7 +177,11 @@ async fn main(spawner: Spawner) -> ! {
     // picoserve serve() polling needs ~20 KiB of it and the WiFi blob
     // needs its internal-heap headroom, so big CPU-side buffers live in
     // PSRAM instead (see psram_allocator above).
-    esp_alloc::heap_allocator!(size: 4 * 1024);
+    // 56K static + 73.7K reclaimed ≈ 130K, matching esp-hal's embassy_coex
+    // example (128K): the WiFi blob (~46K) and the BLE controller (~33K)
+    // do not fit the old 77.7K heap (BLE assert emi.c 164). Executor stack
+    // keeps ~120K of dram_seg — MQTT/TLS handshake verified.
+    esp_alloc::heap_allocator!(size: 56 * 1024);
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
@@ -195,6 +199,12 @@ async fn main(spawner: Spawner) -> ! {
 
     // Heap watermark BEFORE the wifi driver allocates (MIGRATION 5.3).
     esp_println::println!("boot: internal heap free {} bytes", esp_alloc::HEAP.free());
+    // BLE BEFORE WiFi (esp-hal embassy_coex example order): the BT
+    // controller's memory pools are carved at ble_init; when WiFi runs
+    // first the later controller comes up but advertising dies with HCI
+    // Memory Capacity Exceeded.
+    #[cfg(feature = "kbd-ble")]
+    kbd_ble::init(spawner, peripherals.BT);
     #[cfg(feature = "wifi")]
     let stack = {
         let seed = (rng.random() as u64) << 32 | rng.random() as u64;
@@ -257,8 +267,6 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.GPIO20,
         peripherals.GPIO19,
     );
-    #[cfg(feature = "kbd-ble")]
-    kbd_ble::init(spawner, peripherals.BT);
     #[cfg(any(feature = "kbd-usb", feature = "kbd-ble"))]
     spawner.spawn(kb_engine().expect("spawn kb engine"));
 

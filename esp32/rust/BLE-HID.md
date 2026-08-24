@@ -6,11 +6,16 @@
 > 实施与计划的偏差(全部为实测驱动的最终决定):
 > 1. **trouble-host 0.4 → 0.6.0**:0.4 锁 bt-hci 0.6,esp-radio 0.18 锁 bt-hci 0.8,
 >    trait 不互通;0.6.0 是唯一兼容对(esp-radio 官方 bas_peripheral 样例同配)。
-> 2. **新增 `wifi` cargo feature**:WiFi blob 占 ~46KB 内部堆,与 BLE 控制器
->    (~31KB 连续块)无法共存于 77.7KB 内部堆(实测 `BLE assert emi.c 164` panic)。
->    WiFi 从"恒开底座"降级为 feature(mqtt/http/rathole/ssdp 均隐含依赖);
->    新增 `ble` 变体(kbd-ble + led-color,WiFi OFF)。WiFi+BLE 双射频共存
->    需内存优化后单独评估。
+> 2. **新增 `wifi` cargo feature**:WiFi 从"恒开底座"降级为 feature
+>    (mqtt/http/rathole/ssdp 均隐含依赖),`ble` 变体(kbd-ble + led-color,
+>    WiFi OFF)服务纯 BLE 场景。**WiFi+BLE 已验证可共存**(2026-08-24,
+>    full+kbd-ble 固件:WiFi up + HTTP ble/* 端点 + BLE 打字 + MQTT/TLS
+>    并行),条件:① 内部堆 77.7K→129.7K(静态堆数组 4K→56K,对齐 esp-hal
+>    embassy_coex 样例的 128K;executor 栈余 ~120K,TLS 握手实测无碍);
+>    ② `max_connections ≥ 2`(esp-radio os_adapter 以之充当 ble_max_act,
+>    =1 时控制器 activity 额度连 advertiser 都不够 → HCI 0x07 Memory
+>    Capacity Exceeded;取 3 = 1 conn + 1 adv + 余量)。初判"内存不共存"
+>    (`BLE assert emi.c 164`)实为 ①+② 叠加。
 > 3. **bond 存储**:`ble.bond` 单键(append 注册表尾,F_WO),CH582 单 bond 语义
 >    (新配对覆盖);40B 二进制 hex 80 字符 → VAL_MAX 64→96。
 > 4. **静态随机地址 efuse 派生**:S3 控制器 public BD_ADDR 不可靠,不设地址

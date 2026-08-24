@@ -24,9 +24,9 @@ Zephyr 版的 Rust 重实现（后者已归档 commit `e759a2a`)。约束文档�
 与 Arduino 变体(`features.h` + build.ps1/-sh)对齐的功能模型:**核心** =
 `kbd-usb` / `kbd-ble` / `led-color` / `hws`(GPIO·ADC·I2C);**通信** = `mqtt` /
 `http` / `rathole`。WiFi 自 R6 起也是 feature(`mqtt`/`http`/`rathole`/`ssdp` 隐含
-依赖)——WiFi blob 的 ~46KB 内部堆与 BLE 控制器无法共存,`ble` 变体因此 WiFi OFF
-(详见 `BLE-HID.md`)。关掉的功能在三个通道统一报 `<x> disabled`,
-ability/catalog 同步隐藏。
+依赖);WiFi+BLE 双射频已验证可共存(内部堆提到 ~130K + `ble_max_act≥2`,见
+`BLE-HID.md`),`ble` 变体是纯 BLE 生产形态(WiFi OFF)。关掉的功能在三个
+通道统一报 `<x> disabled`,ability/catalog 同步隐藏。
 
 | Variant | cargo features | 用途 |
 |---|---|---|
@@ -34,7 +34,7 @@ ability/catalog 同步隐藏。
 | `remoter` | full − rathole | 键盘 + MQTT + HTTP,无隧道 |
 | `base` | full − rathole − http | 生产键盘,串口-only 配置 |
 | `rathole` | led-color + http + rathole | 隧道测试专用(无 kbd/mqtt/hws) |
-| `ble` | led-color + kbd-ble(WiFi OFF) | BLE HID 键盘(配对窗口 + NVS bond) |
+| `ble` | led-color + kbd-ble(WiFi OFF) | 纯 BLE HID 键盘(配对窗口 + NVS bond) |
 
 ```bash
 cd esp32/rust
