@@ -28,6 +28,14 @@ const PORT: u16 = 1900;
 #[cfg(feature = "ssdp")]
 const ALIVE_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(900);
 
+/// Multicast group re-join cadence. smoltcp sends exactly one IGMP
+/// membership report at join; snooping APs expire the membership
+/// (~260 s) and stop delivering the group to us — observed as M-SEARCH
+/// silently stopping while unicast still works. A leave+join pair
+/// refreshes the report and the AP's forwarding state.
+#[cfg(feature = "ssdp")]
+const REJOIN_INTERVAL: embassy_time::Duration = embassy_time::Duration::from_secs(120);
+
 /// Stable UUID from the efuse MAC (reference sketch format).
 #[cfg_attr(not(feature = "ssdp"), allow(dead_code))]
 fn uuid() -> String<48> {
@@ -183,6 +191,7 @@ USN: {uuid}::upnp:rootdevice\r\n\
 
             let mut buf = [0u8; 512];
             let mut last_alive = Instant::now();
+            let mut last_rejoin = Instant::now();
             loop {
                 let remaining = ALIVE_INTERVAL
                     .checked_sub(last_alive.elapsed())
@@ -206,6 +215,15 @@ USN: {uuid}::upnp:rootdevice\r\n\
                     Either3::Third(()) => {
                         if !crate::httpd::running() || !wifi::link_up() {
                             break;
+                        }
+                        if last_rejoin.elapsed() >= REJOIN_INTERVAL {
+                            // Keep the IGMP membership (and the snooping
+                            // AP's forwarding) alive; see REJOIN_INTERVAL.
+                            let _ = stack.leave_multicast_group(MCAST);
+                            if stack.join_multicast_group(MCAST).is_err() {
+                                warn!("ssdp: periodic rejoin failed");
+                            }
+                            last_rejoin = Instant::now();
                         }
                     }
                 }
