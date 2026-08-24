@@ -262,6 +262,12 @@ op_enum!(I2cOp {
     Read => "read",
     Write => "write",
 });
+op_enum!(BleOp {
+    Status => "status",
+    Pair => "pair",
+    BondsDelete => "bonds/delete",
+    BondsClear => "bonds/clear",
+});
 
 async fn h_mqtt_route(op: MqttOp, query: QueryString, body: String) -> JsonResp {
     match op {
@@ -461,6 +467,13 @@ pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
             get(h_tunnel_get).post(h_tunnel_post),
         )
         .route(
+            (
+                "/at-node/cmd/ble",
+                picoserve::routing::parse_path_segment::<BleOp>(),
+            ),
+            get(h_ble_route).post(h_ble_route),
+        )
+        .route(
             ("/at-node/cmd", picoserve::routing::parse_path_segment::<Seg>()),
             get(h_cmd1_get).post(h_cmd1_post),
         )
@@ -481,6 +494,70 @@ pub fn build_app() -> picoserve::Router<impl PathRouter<()>, ()> {
 }
 
 // ----------------------------------------------------------- handlers ---
+/// /at-node/cmd/ble/<op> — Arduino ble/* surface (R6.3). Single-bond
+/// model: bonds/delete only accepts idx=0.
+async fn h_ble_route(op: BleOp, query: QueryString, body: String) -> JsonResp {
+    #[cfg(not(feature = "kbd-ble"))]
+    {
+        let _ = (op, query, body);
+        return json_response(StatusCode::BAD_REQUEST, err_body("ble disabled"));
+    }
+    #[cfg(feature = "kbd-ble")]
+    {
+        let mut j = String::new();
+        match op {
+            BleOp::Status => {
+                let name = cfg::get_str("device.name").await;
+                let addr = crate::kbd_ble::our_addr_display();
+                let connected = crate::kbd_ble::connected();
+                let pairing = crate::kbd_ble::pair_window_open();
+                let _ = write!(
+                    j,
+                    "{{\"ok\":true,\"name\":\"{name}\",\"addr\":\"{addr}\",\
+\"advertising\":{},\"pairing_mode\":{pairing},\"bonds\":[",
+                    !connected
+                );
+                if let Some(bond) = crate::kbd_ble::bond_addr_display() {
+                    let _ = write!(j, "\"{bond}\"");
+                }
+                let _ = write!(j, "]}}");
+            }
+            BleOp::Pair => {
+                let a = args(&query, body.as_str());
+                let mut buf = heapless::String::<256>::new();
+                let mut b2 = heapless::String::<256>::new();
+                let mut enable = a.get("enable", &mut buf);
+                if enable.is_empty() {
+                    enable = a.get("start", &mut b2);
+                }
+                match enable {
+                    "1" | "true" => crate::kbd_ble::pair_open(),
+                    "0" | "false" => crate::kbd_ble::pair_close(),
+                    _ => return json_response(StatusCode::BAD_REQUEST, err_body("bad args")),
+                }
+                let _ = write!(
+                    j,
+                    "{{\"ok\":true,\"cmd\":\"ble/pair\",\"pairing_mode\":{}}}",
+                    crate::kbd_ble::pair_window_open()
+                );
+            }
+            BleOp::BondsDelete => {
+                let a = args(&query, body.as_str());
+                let mut buf = heapless::String::<256>::new();
+                if a.get("idx", &mut buf) != "0" || crate::kbd_ble::bond_addr().is_none() {
+                    return json_response(StatusCode::BAD_REQUEST, err_body("bad idx"));
+                }
+                crate::kbd_ble::clear_bond().await;
+                let _ = write!(j, "{{\"ok\":true,\"cmd\":\"ble/bonds/delete\"}}");
+            }
+            BleOp::BondsClear => {
+                crate::kbd_ble::clear_bond().await;
+                let _ = write!(j, "{{\"ok\":true,\"cmd\":\"ble/bonds/clear\"}}");
+            }
+        }
+        return json_response(StatusCode::OK, j);
+    }
+}
 
 async fn h_cmd_status() -> JsonResp {
     let name = cfg::get_str("device.name").await;

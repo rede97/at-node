@@ -604,6 +604,71 @@ async fn run_client<T>(
     info!("mqtt: internal heap free {} bytes", esp_alloc::HEAP.free());
 }
 
+/// ble/status, ble/pair?enable=1|0, ble/bonds/delete?idx=0,
+/// ble/bonds/clear — Arduino ble/* surface (R6.3, single-bond model).
+#[cfg(all(feature = "mqtt", feature = "kbd-ble"))]
+async fn ble_exec(method: &str, query: &str) -> String<2560> {
+    let mut out: String<2560> = String::new();
+    let mut scratch: String<256> = String::new();
+    match method {
+        "ble/status" => {
+            let name = crate::cfg::get_str("device.name").await;
+            let addr = crate::kbd_ble::our_addr_display();
+            let connected = crate::kbd_ble::connected();
+            let pairing = crate::kbd_ble::pair_window_open();
+            let _ = write!(
+                out,
+                "\"ok\":true,\"ble\":{{\"name\":\"{name}\",\"addr\":\"{addr}\",\
+\"advertising\":{},\"pairing_mode\":{pairing},\"bonds\":[",
+                !connected
+            );
+            if let Some(bond) = crate::kbd_ble::bond_addr_display() {
+                let _ = write!(out, "\"{bond}\"");
+            }
+            let _ = out.push_str("]}");
+        }
+        "ble/pair" => {
+            let enable = crate::api::query_get(query, "enable", &mut scratch);
+            let enable = if enable.is_empty() {
+                crate::api::query_get(query, "start", &mut scratch)
+            } else {
+                enable
+            };
+            match enable {
+                "1" | "true" => crate::kbd_ble::pair_open(),
+                "0" | "false" => crate::kbd_ble::pair_close(),
+                _ => {
+                    let _ = out.push_str("\"ok\":false,\"error\":\"bad args\"");
+                    return out;
+                }
+            }
+            let _ = write!(
+                out,
+                "\"ok\":true,\"pairing_mode\":{}",
+                crate::kbd_ble::pair_window_open()
+            );
+        }
+        "ble/bonds/delete" => {
+            if crate::api::query_get(query, "idx", &mut scratch) != "0"
+                || crate::kbd_ble::bond_addr().is_none()
+            {
+                let _ = out.push_str("\"ok\":false,\"error\":\"bad idx\"");
+                return out;
+            }
+            crate::kbd_ble::clear_bond().await;
+            let _ = out.push_str("\"ok\":true");
+        }
+        "ble/bonds/clear" => {
+            crate::kbd_ble::clear_bond().await;
+            let _ = out.push_str("\"ok\":true");
+        }
+        _ => {
+            let _ = out.push_str("\"ok\":false,\"error\":\"unknown method\"");
+        }
+    }
+    out
+}
+
 /// keyboard/tap, keyboard/text, keyboard/key — broker-documented method
 /// shapes. Params: tap=k,mods,ms; text=s,ms,gap; key=mods,k0..k5.
 #[cfg(feature = "mqtt")]
@@ -704,6 +769,15 @@ async fn mqtt_exec(method: &str, query: &str) -> String<2560> {
     }
     if method.starts_with("keyboard/") {
         return keyboard_exec(method, query);
+    }
+    #[cfg(not(feature = "kbd-ble"))]
+    if method.starts_with("ble/") {
+        let _ = out.push_str("\"ok\":false,\"error\":\"ble disabled\"");
+        return out;
+    }
+    #[cfg(feature = "kbd-ble")]
+    if method.starts_with("ble/") {
+        return ble_exec(method, query).await;
     }
 
     match method {

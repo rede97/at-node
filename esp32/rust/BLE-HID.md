@@ -1,7 +1,24 @@
 # R6:BLE HID 键盘(Rust S3)实施计划
 
-> 状态:📋 计划(未开工) · 维护:esp32/rust/
+> 状态:✅ 已实施(2026-08-24 R6.0–R6.4 全阶段验收通过) · 维护:esp32/rust/
 > 关联:`MIGRATION.md` §7 R6 行、`esp32/arduino/README.md`(Arduino BLE 安全模型)
+>
+> 实施与计划的偏差(全部为实测驱动的最终决定):
+> 1. **trouble-host 0.4 → 0.6.0**:0.4 锁 bt-hci 0.6,esp-radio 0.18 锁 bt-hci 0.8,
+>    trait 不互通;0.6.0 是唯一兼容对(esp-radio 官方 bas_peripheral 样例同配)。
+> 2. **新增 `wifi` cargo feature**:WiFi blob 占 ~46KB 内部堆,与 BLE 控制器
+>    (~31KB 连续块)无法共存于 77.7KB 内部堆(实测 `BLE assert emi.c 164` panic)。
+>    WiFi 从"恒开底座"降级为 feature(mqtt/http/rathole/ssdp 均隐含依赖);
+>    新增 `ble` 变体(kbd-ble + led-color,WiFi OFF)。WiFi+BLE 双射频共存
+>    需内存优化后单独评估。
+> 3. **bond 存储**:`ble.bond` 单键(append 注册表尾,F_WO),CH582 单 bond 语义
+>    (新配对覆盖);40B 二进制 hex 80 字符 → VAL_MAX 64→96。
+> 4. **静态随机地址 efuse 派生**:S3 控制器 public BD_ADDR 不可靠,不设地址
+>    广播不上空气;`FC|MAC`(静态随机位)= `FC:DF:A1:E3:A0:14`。
+> 5. **kb.rs 默认 target 按编译 feature**:kbd-ble-only 构建默认 BLE,否则
+>    reboot 后键被不存在的 USB 后端静默吞掉。
+> 6. **Report Reference id=0**:report map 无 Report ID 项,描述符写 id=1 会让
+>    HoG 剥掉通知首字节丢键。
 
 ## 1. 目标
 
@@ -21,7 +38,7 @@ AT/HTTP/MQTT → kb.rs(时序引擎)
 
 | 项 | 决定 | 依据 |
 |---|---|---|
-| BLE 栈 | esp-radio 0.18 `ble` feature + **trouble-host 0.4** | 与 esp-hal 1.1 官方对齐;embassy 原生 |
+| BLE 栈 | esp-radio 0.18 `ble` feature + **trouble-host 0.6.0** | 与 esp-hal 1.1 官方对齐;embassy 原生 |
 | 控制器 | `BleConnector` → `ExternalController<_, 1>` | esp-hal 官方样例模式 |
 | 资源 | `HostResources<_, DefaultPacketPool, 1, 1>`,缓冲池放 **PSRAM_HEAP** | 已定内存纪律(README 内存布局) |
 | GATT | trouble attribute table(手写或宏) | HID 服务 0x1812 全套 |
@@ -70,13 +87,36 @@ AT/HTTP/MQTT → kb.rs(时序引擎)
 - **BlueZ HoG**:BLE HID 设备在 VM 上直接出现为 evdev 键盘——与 USB HID 同一套击键断言路径(`/dev/input/event*`)
 - 主机 evdev 事件流:击键(按下=1/重复=2/释放=0)可编程断言
 
-## 7. 验收清单(R6.4 逐项)
+## 7. 验收清单(R6.4 逐项,2026-08-24 全过)
 
-- [ ] `bluetoothctl scan on` 发现 `AT-Node-ESP-XXXX`,appearance = keyboard
-- [ ] 默认状态 `pair` 被拒(安全);`AT+PAIR` 开窗后 60s 内配对成功
-- [ ] `AT+KEY_STR=Hello` → VM evdev 收到 `H e l l o`(含 shift 修饰)
-- [ ] `AT+TAP=0x39` → CapsLock;主机 LED output report 回到 S3(可选验证)
-- [ ] 断连后 bonded 主机自动重连可打字;**非 bonded 主机连接被拒**
-- [ ] 快连快断 20 轮:无崩溃、无内存泄漏(heap 水位不回降)
-- [ ] `AT+BLE=clear` 清 bond 后,重连要求重新配对
-- [ ] btmon 留证:SMP 配对、ATT 服务发现、HID notification 时序
+- [x] `bluetoothctl scan on` 发现 `AT-Node-ESP-A014`,appearance = keyboard
+      (0x03c1,icon input-keyboard;地址 FC:DF:A1:E3:A0:14 静态随机)
+- [x] 默认状态连接被 S3 主动断开(`ble: reject non-bonded`,BlueZ 报
+      le-connection-abort-by-local);`AT+PAIR` 开窗 60s 内 Just Works 配对成功
+- [x] `AT+KEY_STR=Hello` → VM evdev 收到 `H e l l o`(LEFTSHIFT+H press/release,
+      E/L/L/O;BlueZ HoG 生成 /dev/input/event6)
+- [x] `AT+TAP=0x39` → CapsLock(主机 input271::capslock 翻转);LED output
+      report 回到 S3(串口 `ble: write h=0x15 [..]`,双向验证)
+- [x] 断连后 bonded 主机自动重连(LTK 加密恢复)可打字;非 bonded 拒连
+- [x] 快连快断 29 轮(10+19):无崩溃,internal heap 恒定 42044 B 零泄漏
+- [x] `AT+BLE=clear` 后重连被拒,需重新 `AT+PAIR` 配对
+- [x] 留证:btmon 抓到 HCI `LE Start Encryption` + `Encryption Change
+      AES-CCM`(bonded 重连);SMP/ATT/HID 时序以串口日志留证
+      (`ble: paired Encrypted` / `ble: write h=0x12 [1, 0]` CCCD 订阅 /
+      notify 无错)。**限制**:本测试环境 btmon 抓不到 ACL 数据层
+      (nRF52840 hci_usb 固件),仅 mgmt/HCI 命令事件可见。
+
+## 8. 实测坑录(R6 实施过程)
+
+| 坑 | 现象 | 决定 |
+|---|---|---|
+| trouble-host 0.4 vs esp-radio 0.18 | bt-hci 0.6/0.8 trait 不互通,编译即败 | 升级 trouble-host 0.6.0 |
+| WiFi+BLE 内部堆不足 | `BLE assert emi.c 164` panic(31.4KB free vs ~30.7KB 需求) | `wifi` 降级为 cargo feature;`ble` 变体 WiFi OFF |
+| 控制器无可靠 public 地址 | 广播不上空气,扫描零结果 | efuse MAC 派生静态随机地址(raw[5]\|=0xC0) |
+| embassy-sync 0.8 vs 0.7 | gatt_server 宏类型跨版本不匹配 | 项目降 embassy-sync 0.7.2 |
+| trouble 默认不可 bond | 主机配对即 PairingFailed 断连 | 连接后按窗口 `set_bondable` |
+| bond 仅 RAM | reflash 后 LTK Authentication Failure 死循环 | `ble.bond` NVS 持久化(R6.3 核心) |
+| Report Reference id=1 | HoG 剥首字节,evdev 零事件 | id=0(report map 无 Report ID) |
+| reboot 后 target 复位 USB | ble-only 构建吞键无报错 | kb.rs 默认 target 按 feature |
+| Stack 非 Sync | 全局引用方案编译失败 | stack 作任务参数;AT 清 bond 走 Signal |
+| BlueZ list-attributes 残缺 | 只显示 0x1801 | BlueZ 缓存/显示问题;gatttool plain-ATT 验证表完整,HoG 实测正常 |

@@ -100,8 +100,8 @@ async fn wait_change(
 #[embassy_executor::task]
 async fn wifi_task(mut controller: WifiController<'static>, stack: Stack<'static>) {
     let mut changed = cfg::changed().expect("cfg change subscriber");
-    let mut cur_ssid: heapless::String<64> = heapless::String::new();
-    let mut cur_pass: heapless::String<64> = heapless::String::new();
+    let mut cur_ssid: heapless::String<{ crate::cfg::VAL_MAX }> = heapless::String::new();
+    let mut cur_pass: heapless::String<{ crate::cfg::VAL_MAX }> = heapless::String::new();
 
     loop {
         let ssid = cfg::get_str("wifi.ssid").await;

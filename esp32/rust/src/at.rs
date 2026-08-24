@@ -49,6 +49,7 @@ const HELP: &[&str] = &[
     "  AT+I2C_W=<addr>,<reg>,<d0>,<d1>,...",
     "  AT+TAP=<key>[,<mods>][,<ms>] / AT+KEY=<mods>,<k0>[,<k1..k5>]",
     "  AT+KEY_STR=<text> / AT+KEY_SEQ=<ms>,<mods>,<k0..k5>,... / AT+DEV=USB|BLE",
+    "  AT+PAIR / AT+BLE=status|bonds|clear",
     "  AT+LED=<r>,<g>,<b>|#RRGGBB|off|auto / AT+LED?",
     "  AT+TUNNEL=status|connect|disconnect|clear|enable[,<0|1>]",
     "  AT+TUNNEL=server|token|service|local|auto|retry,<val>",
@@ -143,6 +144,19 @@ pub async fn handle_line<S: AtSink>(line: &str, out: &mut S) {
             Ok(()) => out.emit("OK").await,
             Err(()) => out.emit("ERROR bad target").await,
         }
+    } else if line == "AT+PAIR" {
+        #[cfg(feature = "kbd-ble")]
+        {
+            crate::kbd_ble::pair_open();
+            scratch.buf.clear();
+            let _ = write!(scratch.buf, "+PAIR:window {}s", crate::kbd_ble::PAIR_WINDOW_SECS);
+            out.emit(scratch.buf.as_str()).await;
+            out.emit("OK").await;
+        }
+        #[cfg(not(feature = "kbd-ble"))]
+        out.emit("ERROR ble disabled").await;
+    } else if let Some(sub) = line.strip_prefix("AT+BLE=") {
+        cmd_ble(sub, &mut scratch, out).await;
     } else if let Some(args) = line.strip_prefix("AT+TAP=") {
         cmd_tap(args, out).await;
     } else if let Some(args) = line.strip_prefix("AT+KEY_STR=") {
@@ -733,6 +747,62 @@ async fn cmd_tunnel<S: AtSink>(args: &str, scratch: &mut Scratch, out: &mut S) {
         }
         "clear" => {
             crate::rathole::clear().await;
+            out.emit("OK").await;
+        }
+        _ => out.emit("ERROR bad args").await,
+    }
+}
+/// AT+BLE=status|bonds|clear (R6.3; mirrors the CH582/Arduino BLE surface).
+async fn cmd_ble<S: AtSink>(sub: &str, scratch: &mut Scratch, out: &mut S) {
+    #[cfg(not(feature = "kbd-ble"))]
+    {
+        let _ = (sub, scratch);
+        out.emit("ERROR ble disabled").await;
+    }
+    #[cfg(feature = "kbd-ble")]
+    match sub {
+        "status" => {
+            scratch.buf.clear();
+            let _ = write!(
+                scratch.buf,
+                "+BLE:conn={},window={}",
+                crate::kbd_ble::connected() as u8,
+                if crate::kbd_ble::pair_window_open() {
+                    "open"
+                } else {
+                    "closed"
+                }
+            );
+            out.emit(scratch.buf.as_str()).await;
+            if let Some(addr) = crate::kbd_ble::bond_addr() {
+                scratch.buf.clear();
+                let _ = write!(
+                    scratch.buf,
+                    "+BLE:bond={:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]
+                );
+                out.emit(scratch.buf.as_str()).await;
+            } else {
+                out.emit("+BLE:bond=none").await;
+            }
+            out.emit("OK").await;
+        }
+        "bonds" => {
+            if let Some(addr) = crate::kbd_ble::bond_addr() {
+                scratch.buf.clear();
+                let _ = write!(
+                    scratch.buf,
+                    "+BONDS:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}:{:02X}",
+                    addr[5], addr[4], addr[3], addr[2], addr[1], addr[0]
+                );
+                out.emit(scratch.buf.as_str()).await;
+            } else {
+                out.emit("+BONDS:none").await;
+            }
+            out.emit("OK").await;
+        }
+        "clear" => {
+            crate::kbd_ble::clear_bond().await;
             out.emit("OK").await;
         }
         _ => out.emit("ERROR bad args").await,

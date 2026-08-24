@@ -176,7 +176,7 @@ esp32/rust/
 | R3 | mqttc.rs(TLS + LWT + cmd→resp)+ AT+MQTT 系列 | 本地 TLS broker 回环全通；杀 broker 重连 20 轮无泄漏（H4 测试）【✅ 2026-08-20 通过】 |
 | R4 | httpd.rs 全路由 + 共享 SPA + config/ble/wifi/mqtt 端点 | curl 端点清单全过；浏览器 SPA 三页正常【✅ 2026-08-20 通过；ble/kbd 端点随 R5/R6 补】 |
 | R5 | kbd/usb.rs(usbd-hid)+ kbd 路由 + AT+TAP/KEY/KEY_STR/KEY_SEQ/DEV | 主机枚举 + 打字实测（用户验收） |
-| R6 | kbd/ble.rs(trouble HID + 配对窗口状态机 + bond 持久化）| 配对 → 打字 → 断连 → bonded-only 重连；清 bond |
+| R6 | kbd_ble.rs(trouble-host 0.6 HID + 配对窗口状态机 + `ble.bond` NVS 持久化）+ `wifi` 降级为 cargo feature + `ble` 变体 | 【✅ 2026-08-24 通过】配对/打字/CapsLock LED 回读/bonded-only 重连/非 bonded 拒连/29 轮快连快断零泄漏；trouble 0.4→0.6.0(bt-hci 0.8);WiFi+BLE 内部堆不共存（`BLE assert emi.c 164`)→ ble 变体 WiFi OFF；细节见 `BLE-HID.md` §8 坑录 |
 | R7 | hws.rs(GPIO/ADC/I2C)+ 对应 AT/HTTP 端点 | 命令与端点全过【✅ 2026-08-22 通过;I2C_SCAN 改 bit-bang;ADC ch7/8 移除(与 I2C 共脚)】 |
 | R8 | 收尾：README、REQUIREMENTS.md 状态、AGENTS.md、内存水位记录、已知问题清单 | 文档齐，clippy 零警告 |
 | R9 | rathole.rs(协议 v1 单隧道,plain TCP)+ AT/HTTP/MQTT 隧道面 + `tunnel.1.*` 注册表键 | 【✅ 2026-08-23 通过】本地 rathole server 端到端:echo 双访客、HTTP 64KB 逐字节一致;`tunnel.1.local` 限 LAN 主机(smoltcp 无环回);路由合并修复执行器栈溢出;MQTT 共存实测 |

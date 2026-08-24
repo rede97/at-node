@@ -34,7 +34,15 @@ pub enum Target {
     Ble = 1,
 }
 
-static TARGET: AtomicU8 = AtomicU8::new(Target::Usb as u8);
+// Boot target follows the compiled backend: USB when kbd-usb exists
+// (dual-mode boards default to wired), BLE on kbd-ble-only builds —
+// otherwise a reboot would silently swallow keys into a backend that
+// was never compiled in.
+static TARGET: AtomicU8 = AtomicU8::new(if cfg!(feature = "kbd-usb") {
+    Target::Usb as u8
+} else {
+    Target::Ble as u8
+});
 
 pub fn target() -> Target {
     match TARGET.load(Ordering::Relaxed) {
@@ -124,7 +132,9 @@ async fn emit(r: Report) {
             let _ = r;
         }
         Target::Ble => {
-            // R6: kbd_ble::send_report(r).await
+            #[cfg(feature = "kbd-ble")]
+            crate::kbd_ble::send_report(r).await;
+            #[cfg(not(feature = "kbd-ble"))]
             let _ = r;
         }
     }

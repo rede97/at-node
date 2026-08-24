@@ -24,7 +24,7 @@ use sequential_storage::cache::{Cache, Uncached};
 use sequential_storage::map::{MapConfig, MapStorage};
 
 /// Max value length (Zephyr CFG_VAL_MAX; covers SSID/pass/broker host).
-pub const VAL_MAX: usize = 64;
+pub const VAL_MAX: usize = 96;  // ble.bond persists as 80 hex chars (R6.3);
 
 /// Storage region: last 64 KiB of the 8 MiB flash (app stays far below).
 const STORAGE_RANGE: Range<u32> = 0x7F_0000..0x80_0000;
@@ -69,7 +69,7 @@ impl Entry {
 /// Registry layout; index doubles as the sequential-storage map key.
 /// Registry layout; index doubles as the sequential-storage map key.
 /// Only ever APPEND — inserting shifts persisted values to the wrong key.
-const TABLE_DEF: [(&str, u8); 22] = [
+const TABLE_DEF: [(&str, u8); 23] = [
     ("device.name", 0),
     ("wifi.ssid", 0),
     ("wifi.pass", F_WO),
@@ -92,6 +92,7 @@ const TABLE_DEF: [(&str, u8); 22] = [
     ("tunnel.1.auto", F_BOOL),
     ("tunnel.1.retry", F_INT60),
     ("tunnel.1.enable", F_BOOL),
+    ("ble.bond", F_WO), // R6.3: hex-serialized BLE bond (CH582 single-bond)
 ];
 
 /// esp-storage implements the sync embedded-storage 0.3 traits while
@@ -149,9 +150,11 @@ static CFG: Mutex<CriticalSectionRawMutex, Option<Cfg>> = Mutex::new(None);
 static CHANGED: PubSubChannel<CriticalSectionRawMutex, &'static str, 4, 8, 1> =
     PubSubChannel::new();
 
+#[cfg_attr(not(feature = "wifi"), allow(dead_code))]
 pub type ChangedSub = Subscriber<'static, CriticalSectionRawMutex, &'static str, 4, 8, 1>;
 
 /// Subscribe to config-change notifications.
+#[cfg_attr(not(feature = "wifi"), allow(dead_code))]
 pub fn changed() -> Result<ChangedSub, embassy_sync::pubsub::Error> {
     CHANGED.subscriber()
 }

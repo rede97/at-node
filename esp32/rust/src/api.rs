@@ -24,11 +24,15 @@ pub fn ability_json() -> String<128> {
     const KBD_CAP: &str = "usb";
     #[cfg(not(feature = "kbd-usb"))]
     const KBD_CAP: &str = "none";
+    #[cfg(feature = "kbd-ble")]
+    const BLE_CAP: bool = true;
+    #[cfg(not(feature = "kbd-ble"))]
+    const BLE_CAP: bool = false;
 
     let mut j: String<128> = String::new();
     let _ = write!(
         j,
-        "{{\"ble\":false,\"kbd\":\"{KBD_CAP}\",\"mqtt\":{},\"rathole\":{},\"i2c\":{},\
+        "{{\"ble\":{BLE_CAP},\"kbd\":\"{KBD_CAP}\",\"mqtt\":{},\"rathole\":{},\"i2c\":{},\
 \"http\":{},\"ssdp\":{},\"led\":\"{LED_CAP}\"}}",
         crate::mqttc::enabled(),
         crate::rathole::enabled(),
@@ -97,6 +101,10 @@ const P_KBKEY: &[ApiParam] = &[
     ApiParam("mods", "modifier bitmask"),
     ApiParam("k0..k5", "keycodes (hold; all-zero = release)"),
 ];
+#[cfg(feature = "kbd-ble")]
+const P_BLEPAIR: &[ApiParam] = &[ApiParam("enable", "1|0 open/close the 60s pairing window")];
+#[cfg(feature = "kbd-ble")]
+const P_BLEDEL: &[ApiParam] = &[ApiParam("idx", "bond index (always 0, single bond)")];
 
 /// Arduino API_CATALOG restricted to what this firmware implements.
 const CATALOG: &[ApiEntry] = &[
@@ -179,6 +187,30 @@ const CATALOG: &[ApiEntry] = &[
         method: "keyboard/key",
         params: P_KBKEY,
         desc: "raw 8-byte boot report (hold)",
+    },
+    #[cfg(feature = "kbd-ble")]
+    ApiEntry {
+        method: "ble/status",
+        params: &[],
+        desc: "BLE name, addr, connection, bonds",
+    },
+    #[cfg(feature = "kbd-ble")]
+    ApiEntry {
+        method: "ble/pair",
+        params: P_BLEPAIR,
+        desc: "open/close the 60s pairing window",
+    },
+    #[cfg(feature = "kbd-ble")]
+    ApiEntry {
+        method: "ble/bonds/delete",
+        params: P_BLEDEL,
+        desc: "delete the bonded host",
+    },
+    #[cfg(feature = "kbd-ble")]
+    ApiEntry {
+        method: "ble/bonds/clear",
+        params: &[],
+        desc: "delete all bonded hosts",
     },
     ApiEntry {
         method: "ability",
@@ -266,6 +298,7 @@ pub async fn sys_info_json() -> String<2560> {
 }
 
 /// URL-decode helper (Arduino url_decode): %XX and '+' -> space.
+#[cfg_attr(not(any(feature = "http", feature = "mqtt")), allow(dead_code))]
 pub fn url_decode(input: &str, out: &mut String<256>) {
     out.clear();
     let b = input.as_bytes();
@@ -298,6 +331,7 @@ pub fn url_decode(input: &str, out: &mut String<256>) {
 
 /// Arduino query_get(): url-decoded value of `key` in a "k=v&k2=v2"
 /// query string, written into the caller's scratch buffer.
+#[cfg_attr(not(any(feature = "http", feature = "mqtt")), allow(dead_code))]
 pub fn query_get<'a>(query: &str, key: &str, out: &'a mut String<256>) -> &'a str {
     out.clear();
     for pair in query.split('&') {

@@ -11,9 +11,11 @@
 #   base    - full minus rathole and http/ssdp (production keyboard: MQTT +
 #             HWS + USB HID, serial-only configuration)
 #   rathole - tunnel test unit: LED + HTTP + rathole + SSDP (no kbd/mqtt/hws)
+#   ble     - R6 bring-up unit: kbd-ble + LED only, WiFi OFF (frees ~46 KB
+#             of internal heap for the BLE controller)
 #
 # Usage:
-#   ./build.sh [full|remoter|base|rathole] [--flash [/dev/ttyACMx]]
+#   ./build.sh [full|remoter|base|rathole|ble] [--flash [/dev/ttyACMx]]
 #
 # Prerequisites: espup toolchain (source ~/export-esp.sh), espflash.
 
@@ -31,7 +33,8 @@ case "$VARIANT" in
     remoter) FLAGS="--no-default-features --features led-color,mqtt,http,hws,kbd-usb,ssdp" ;;
     base)    FLAGS="--no-default-features --features led-color,mqtt,hws,kbd-usb" ;;
     rathole) FLAGS="--no-default-features --features led-color,http,rathole,ssdp" ;;
-    *) echo "usage: $0 [full|remoter|base|rathole] [--flash [PORT]]" >&2; exit 2 ;;
+    ble)     FLAGS="--no-default-features --features led-color,kbd-ble" ;;
+    *) echo "usage: $0 [full|remoter|base|rathole|ble] [--flash [PORT]]" >&2; exit 2 ;;
 esac
 
 # shellcheck disable=SC2086

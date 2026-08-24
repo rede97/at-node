@@ -269,7 +269,7 @@ mod driver {
     // ------------------------------------------------------ helpers ------
 
     /// Split "host:port" (Arduino split_host_port).
-    fn split_host_port(s: &str, host: &mut String<64>) -> Option<u16> {
+    fn split_host_port(s: &str, host: &mut String<{ crate::cfg::VAL_MAX }>) -> Option<u16> {
         let colon = s.rfind(':')?;
         if colon == 0 || colon == s.len() - 1 {
             return None;
@@ -382,7 +382,7 @@ mod driver {
     struct FwdReq {
         sock: ConnSocket,
         slot: usize,
-        lhost: String<64>,
+        lhost: String<{ crate::cfg::VAL_MAX }>,
         lport: u16,
     }
 
@@ -391,10 +391,10 @@ mod driver {
     // -------------------------------------------------------- manager ----
 
     struct TunCfg {
-        server: String<64>,
-        token: String<64>,
-        service: String<64>,
-        local: String<64>,
+        server: String<{ crate::cfg::VAL_MAX }>,
+        token: String<{ crate::cfg::VAL_MAX }>,
+        service: String<{ crate::cfg::VAL_MAX }>,
+        local: String<{ crate::cfg::VAL_MAX }>,
         retry_s: u8,
     }
 
@@ -418,7 +418,7 @@ mod driver {
         stack: Stack<'static>,
         cfg: &TunCfg,
     ) -> Result<(TcpSocket<'static>, [u8; 32]), &'static str> {
-        let mut host: String<64> = String::new();
+        let mut host: String<{ crate::cfg::VAL_MAX }> = String::new();
         let Some(port) = split_host_port(&cfg.server, &mut host) else {
             return Err("bad server addr");
         };
@@ -504,7 +504,7 @@ mod driver {
             return None; // let TIME_WAITs drain (Arduino R4)
         }
         let slot = slot_alloc()?;
-        let mut host: String<64> = String::new();
+        let mut host: String<{ crate::cfg::VAL_MAX }> = String::new();
         let port = split_host_port(server, &mut host)?;
         let ip = resolve(stack, &host).await?;
         let (rx, tx) = {
@@ -723,7 +723,7 @@ mod driver {
     /// On success the slot ownership moves to the forward task, which
     /// frees it at session end.
     fn start_forward(sock: ConnSocket, slot: usize, tcfg: &TunCfg) {
-        let mut lhost: String<64> = String::new();
+        let mut lhost: String<{ crate::cfg::VAL_MAX }> = String::new();
         let lport = if esp_alloc::HEAP.free() >= MIN_FREE_HEAP {
             split_host_port(&tcfg.local, &mut lhost)
         } else {

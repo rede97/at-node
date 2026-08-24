@@ -25,12 +25,30 @@ mod at;
 mod at_serial;
 mod cfg;
 mod kb;
+#[cfg(feature = "kbd-ble")]
+mod kbd_ble;
 #[cfg(feature = "kbd-usb")]
 mod kbd_usb;
 mod led;
 mod rathole;
 mod ssdp;
+#[cfg(feature = "wifi")]
 mod wifi;
+#[cfg(not(feature = "wifi"))]
+mod wifi {
+    //! Stub when WiFi is compiled out (kbd-ble-only R6 bring-up): the
+    //! WiFi blob's ~46 KB internal-heap allocation would starve the BLE
+    //! controller. Net services all imply the wifi feature.
+    pub fn link_up() -> bool {
+        false
+    }
+    pub fn ipv4() -> Option<embassy_net::Ipv4Address> {
+        None
+    }
+    pub fn rssi() -> i32 {
+        0
+    }
+}
 
 #[cfg(feature = "http")]
 mod httpd;
@@ -81,6 +99,8 @@ mod mqttc;
 #[cfg(not(feature = "mqtt"))]
 mod mqttc {
     //! Stub when the mqtt feature is compiled out (rathole variant).
+        #![allow(dead_code)]
+
     pub fn enabled() -> bool {
         false
     }
@@ -171,12 +191,17 @@ async fn main(spawner: Spawner) -> ! {
     led::status(led::Status::Boot);
 
     let rng = esp_hal::rng::Rng::new();
-    let seed = (rng.random() as u64) << 32 | rng.random() as u64;
     let _ = (peripherals.RNG, peripherals.GPIO8, peripherals.GPIO9);
 
     // Heap watermark BEFORE the wifi driver allocates (MIGRATION 5.3).
     esp_println::println!("boot: internal heap free {} bytes", esp_alloc::HEAP.free());
-    let stack = wifi::init(spawner, peripherals.WIFI, seed);
+    #[cfg(feature = "wifi")]
+    let stack = {
+        let seed = (rng.random() as u64) << 32 | rng.random() as u64;
+        wifi::init(spawner, peripherals.WIFI, seed)
+    };
+    #[cfg(not(feature = "wifi"))]
+    let _ = (rng, peripherals.WIFI);
     #[cfg(feature = "mqtt")]
     spawner.spawn(mqtt_task(stack).expect("spawn mqtt task"));
     #[cfg(feature = "rathole")]
@@ -232,6 +257,8 @@ async fn main(spawner: Spawner) -> ! {
         peripherals.GPIO20,
         peripherals.GPIO19,
     );
+    #[cfg(feature = "kbd-ble")]
+    kbd_ble::init(spawner, peripherals.BT);
     #[cfg(any(feature = "kbd-usb", feature = "kbd-ble"))]
     spawner.spawn(kb_engine().expect("spawn kb engine"));
 

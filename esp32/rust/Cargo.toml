@@ -17,14 +17,19 @@ version      = "0.1.0"
 #   remoter = full - rathole
 #   base    = full - rathole - http - ssdp (production kbd, serial-only config)
 #   rathole = led-color + http + rathole + ssdp (tunnel test unit)
-default   = ["led-color", "rathole", "mqtt", "http", "hws", "kbd-usb", "ssdp"]
+#   ble     = kbd-ble + led-color only (R6 bring-up: WiFi OFF to free the
+#             ~46 KB internal-heap blob for the BLE controller)
+default   = ["wifi", "led-color", "rathole", "mqtt", "http", "hws", "kbd-usb", "ssdp"]
+# WiFi is the base of every networked variant; kbd-ble-only builds drop it
+# because the WiFi blob's internal-heap appetite starves the BLE controller.
+wifi      = ["esp-radio/wifi"]
 led-color = []
-rathole   = []
-mqtt      = []
-http      = []
+rathole   = ["wifi"]
+mqtt      = ["wifi"]
+http      = ["wifi"]
 hws       = []
 kbd-usb   = ["dep:usb-device", "dep:usbd-hid", "esp-hal/__usb_otg"]
-kbd-ble   = []   # R6 stub: compiles but reports disabled
+kbd-ble   = ["esp-radio/ble", "dep:trouble-host"]
 # SSDP/UPnP discovery (Windows "Network" shows the device, "View device
 # webpage" opens the SPA). Requires http (serves /description.xml);
 # runs only while the HTTP service is enabled at runtime.
@@ -47,7 +52,7 @@ log                    = "0.4.27"
 embassy-executor = { version = "0.10.0", features = ["log"] }
 embassy-time     = { version = "0.5.0", features = ["log"] }
 embassy-futures  = "0.1.2"
-embassy-sync     = "0.8.0"
+embassy-sync     = "0.7.2"  # pinned to trouble-host 0.6's version: the gatt_server macro emits our crate's embassy_sync types into trouble's AttributeServer
 esp-alloc        = "0.10.0"
 allocator-api2   = { version = "0.3", default-features = false, features = ["alloc"] }
 esp-backtrace = { version = "0.19.0", features = [
@@ -66,7 +71,7 @@ sha2 = { version = "0.10", default-features = false }
 usb-device = { version = "0.3", optional = true }
 usbd-hid   = { version = "0.8", optional = true }
 
-esp-radio = { version = "0.18.0", features = ["esp32s3", "wifi", "unstable", "esp-alloc", "log-04"] }
+esp-radio = { version = "0.18.0", features = ["esp32s3", "unstable", "esp-alloc", "log-04"] }
 embassy-net = { version = "0.9.1", features = ["dhcpv4", "medium-ethernet", "dns", "tcp"] }
 embedded-tls = { version = "0.19.0", default-features = false, features = ["log", "rsa"] }
 picoserve = { version = "0.19.0", default-features = false, features = ["embassy", "alloc"] }
@@ -75,6 +80,7 @@ embedded-io-async-07 = { package = "embedded-io-async", version = "0.7" }
 embedded-io = "0.6.1"
 embedded-io-07 = { package = "embedded-io", version = "0.7.1" }
 rand_core = "0.6.4"
+trouble-host = { version = "0.6", optional = true, default-features = false, features = ["gatt", "peripheral", "security", "derive", "default-packet-pool", "log"] }
 
 critical-section = "1.2.0"
 static_cell      = "2.1.1"
